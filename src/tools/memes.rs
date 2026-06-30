@@ -92,15 +92,15 @@ pub fn register(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths
     registry.register(ToolSpec::new(
         "show_meme",
         t(
-            "Render a meme in the terminal with chafa. GIFs are shown as static previews unless animation is explicitly allowed in config.",
-            "发送表情包并使用 chafa 在终端渲染。GIF 默认显示静态预览，除非配置显式允许动画。",
+            "Render a meme in the terminal with terminal image protocols or an ANSI fallback. GIFs are shown as static previews unless animation is explicitly allowed in config.",
+            "发送表情包并使用终端图片协议或 ANSI 降级渲染。GIF 默认显示静态预览，除非配置显式允许动画。",
         ),
         json!({
             "type": "object",
             "properties": {
                 "id": { "type": "string", "description": t("Meme sha256 id.", "表情 sha256 id。") },
                 "library": { "type": "string", "description": t("Optional meme library override.", "可选表情库覆盖。") },
-                "size": { "type": "string", "description": t("Optional chafa size, e.g. 40x15.", "可选 chafa 尺寸，例如 40x15。") },
+                "size": { "type": "string", "description": t("Optional terminal size, e.g. 40x15.", "可选终端显示尺寸，例如 40x15。") },
                 "width": { "type": "integer", "description": t("Optional output width in terminal cells.", "可选终端单元格输出宽度。") },
                 "height": { "type": "integer", "description": t("Optional output height in terminal cells.", "可选终端单元格输出高度。") }
             },
@@ -270,7 +270,7 @@ async fn show_meme(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result
         "name": meme.item.name,
         "description": meme.item.description,
         "animated": meme.item.animated,
-        "animation_note": if meme.item.animated && !config.plugins.memes.allow_gif_animation { Some("GIF was rendered as a normal chafa preview; animation is disabled by default.") } else { None },
+        "animation_note": if meme.item.animated && !config.plugins.memes.allow_gif_animation { Some("GIF was rendered as a static terminal preview; animation is disabled by default.") } else { None },
     })
     .to_string())
 }

@@ -1,8 +1,9 @@
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use crossterm::terminal;
-use std::fs::{self, File};
-use std::io::BufReader;
+use std::fs;
+#[cfg(test)]
+use std::fs::File;
 #[cfg(test)]
 use std::io::BufWriter;
 use std::path::Path;
@@ -30,6 +31,12 @@ struct Rgba {
     a: u8,
 }
 
+#[derive(Clone, Copy, Debug, Default)]
+struct TerminalImageSize {
+    width_cells: Option<usize>,
+    height_cells: Option<usize>,
+}
+
 /// 将图片渲染为当前终端可显示的文本。
 ///
 /// 参数:
@@ -38,6 +45,19 @@ struct Rgba {
 /// 返回:
 /// - 终端图片协议文本或 chafa 文本输出
 pub(crate) fn render_terminal_image(path: &Path) -> Result<String> {
+    render_terminal_image_with_size(path, None)
+}
+
+/// 将图片按可选终端单元格尺寸渲染为当前终端可显示的文本。
+///
+/// 参数:
+/// - `path`: 图片文件路径
+/// - `size`: 可选尺寸，格式同 chafa `WIDTHxHEIGHT`，允许省略一边
+///
+/// 返回:
+/// - 终端图片协议文本、chafa 文本输出，或 ANSI 半块降级文本
+pub(crate) fn render_terminal_image_with_size(path: &Path, size: Option<&str>) -> Result<String> {
+    let parsed_size = TerminalImageSize::parse(size);
     if supports_kitty_graphics() {
         return render_kitty_image(path);
     }
@@ -45,9 +65,48 @@ pub(crate) fn render_terminal_image(path: &Path) -> Result<String> {
         return render_iterm_image(path);
     }
     if supports_windows_terminal_sixel() {
-        return render_sixel_image(path).or_else(|_| render_ansi_halfblock_image(path));
+        return render_sixel_image(path, &parsed_size)
+            .or_else(|_| render_ansi_halfblock_image(path, &parsed_size));
     }
-    render_chafa_image(path).or_else(|_| render_ansi_halfblock_image(path))
+    render_chafa_image(path, size, &parsed_size)
+        .or_else(|_| render_ansi_halfblock_image(path, &parsed_size))
+}
+
+impl TerminalImageSize {
+    /// 解析终端图片尺寸。
+    ///
+    /// 参数:
+    /// - `value`: `WIDTHxHEIGHT`、`WIDTHx` 或 `xHEIGHT`
+    ///
+    /// 返回:
+    /// - 已解析的尺寸约束
+    fn parse(value: Option<&str>) -> Self {
+        let Some(value) = value.map(str::trim).filter(|value| !value.is_empty()) else {
+            return Self::default();
+        };
+        let Some((width, height)) = value.split_once('x') else {
+            return Self::default();
+        };
+        Self {
+            width_cells: parse_cell_count(width),
+            height_cells: parse_cell_count(height),
+        }
+    }
+}
+
+/// 解析正整数终端单元格数量。
+///
+/// 参数:
+/// - `value`: 数字文本
+///
+/// 返回:
+/// - 有效正整数
+fn parse_cell_count(value: &str) -> Option<usize> {
+    value
+        .trim()
+        .parse::<usize>()
+        .ok()
+        .filter(|value| *value > 0)
 }
 
 /// 判断当前终端是否支持 Kitty 图形协议。
@@ -144,9 +203,9 @@ fn render_iterm_image(path: &Path) -> Result<String> {
 ///
 /// 返回:
 /// - Sixel 图形协议转义序列
-fn render_sixel_image(path: &Path) -> Result<String> {
-    let image = load_png_rgba(path)?;
-    let (width, height) = sixel_dimensions(image.width, image.height);
+fn render_sixel_image(path: &Path, size: &TerminalImageSize) -> Result<String> {
+    let image = load_image_rgba(path)?;
+    let (width, height) = sixel_dimensions(image.width, image.height, size);
     let pixels = quantize_for_sixel(&image, width, height);
     Ok(encode_sixel(&pixels, width, height))
 }
@@ -158,9 +217,18 @@ fn render_sixel_image(path: &Path) -> Result<String> {
 ///
 /// 返回:
 /// - chafa 输出的终端文本
-fn render_chafa_image(path: &Path) -> Result<String> {
+fn render_chafa_image(
+    path: &Path,
+    raw_size: Option<&str>,
+    parsed_size: &TerminalImageSize,
+) -> Result<String> {
     let mut command = Command::new("chafa");
-    if let Some(size) = chafa_size() {
+    if let Some(size) = raw_size
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::to_string)
+        .or_else(|| chafa_size(parsed_size))
+    {
         command.arg("--size").arg(size);
     }
     command.arg("--fg-only").arg("--threshold").arg("0.75");
@@ -208,9 +276,9 @@ fn run_chafa(mut command: Command, path: &Path, context: &str) -> Result<String>
 ///
 /// 返回:
 /// - 可直接打印到终端的 ANSI 文本
-fn render_ansi_halfblock_image(path: &Path) -> Result<String> {
-    let image = load_png_rgba(path)?;
-    let (width, height) = ansi_dimensions(image.width, image.height);
+fn render_ansi_halfblock_image(path: &Path, size: &TerminalImageSize) -> Result<String> {
+    let image = load_image_rgba(path)?;
+    let (width, height) = ansi_dimensions(image.width, image.height, size);
     let mut output = String::new();
     let reset = "\x1b[0m";
     for y in (0..height).step_by(2) {
@@ -229,115 +297,39 @@ fn render_ansi_halfblock_image(path: &Path) -> Result<String> {
     Ok(output)
 }
 
-struct PngImage {
+struct RasterImage {
     pixels: Vec<Rgba>,
     width: usize,
     height: usize,
 }
 
-/// 解码 PNG 为 RGBA 像素。
+/// 解码常见图片格式为 RGBA 像素。
 ///
 /// 参数:
-/// - `path`: PNG 图片路径
+/// - `path`: 图片路径
 ///
 /// 返回:
 /// - RGBA 图片数据
-fn load_png_rgba(path: &Path) -> Result<PngImage> {
-    let file = File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
-    let decoder = png::Decoder::new(BufReader::new(file));
-    let mut reader = decoder
-        .read_info()
-        .with_context(|| format!("failed to read png info from {}", path.display()))?;
-    let mut buffer = vec![0; reader.output_buffer_size()];
-    let info = reader
-        .next_frame(&mut buffer)
-        .with_context(|| format!("failed to decode png {}", path.display()))?;
-    let bytes = &buffer[..info.buffer_size()];
-    let pixels: Vec<Rgba> = match (info.color_type, info.bit_depth) {
-        (png::ColorType::Rgb, png::BitDepth::Eight) => bytes
-            .chunks_exact(3)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[1],
-                b: chunk[2],
-                a: 255,
-            })
-            .collect(),
-        (png::ColorType::Rgb, png::BitDepth::Sixteen) => bytes
-            .chunks_exact(6)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[2],
-                b: chunk[4],
-                a: 255,
-            })
-            .collect(),
-        (png::ColorType::Rgba, png::BitDepth::Eight) => bytes
-            .chunks_exact(4)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[1],
-                b: chunk[2],
-                a: chunk[3],
-            })
-            .collect(),
-        (png::ColorType::Rgba, png::BitDepth::Sixteen) => bytes
-            .chunks_exact(8)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[2],
-                b: chunk[4],
-                a: chunk[6],
-            })
-            .collect(),
-        (png::ColorType::Grayscale, png::BitDepth::Eight) => bytes
-            .iter()
-            .map(|value| Rgba {
-                r: *value,
-                g: *value,
-                b: *value,
-                a: 255,
-            })
-            .collect(),
-        (png::ColorType::Grayscale, png::BitDepth::Sixteen) => bytes
-            .chunks_exact(2)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[0],
-                b: chunk[0],
-                a: 255,
-            })
-            .collect(),
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => bytes
-            .chunks_exact(2)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[0],
-                b: chunk[0],
-                a: chunk[1],
-            })
-            .collect(),
-        (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen) => bytes
-            .chunks_exact(4)
-            .map(|chunk| Rgba {
-                r: chunk[0],
-                g: chunk[0],
-                b: chunk[0],
-                a: chunk[2],
-            })
-            .collect(),
-        _ => bail!(
-            "unsupported png format {:?} {:?}",
-            info.color_type,
-            info.bit_depth
-        ),
-    };
-    let width = usize::try_from(info.width).context("png width is too large")?;
-    let height = usize::try_from(info.height).context("png height is too large")?;
-    if pixels.len() != width.saturating_mul(height) {
-        bail!("decoded png pixel count does not match dimensions");
-    }
-    Ok(PngImage {
+fn load_image_rgba(path: &Path) -> Result<RasterImage> {
+    let image = image::ImageReader::open(path)
+        .with_context(|| format!("failed to open {}", path.display()))?
+        .with_guessed_format()
+        .with_context(|| format!("failed to detect image format for {}", path.display()))?
+        .decode()
+        .with_context(|| format!("failed to decode image {}", path.display()))?;
+    let rgba = image.to_rgba8();
+    let width = usize::try_from(rgba.width()).context("image width is too large")?;
+    let height = usize::try_from(rgba.height()).context("image height is too large")?;
+    let pixels = rgba
+        .pixels()
+        .map(|pixel| Rgba {
+            r: pixel[0],
+            g: pixel[1],
+            b: pixel[2],
+            a: pixel[3],
+        })
+        .collect::<Vec<_>>();
+    Ok(RasterImage {
         pixels,
         width,
         height,
@@ -354,7 +346,7 @@ fn load_png_rgba(path: &Path) -> Result<PngImage> {
 /// 返回:
 /// - 每个目标像素的可选 sixel 调色板索引
 fn quantize_for_sixel(
-    image: &PngImage,
+    image: &RasterImage,
     target_width: usize,
     target_height: usize,
 ) -> Vec<Option<u16>> {
@@ -564,14 +556,28 @@ fn sixel_percent(value: u8) -> u8 {
 ///
 /// 返回:
 /// - 目标像素宽高
-fn sixel_dimensions(source_width: usize, source_height: usize) -> (usize, usize) {
+fn sixel_dimensions(
+    source_width: usize,
+    source_height: usize,
+    size: &TerminalImageSize,
+) -> (usize, usize) {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
-    let max_width = usize::from(cols)
-        .saturating_mul(SIXEL_CELL_WIDTH_PX)
-        .clamp(240, SIXEL_MAX_WIDTH_PX);
-    let max_height = usize::from(rows)
-        .saturating_mul(SIXEL_CELL_HEIGHT_PX)
-        .clamp(160, SIXEL_MAX_HEIGHT_PX);
+    let max_width = match size.width_cells {
+        Some(value) => value
+            .saturating_mul(SIXEL_CELL_WIDTH_PX)
+            .clamp(SIXEL_CELL_WIDTH_PX, SIXEL_MAX_WIDTH_PX),
+        None => usize::from(cols)
+            .saturating_mul(SIXEL_CELL_WIDTH_PX)
+            .clamp(240, SIXEL_MAX_WIDTH_PX),
+    };
+    let max_height = match size.height_cells {
+        Some(value) => value
+            .saturating_mul(SIXEL_CELL_HEIGHT_PX)
+            .clamp(SIXEL_CELL_HEIGHT_PX, SIXEL_MAX_HEIGHT_PX),
+        None => usize::from(rows)
+            .saturating_mul(SIXEL_CELL_HEIGHT_PX)
+            .clamp(160, SIXEL_MAX_HEIGHT_PX),
+    };
     fit_dimensions(source_width, source_height, max_width, max_height)
 }
 
@@ -583,10 +589,20 @@ fn sixel_dimensions(source_width: usize, source_height: usize) -> (usize, usize)
 ///
 /// 返回:
 /// - 目标像素宽高
-fn ansi_dimensions(source_width: usize, source_height: usize) -> (usize, usize) {
+fn ansi_dimensions(
+    source_width: usize,
+    source_height: usize,
+    size: &TerminalImageSize,
+) -> (usize, usize) {
     let (cols, rows) = terminal::size().unwrap_or((80, 24));
-    let max_width = usize::from(cols.clamp(20, 120));
-    let max_rows = usize::from((rows / 2).clamp(8, 40));
+    let max_width = size
+        .width_cells
+        .unwrap_or_else(|| usize::from(cols.clamp(20, 120)))
+        .clamp(1, 300);
+    let max_rows = size
+        .height_cells
+        .unwrap_or_else(|| usize::from((rows / 2).clamp(8, 40)))
+        .clamp(1, 200);
     let max_height = max_rows * 2;
     fit_dimensions(source_width, source_height, max_width, max_height)
 }
@@ -639,7 +655,7 @@ fn fit_dimensions(
 /// 返回:
 /// - 原图采样像素
 fn sample_resized_pixel(
-    image: &PngImage,
+    image: &RasterImage,
     x: usize,
     y: usize,
     target_width: usize,
@@ -676,7 +692,7 @@ fn sample_resized_pixel(
 /// 返回:
 /// - 平均像素
 fn average_pixels(
-    image: &PngImage,
+    image: &RasterImage,
     start_x: usize,
     end_x: usize,
     start_y: usize,
@@ -784,7 +800,18 @@ fn blend_channel(foreground: u8, background: u8, alpha: u16, inverse: u16) -> u8
 ///
 /// 返回:
 /// - chafa `--size` 参数
-fn chafa_size() -> Option<String> {
+fn chafa_size(size: &TerminalImageSize) -> Option<String> {
+    if size.width_cells.is_some() || size.height_cells.is_some() {
+        let width = size
+            .width_cells
+            .map(|value| value.min(300).to_string())
+            .unwrap_or_default();
+        let height = size
+            .height_cells
+            .map(|value| value.min(200).to_string())
+            .unwrap_or_default();
+        return Some(format!("{width}x{height}"));
+    }
     let (cols, rows) = terminal::size().ok()?;
     let width = cols.clamp(20, 120);
     let height = (rows / 2).clamp(8, 40);
@@ -844,8 +871,27 @@ mod tests {
                 },
             ],
         );
-        let output = render_ansi_halfblock_image(&path).unwrap();
+        let output = render_ansi_halfblock_image(&path, &TerminalImageSize::default()).unwrap();
         assert!(output.contains("\x1b[38;2;255;0;0m"));
+        assert!(output.contains('▀') || output.contains('▄'));
+    }
+
+    #[test]
+    fn renders_jpeg_with_ansi_halfblock_fallback() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("sample.jpg");
+        let file = File::create(&path).unwrap();
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(file, 90);
+        encoder
+            .encode(
+                &[255, 0, 0, 0, 255, 0, 0, 0, 255, 255, 255, 255],
+                2,
+                2,
+                image::ExtendedColorType::Rgb8,
+            )
+            .unwrap();
+        let output = render_ansi_halfblock_image(&path, &TerminalImageSize::default()).unwrap();
+        assert!(output.contains("\x1b[38;2;"));
         assert!(output.contains('▀') || output.contains('▄'));
     }
 
@@ -884,7 +930,7 @@ mod tests {
                 },
             ],
         );
-        let output = render_sixel_image(&path).unwrap();
+        let output = render_sixel_image(&path, &TerminalImageSize::default()).unwrap();
         assert!(output.starts_with("\x1bPq"));
         assert!(output.contains("\"1;1;"));
         assert!(output.contains("#180;2;100;0;0"));
@@ -914,7 +960,7 @@ mod tests {
                 },
             ],
         );
-        let output = render_sixel_image(&path).unwrap();
+        let output = render_sixel_image(&path, &TerminalImageSize::default()).unwrap();
         assert!(!output.contains("#0;2;0;0;0"));
         assert!(output.contains("#180;2;100;0;0"));
     }

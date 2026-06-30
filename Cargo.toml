@@ -20,6 +20,7 @@ directories = "5.0"
 hex = "0.4"
 html2md = "0.2"
 html2text = "0.12"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "gif", "webp", "bmp"] }
 json_comments = "0.2"
 futures-util = "0.3"
 flate2 = "1.0"

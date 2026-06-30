@@ -84,16 +84,16 @@ pub fn register(
     registry.register(ToolSpec::new_with_progress(
         "search_web_images",
         t(
-            "Search web images with DuckDuckGo and Bing fallback. In normal mode it can download selected images to the local cache and optionally preview them with chafa. In read-only mode it only returns remote image metadata.",
-            "搜索网络图片，使用 DuckDuckGo，失败或不足时回退 Bing。普通模式可下载选中图片到本地缓存并可用 chafa 预览；只读模式只返回远程图片元数据。",
+            "Search web images with DuckDuckGo and Bing fallback. In normal mode it can download selected images to the local cache and optionally preview them in the terminal. In read-only mode it only returns remote image metadata.",
+            "搜索网络图片，使用 DuckDuckGo，失败或不足时回退 Bing。普通模式可下载选中图片到本地缓存并可在终端预览；只读模式只返回远程图片元数据。",
         ),
         json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": t("Image search query.", "图片搜索关键词。") },
                 "count": { "type": "integer", "description": t("Required. Exact number of images to return. Match the user's requested quantity: one/a/an/一张/一幅 means 1; a few/几张 means 3; several/多张 means 5 unless the user gives another number. Do not use the configured maximum as the default.", "必填。最终返回图片的精确数量。必须匹配用户要求的数量：一张/一幅/one/a/an 填 1；几张填 3；多张填 5，除非用户给了其他数字。不要把配置上限当默认值。") },
-                "preview": { "type": "boolean", "description": t("Download and preview images with chafa when terminal image printing is enabled.", "在终端图片打印启用时，下载并用 chafa 预览图片。") },
-                "preview_count": { "type": "integer", "description": t("Maximum images to preview with chafa.", "最多用 chafa 预览几张图片。") },
+                "preview": { "type": "boolean", "description": t("Download and preview images when terminal image printing is enabled.", "在终端图片打印启用时，下载并预览图片。") },
+                "preview_count": { "type": "integer", "description": t("Maximum images to preview in the terminal.", "最多在终端预览几张图片。") },
                 "safe_search": { "type": "boolean", "description": t("Enable safe image search. Defaults to plugin config.", "启用安全搜图。默认使用插件配置。") }
             },
             "required": ["query", "count"],

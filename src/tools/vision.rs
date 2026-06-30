@@ -4,13 +4,12 @@ use crate::default_models::{OPENCODE_DEFAULT_VISION_MODEL, OPENCODE_PROVIDER_ID}
 use crate::i18n::text as t;
 use crate::llm::{ChatMessage, OpenAiCompatibleClient};
 use crate::paths::MiyuPaths;
+use crate::render::terminal_image;
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::{json, Value};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-use tokio::process::Command;
 
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 
@@ -49,12 +48,12 @@ pub fn register_print(registry: &mut ToolRegistry, config: AppConfig) {
     }
     registry.register(ToolSpec::new(
         "print_image",
-        t("Print/render a local image directly in the current terminal output using chafa. Use this when the user asks to show, print, render, or preview an image, or when you need to inspect an image visually in the terminal before answering.", "使用 chafa 在当前终端输出中直接打印/渲染本地图片。当用户要求显示、打印、渲染、预览图片，或回答前需要在终端中目视检查图片时使用。"),
+        t("Print/render a local image directly in the current terminal output using terminal image protocols or an ANSI fallback. Use this when the user asks to show, print, render, or preview an image, or when you need to inspect an image visually in the terminal before answering.", "使用终端图片协议或 ANSI 降级在当前终端输出中直接打印/渲染本地图片。当用户要求显示、打印、渲染、预览图片，或回答前需要在终端中目视检查图片时使用。"),
         json!({
             "type": "object",
             "properties": {
                 "image": { "type": "string", "description": t("Local image path.", "本地图片路径。") },
-                "size": { "type": "string", "description": t("Optional chafa size, e.g. 80x40. Use this or width/height to avoid oversized output.", "可选 chafa 尺寸，例如 80x40。用它或 width/height 避免输出过大。") },
+                "size": { "type": "string", "description": t("Optional terminal size, e.g. 80x40. Use this or width/height to avoid oversized output.", "可选终端显示尺寸，例如 80x40。用它或 width/height 避免输出过大。") },
                 "width": { "type": "integer", "description": t("Optional output width in terminal cells, e.g. 80.", "可选终端单元格输出宽度，例如 80。") },
                 "height": { "type": "integer", "description": t("Optional output height in terminal cells, e.g. 40.", "可选终端单元格输出高度，例如 40。") }
             },
@@ -103,20 +102,11 @@ async fn print_image(args: Value, print_config: &PrintImagePluginConfig) -> Resu
 pub async fn print_image_file(path: &Path, size: Option<String>) -> Result<()> {
     println!();
     io::stdout().flush()?;
-    let mut command = Command::new("chafa");
-    if let Some(size) = size {
-        command.arg("--size").arg(size);
-    }
-    let status = command
-        .arg(path)
-        .stdin(Stdio::null())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .await
-        .with_context(|| "failed to run chafa; install chafa or disable terminal image printing")?;
-    if !status.success() {
-        bail!("chafa exited with status {status}")
+    let rendered = terminal_image::render_terminal_image_with_size(path, size.as_deref())
+        .with_context(|| format!("failed to render image {}", path.display()))?;
+    print!("{rendered}");
+    if !rendered.ends_with('\n') {
+        println!();
     }
     println!();
     io::stdout().flush()?;

@@ -7,7 +7,7 @@ mod stream_output;
 mod stream_summary;
 mod style;
 mod table;
-mod terminal_image;
+pub(crate) mod terminal_image;
 mod tool_names;
 mod wait_spinner;
 
