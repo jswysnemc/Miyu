@@ -185,7 +185,7 @@ fn render_asset_inner(kind: AssetKind, source: &str) -> Result<String> {
     terminal_image::render_terminal_image(&image)
 }
 
-/// 使用 Mermaid CLI 生成图表图片。
+/// 使用纯 Rust Mermaid 渲染器生成图表图片。
 ///
 /// 参数:
 /// - `source`: Mermaid 源码
@@ -194,22 +194,35 @@ fn render_asset_inner(kind: AssetKind, source: &str) -> Result<String> {
 /// 返回:
 /// - 生成的 PNG 路径
 fn render_mermaid_image(source: &str, temp_dir: &TempDir) -> Result<PathBuf> {
-    let input = temp_dir.path().join("diagram.mmd");
     let output = temp_dir.path().join("diagram.png");
-    fs::write(&input, source).with_context(|| format!("failed to write {}", input.display()))?;
-    let mut command = Command::new("mmdc");
-    command
-        .arg("-i")
-        .arg(&input)
-        .arg("-o")
-        .arg(&output)
-        .arg("--quiet")
-        .arg("-b")
-        .arg("transparent")
-        .stdin(Stdio::null());
-    run_command(command, "mmdc")?;
+    let theme = transparent_mermaid_theme();
+    let svg = mermaid_rs_renderer::render_with_options(
+        source,
+        mermaid_rs_renderer::RenderOptions {
+            theme: theme.clone(),
+            layout: mermaid_rs_renderer::LayoutConfig::default(),
+        },
+    )
+    .context("failed to render mermaid svg")?;
+    mermaid_rs_renderer::write_output_png(
+        &svg,
+        &output,
+        &mermaid_rs_renderer::RenderConfig::default(),
+        &theme,
+    )
+    .with_context(|| format!("failed to write {}", output.display()))?;
     ensure_file_exists(&output)?;
     Ok(output)
+}
+
+/// 返回透明画布的 Mermaid 主题。
+///
+/// 返回:
+/// - Mermaid 渲染主题
+fn transparent_mermaid_theme() -> mermaid_rs_renderer::Theme {
+    let mut theme = mermaid_rs_renderer::Theme::modern();
+    theme.background = "transparent".to_string();
+    theme
 }
 
 /// 生成数学公式图片。
@@ -598,5 +611,44 @@ mod tests {
         let output = output.expect("RaTeX should render inline formula");
         let metadata = fs::metadata(output).unwrap();
         assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn mermaid_renders_to_png_without_external_cli() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = render_mermaid_image("graph TD\nA[Start] --> B[End]", &temp_dir).unwrap();
+        let metadata = fs::metadata(output).unwrap();
+        assert!(metadata.len() > 0);
+    }
+
+    #[test]
+    fn mermaid_png_preserves_transparent_canvas() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let output = render_mermaid_image("graph TD\nA[Start] --> B[End]", &temp_dir).unwrap();
+        assert!(png_has_transparent_pixel(&output));
+    }
+
+    fn png_has_transparent_pixel(path: &Path) -> bool {
+        let file = fs::File::open(path).unwrap();
+        let decoder = png::Decoder::new(std::io::BufReader::new(file));
+        let mut reader = decoder.read_info().unwrap();
+        let mut buffer = vec![0; reader.output_buffer_size()];
+        let info = reader.next_frame(&mut buffer).unwrap();
+        let bytes = &buffer[..info.buffer_size()];
+        match (info.color_type, info.bit_depth) {
+            (png::ColorType::Rgba, png::BitDepth::Eight) => {
+                bytes.chunks_exact(4).any(|chunk| chunk[3] == 0)
+            }
+            (png::ColorType::Rgba, png::BitDepth::Sixteen) => {
+                bytes.chunks_exact(8).any(|chunk| chunk[6] == 0)
+            }
+            (png::ColorType::GrayscaleAlpha, png::BitDepth::Eight) => {
+                bytes.chunks_exact(2).any(|chunk| chunk[1] == 0)
+            }
+            (png::ColorType::GrayscaleAlpha, png::BitDepth::Sixteen) => {
+                bytes.chunks_exact(4).any(|chunk| chunk[2] == 0)
+            }
+            _ => false,
+        }
     }
 }
