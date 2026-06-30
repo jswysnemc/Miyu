@@ -11,6 +11,12 @@ pub fn hook() -> &'static str {
     r#"command_not_found_handler() {
     [[ -o interactive ]] || return 127
 
+    local miyu_clipb=()
+    if [[ "$1" == "-c" || "$1" == "--clipb" ]]; then
+        miyu_clipb=(--clipb)
+        shift
+    fi
+
     local text="$*"
     local miyu_leading_pattern='^[[:space:]]*([-#./~0-9<]|[[:digit:]]+[.)])'
     local miyu_shell_syntax_pattern='[/\\=|;&<>$`(){}\[\]*]'
@@ -20,7 +26,7 @@ pub fn hook() -> &'static str {
     [[ ! "$text" =~ $miyu_leading_pattern ]] || return 127
     [[ ! "$text" =~ $miyu_shell_syntax_pattern ]] || return 127
 
-    miyu --shell-intercept --shell zsh -- "$@" 2>/dev/null
+    miyu --shell-intercept --shell zsh "${miyu_clipb[@]}" -- "$@" 2>/dev/null
     return 127
 }
 "#
@@ -122,6 +128,7 @@ mod tests {
         let hook = hook();
         assert!(hook.contains("command_not_found_handler"));
         assert!(hook.contains("--shell zsh"));
+        assert!(hook.contains("miyu_clipb=(--clipb)"));
         assert!(hook.contains("return 127"));
     }
 }

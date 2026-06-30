@@ -111,6 +111,27 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
+        self.chat_stream_with_image(input, None, on_event).await
+    }
+
+    /// 发送一轮带可选图片的流式对话。
+    ///
+    /// 参数:
+    /// - `input`: 用户文本输入
+    /// - `image_url`: 当前轮附加图片 data URL
+    /// - `on_event`: 流式事件回调
+    ///
+    /// 返回:
+    /// - 聊天结果
+    pub async fn chat_stream_with_image<F>(
+        &mut self,
+        input: &str,
+        image_url: Option<String>,
+        on_event: F,
+    ) -> Result<ChatResult>
+    where
+        F: FnMut(AgentEvent) -> Result<()>,
+    {
         self.state.mark_interrupted_turn_if_needed()?;
         let evicted = self.state.trim_conversation_to_budget(
             self.context_chars,
@@ -128,6 +149,11 @@ impl Agent {
         self.memory.remember_evicted_turns(&evicted)?;
         self.state.append_message("user", input)?;
         let mut messages = self.chat_messages()?;
+        if let Some(image_url) = image_url {
+            if let Some(message) = messages.last_mut().filter(|message| message.role == "user") {
+                *message = ChatMessage::user_with_image(input, image_url);
+            }
+        }
         if let Some(association) = self.memory.association(input)? {
             messages.insert(
                 1,

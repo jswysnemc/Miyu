@@ -1,6 +1,7 @@
 mod agent;
 mod alarm;
 mod cli;
+mod clipboard;
 mod config;
 mod config_tui;
 mod default_kb;

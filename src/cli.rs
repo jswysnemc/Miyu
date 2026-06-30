@@ -1,4 +1,5 @@
 use crate::agent::{Agent, AgentEvent, AgentMode};
+use crate::clipboard;
 use crate::config::AppConfig;
 use crate::i18n::{is_zh, text as t};
 use crate::llm::OpenAiCompatibleClient;
@@ -31,6 +32,9 @@ const REPL_MAX_VISIBLE_INPUT_ROWS: u16 = 12;
 pub struct Cli {
     #[arg(long)]
     pub plan: bool,
+
+    #[arg(short = 'c', long = "clipb")]
+    pub clipb: bool,
 
     #[arg(long, hide = true)]
     pub shell_intercept: bool,
@@ -130,6 +134,12 @@ fn localize_top_args(command: clap::Command) -> clap::Command {
         .mut_arg("plan", |arg| {
             arg.help(t("Run in read-only planning mode", "使用只读计划模式运行"))
         })
+        .mut_arg("clipb", |arg| {
+            arg.help(t(
+                "Inject clipboard text or attach clipboard image to the prompt",
+                "将剪贴板文本注入提示词，或将剪贴板图片附加到提示词",
+            ))
+        })
         .mut_arg("message", |arg| {
             arg.help(t(
                 "Message to send; omitted to enter REPL",
@@ -215,9 +225,16 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
 }
 
 fn localize_ask_command(command: clap::Command) -> clap::Command {
-    command.mut_arg("message", |arg| {
-        arg.help(t("Message to send", "要发送的消息"))
-    })
+    command
+        .mut_arg("clipb", |arg| {
+            arg.help(t(
+                "Inject clipboard text or attach clipboard image to the prompt",
+                "将剪贴板文本注入提示词，或将剪贴板图片附加到提示词",
+            ))
+        })
+        .mut_arg("message", |arg| {
+            arg.help(t("Message to send", "要发送的消息"))
+        })
 }
 
 fn localize_providers_command(command: clap::Command) -> clap::Command {
@@ -389,6 +406,9 @@ pub enum Command {
 
 #[derive(Debug, Args)]
 pub struct MessageArgs {
+    #[arg(short = 'c', long = "clipb")]
+    pub clipb: bool,
+
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub message: Vec<String>,
 }
@@ -587,8 +607,11 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     if cli.shell_intercept {
         let shell_name = cli.shell.as_deref().unwrap_or("fish");
-        let message = join_message(cli.message);
-        return run_shell_intercept(&paths, shell_name, message).await;
+        let input = clipboard::ClipboardCliInput {
+            message: join_message(cli.message),
+            clipb: cli.clipb,
+        };
+        return run_shell_intercept(&paths, shell_name, input.message, input.clipb).await;
     }
 
     if !paths.config_file.exists() && !matches!(cli.command, Some(Command::Init)) {
@@ -599,7 +622,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
         Some(Command::Tool(args)) => run_tool(&paths, mode, args).await,
         Some(Command::Ask(args)) => {
-            run_chat_with_options(&paths, join_message(args.message), None, false, mode).await
+            let input = clipboard::chat_input_from_parts(args.message, args.clipb);
+            run_chat_with_options(&paths, input.message, None, false, mode, input.clipb).await
         }
         Some(Command::Init) => run_init(&paths, InitKind::Explicit),
         Some(Command::Paths) => {
@@ -619,11 +643,11 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Skills(args)) => run_skills(&paths, args),
         Some(Command::Reset) => run_reset(&paths),
         None => {
-            let message = join_message(cli.message);
-            if message.is_empty() {
+            let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
+            if input.message.is_empty() && !input.clipb {
                 run_repl(&paths, mode).await
             } else {
-                run_chat_with_options(&paths, message, None, false, mode).await
+                run_chat_with_options(&paths, input.message, None, false, mode, input.clipb).await
             }
         }
     }
@@ -1223,7 +1247,12 @@ async fn run_config(paths: &MiyuPaths, args: ConfigArgs) -> Result<()> {
     }
 }
 
-async fn run_shell_intercept(paths: &MiyuPaths, shell_name: &str, message: String) -> Result<()> {
+async fn run_shell_intercept(
+    paths: &MiyuPaths,
+    shell_name: &str,
+    message: String,
+    clipb: bool,
+) -> Result<()> {
     if !matches!(shell_name, "fish" | "bash" | "zsh") {
         bail!("{}: {shell_name}", t("unsupported shell", "不支持的 shell"));
     }
@@ -1233,7 +1262,7 @@ async fn run_shell_intercept(paths: &MiyuPaths, shell_name: &str, message: Strin
             t("not a natural language command", "不是自然语言命令")
         );
     }
-    run_chat_with_options(paths, message, None, false, AgentMode::Yolo).await
+    run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb).await
 }
 
 async fn run_chat_with_options(
@@ -1242,12 +1271,14 @@ async fn run_chat_with_options(
     show_reasoning: Option<bool>,
     plain: bool,
     mode: AgentMode,
+    clipb: bool,
 ) -> Result<()> {
-    if message.is_empty() {
+    if message.is_empty() && !clipb {
         return run_repl(paths, mode).await;
     }
     AppConfig::init_files(paths)?;
     let config = AppConfig::load_or_default(paths)?;
+    let chat_input = prepare_clipboard_chat_input(message, clipb)?;
     let state = StateStore::new(paths)?;
     state.init_files()?;
     let client = OpenAiCompatibleClient::from_config(&config, paths)?;
@@ -1268,7 +1299,9 @@ async fn run_chat_with_options(
         render::StreamRenderer::new(reasoning_mode, tool_call_mode, plain, readable_tool_names);
     renderer.start_waiting()?;
     let result = agent
-        .chat_stream(&message, |event| handle_agent_event(&mut renderer, event))
+        .chat_stream_with_image(&chat_input.message, chat_input.image_url, |event| {
+            handle_agent_event(&mut renderer, event)
+        })
         .await;
     renderer.finish()?;
     result?;
@@ -2065,6 +2098,22 @@ mod repl_input_tests {
     }
 
     #[test]
+    fn cli_parses_trailing_clipboard_flag_as_message_part() {
+        let cli = Cli::try_parse_from(["miyu", "总结", "-c"]).unwrap();
+        let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
+        assert!(input.clipb);
+        assert_eq!(input.message, "总结");
+    }
+
+    #[test]
+    fn cli_parses_leading_clipboard_flag_as_option() {
+        let cli = Cli::try_parse_from(["miyu", "-c", "总结"]).unwrap();
+        let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
+        assert!(input.clipb);
+        assert_eq!(input.message, "总结");
+    }
+
+    #[test]
     fn input_helpers_edit_at_cursor() {
         let mut input = "abcd".to_string();
         let mut cursor = 2;
@@ -2400,8 +2449,37 @@ fn run_reset(paths: &MiyuPaths) -> Result<()> {
     Ok(())
 }
 
+/// 组装聊天消息文本。
+///
+/// 参数:
+/// - `parts`: 消息参数
+///
+/// 返回:
+/// - 空格连接后的消息
 fn join_message(parts: Vec<String>) -> String {
     parts.join(" ").trim().to_string()
+}
+
+/// 准备带剪贴板内容的聊天输入。
+///
+/// 参数:
+/// - `message`: 用户消息
+/// - `clipb`: 是否启用剪贴板注入
+///
+/// 返回:
+/// - 最终文本消息和可选图片 URL
+fn prepare_clipboard_chat_input(
+    message: String,
+    clipb: bool,
+) -> Result<clipboard::ClipboardChatInput> {
+    if !clipb {
+        return Ok(clipboard::ClipboardChatInput {
+            message,
+            image_url: None,
+        });
+    }
+    let payload = clipboard::read_clipboard_payload()?;
+    Ok(clipboard::apply_clipboard_payload(message, payload))
 }
 
 fn build_tool_registry(
