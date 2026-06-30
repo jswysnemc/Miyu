@@ -1529,6 +1529,7 @@ mod tests {
             fish_hook_file: root.join("fish/conf.d/miyu.fish"),
             bash_hook_file: root.join("config/shell/bash-hook.sh"),
             zsh_hook_file: root.join("config/shell/zsh-hook.zsh"),
+            powershell_hook_file: root.join("config/shell/powershell-hook.ps1"),
         }
     }
 

@@ -566,6 +566,7 @@ mod tests {
             fish_hook_file: PathBuf::new(),
             bash_hook_file: PathBuf::new(),
             zsh_hook_file: PathBuf::new(),
+            powershell_hook_file: PathBuf::new(),
         }
     }
 }

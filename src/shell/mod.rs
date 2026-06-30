@@ -1,5 +1,6 @@
 pub mod bash;
 pub mod fish;
+pub mod powershell;
 pub mod zsh;
 
 use crate::i18n::text as t;
@@ -9,6 +10,7 @@ pub fn print_reload_hint(shell: &str, hook_file: &Path) {
     let source = match shell {
         "fish" => format!("source {}", fish_quote(hook_file)),
         "bash" | "zsh" => format!("source {}", shell_quote(hook_file)),
+        "powershell" => format!(". {}", powershell_quote(hook_file)),
         _ => return,
     };
     if current_parent_shell().as_deref() == Some(shell) {
@@ -36,7 +38,13 @@ pub fn current_parent_shell() -> Option<String> {
     for _ in 0..8 {
         let parent = parent_pid(pid)?;
         let name = process_name(parent)?;
-        if matches!(name.as_str(), "fish" | "bash" | "zsh") {
+        if matches!(
+            name.as_str(),
+            "fish" | "bash" | "zsh" | "pwsh" | "powershell"
+        ) {
+            if matches!(name.as_str(), "pwsh" | "powershell") {
+                return Some("powershell".to_string());
+            }
             return Some(name);
         }
         pid = parent;
@@ -69,6 +77,10 @@ fn fish_quote(path: &Path) -> String {
             .replace('\\', "\\\\")
             .replace('\'', "\\'")
     )
+}
+
+fn powershell_quote(path: &Path) -> String {
+    format!("'{}'", path.display().to_string().replace('\'', "''"))
 }
 
 pub fn looks_like_natural_language(input: &str) -> bool {

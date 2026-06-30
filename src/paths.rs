@@ -16,6 +16,7 @@ pub struct MiyuPaths {
     pub fish_hook_file: PathBuf,
     pub bash_hook_file: PathBuf,
     pub zsh_hook_file: PathBuf,
+    pub powershell_hook_file: PathBuf,
 }
 
 impl MiyuPaths {
@@ -39,6 +40,7 @@ impl MiyuPaths {
         let fish_hook_file = base.config_dir().join("fish/conf.d/miyu.fish");
         let bash_hook_file = config_dir.join("shell/bash-hook.sh");
         let zsh_hook_file = config_dir.join("shell/zsh-hook.zsh");
+        let powershell_hook_file = config_dir.join("shell/powershell-hook.ps1");
 
         Ok(Self {
             config_file: config_dir.join("config.jsonc"),
@@ -52,6 +54,7 @@ impl MiyuPaths {
             fish_hook_file,
             bash_hook_file,
             zsh_hook_file,
+            powershell_hook_file,
         })
     }
 
@@ -116,6 +119,11 @@ impl MiyuPaths {
             "{}: {}",
             t("zsh_hook_file", "zsh hook 文件"),
             self.zsh_hook_file.display()
+        );
+        println!(
+            "{}: {}",
+            t("powershell_hook_file", "PowerShell hook 文件"),
+            self.powershell_hook_file.display()
         );
     }
 }

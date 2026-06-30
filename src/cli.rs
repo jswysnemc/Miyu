@@ -187,6 +187,11 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "集成到 zsh，集成后可在终端直接使用自然语言交流。",
         ),
         (
+            "powershell-init",
+            "Integrate with PowerShell so you can chat in natural language directly in the terminal",
+            "集成到 PowerShell，集成后可在终端直接使用自然语言交流。",
+        ),
+        (
             "remove-shell-hook",
             "Safely remove installed Miyu shell hooks",
             "安全删除已安装的 Miyu shell hook",
@@ -395,6 +400,7 @@ pub enum Command {
     FishInit,
     BashInit,
     ZshInit,
+    PowershellInit,
     RemoveShellHook,
     History(HistoryArgs),
     Kb(KbArgs),
@@ -635,6 +641,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::FishInit) => shell::fish::install(&paths),
         Some(Command::BashInit) => shell::bash::install(&paths),
         Some(Command::ZshInit) => shell::zsh::install(&paths),
+        Some(Command::PowershellInit) => shell::powershell::install(&paths),
         Some(Command::RemoveShellHook) => remove_shell_hooks(&paths),
         Some(Command::History(args)) => run_history(&paths, args),
         Some(Command::Kb(args)) => run_kb(&paths, args).await,
@@ -760,6 +767,7 @@ fn prompt_shell_init_menu(paths: &MiyuPaths) -> Result<()> {
         Some("fish") => shell::fish::install(paths),
         Some("bash") => shell::bash::install(paths),
         Some("zsh") => shell::zsh::install(paths),
+        Some("powershell") => shell::powershell::install(paths),
         _ => Ok(()),
     }
 }
@@ -770,6 +778,7 @@ fn select_shell_hook() -> Result<Option<&'static str>> {
         ("fish", Some("fish")),
         ("bash", Some("bash")),
         ("zsh", Some("zsh")),
+        ("powershell", Some("powershell")),
     ];
     let detected = shell::current_parent_shell();
     let mut selected = detected
@@ -836,6 +845,7 @@ fn remove_shell_hooks(paths: &MiyuPaths) -> Result<()> {
     shell::fish::uninstall(paths)?;
     shell::bash::uninstall(paths)?;
     shell::zsh::uninstall(paths)?;
+    shell::powershell::uninstall(paths)?;
     Ok(())
 }
 
@@ -915,6 +925,7 @@ fn alarm_worker_paths(state_dir: PathBuf) -> MiyuPaths {
         fish_hook_file: PathBuf::new(),
         bash_hook_file: PathBuf::new(),
         zsh_hook_file: PathBuf::new(),
+        powershell_hook_file: PathBuf::new(),
     }
 }
 
@@ -1253,7 +1264,7 @@ async fn run_shell_intercept(
     message: String,
     clipb: bool,
 ) -> Result<()> {
-    if !matches!(shell_name, "fish" | "bash" | "zsh") {
+    if !matches!(shell_name, "fish" | "bash" | "zsh" | "powershell") {
         bail!("{}: {shell_name}", t("unsupported shell", "不支持的 shell"));
     }
     if message.is_empty() || !shell::looks_like_natural_language(&message) {
@@ -2195,6 +2206,7 @@ mod repl_input_tests {
             fish_hook_file: PathBuf::new(),
             bash_hook_file: PathBuf::new(),
             zsh_hook_file: PathBuf::new(),
+            powershell_hook_file: PathBuf::new(),
         };
         let state = StateStore::new(&paths).unwrap();
         state.append_message("user", "first").unwrap();

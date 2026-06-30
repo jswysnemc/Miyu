@@ -226,6 +226,7 @@ mod tests {
             fish_hook_file: root.join("fish/miyu.fish"),
             bash_hook_file: root.join("shell/bash-hook.sh"),
             zsh_hook_file: root.join("shell/zsh-hook.zsh"),
+            powershell_hook_file: root.join("shell/powershell-hook.ps1"),
         }
     }
 

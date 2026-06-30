@@ -21,6 +21,9 @@ pub(crate) fn render_terminal_image(path: &Path) -> Result<String> {
     if supports_iterm_inline_image() {
         return render_iterm_image(path);
     }
+    if supports_windows_terminal_sixel() {
+        return render_sixel_image(path);
+    }
     render_chafa_image(path)
 }
 
@@ -46,6 +49,17 @@ fn supports_iterm_inline_image() -> bool {
     std::env::var("TERM_PROGRAM")
         .map(|program| matches!(program.as_str(), "iTerm.app" | "WezTerm"))
         .unwrap_or(false)
+}
+
+/// 判断当前终端是否支持 Windows Terminal 使用的 Sixel 图形协议。
+///
+/// 返回:
+/// - 是否可能支持 Sixel 图形协议
+fn supports_windows_terminal_sixel() -> bool {
+    std::env::var_os("WT_SESSION").is_some()
+        || std::env::var("TERM_PROGRAM")
+            .map(|program| program == "Windows_Terminal")
+            .unwrap_or(false)
 }
 
 /// 使用 Kitty 图形协议渲染图片。
@@ -100,6 +114,26 @@ fn render_iterm_image(path: &Path) -> Result<String> {
     ))
 }
 
+/// 使用 Sixel 图形协议渲染图片。
+///
+/// 参数:
+/// - `path`: 图片文件路径
+///
+/// 返回:
+/// - Sixel 图形协议转义序列
+fn render_sixel_image(path: &Path) -> Result<String> {
+    let mut command = Command::new("chafa");
+    if let Some(size) = chafa_size() {
+        command.arg("--size").arg(size);
+    }
+    command
+        .arg("--format")
+        .arg("sixels")
+        .arg("--animate")
+        .arg("off");
+    run_chafa(command, path, "failed to run chafa for sixel output")
+}
+
 /// 使用 chafa 降级渲染图片。
 ///
 /// 参数:
@@ -113,11 +147,28 @@ fn render_chafa_image(path: &Path) -> Result<String> {
         command.arg("--size").arg(size);
     }
     command.arg("--fg-only").arg("--threshold").arg("0.75");
+    run_chafa(
+        command,
+        path,
+        "failed to run chafa; install chafa or use a terminal image protocol",
+    )
+}
+
+/// 执行 chafa 并返回标准输出文本。
+///
+/// 参数:
+/// - `command`: 已配置的 chafa 命令
+/// - `path`: 图片文件路径
+/// - `context`: 命令执行失败时的上下文
+///
+/// 返回:
+/// - chafa 输出文本
+fn run_chafa(mut command: Command, path: &Path, context: &str) -> Result<String> {
     let output = command
         .arg(path)
         .stdin(Stdio::null())
         .output()
-        .with_context(|| "failed to run chafa; install chafa or use a terminal image protocol")?;
+        .with_context(|| context.to_string())?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!(
@@ -153,5 +204,12 @@ mod tests {
         std::env::set_var("TERM_PROGRAM", "iTerm.app");
         assert!(supports_iterm_inline_image());
         std::env::remove_var("TERM_PROGRAM");
+    }
+
+    #[test]
+    fn detects_windows_terminal_session() {
+        std::env::set_var("WT_SESSION", "session-id");
+        assert!(supports_windows_terminal_sixel());
+        std::env::remove_var("WT_SESSION");
     }
 }
