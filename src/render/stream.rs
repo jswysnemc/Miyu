@@ -1,17 +1,21 @@
 use crate::i18n::text as t;
-use crate::llm::{ChatResult, ChatStreamChunk, ChatStreamKind};
+use crate::llm::{ChatStreamChunk, ChatStreamKind};
 use crate::render::command_output::{
     write_command_block, write_command_error_block, write_command_result_blocks, write_tool_payload,
 };
 use crate::render::markdown::MarkdownStreamRenderer;
-use crate::render::tool_names::readable_tool_name;
+use crate::render::stream_summary::StreamSummary;
+use crate::render::wait_spinner::WaitSpinner;
 use anyhow::Result;
-use crossterm::cursor::{Hide, MoveToColumn, Show};
+use crossterm::cursor::{Hide, Show};
+use crossterm::execute;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
-use crossterm::terminal::{Clear, ClearType};
-use crossterm::{execute, terminal};
-use std::collections::BTreeMap;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, Write};
+
+#[cfg(test)]
+use crate::render::stream_summary::{
+    style_summary_text, tool_status_text, SummaryStyle, ToolStats,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReasoningDisplayMode {
@@ -61,41 +65,6 @@ impl ToolCallDisplayMode {
     }
 }
 
-/// 打印一次完整助手回复。
-///
-/// 参数:
-/// - `response`: 聊天结果
-/// - `show_reasoning`: 是否打印推理内容
-///
-/// 返回:
-/// - 打印是否成功
-pub fn print_assistant_response(response: &ChatResult, show_reasoning: bool) -> Result<()> {
-    if show_reasoning {
-        if let Some(reasoning) = response
-            .reasoning
-            .as_deref()
-            .filter(|text| !text.trim().is_empty())
-        {
-            print_reasoning(reasoning)?;
-        }
-    }
-    print_markdown(&response.content);
-    Ok(())
-}
-
-/// 打印 Markdown 文本。
-///
-/// 参数:
-/// - `markdown`: 原始 Markdown 文本
-pub fn print_markdown(markdown: &str) {
-    let mut renderer = MarkdownStreamRenderer::new();
-    let markdown = markdown.trim_end();
-    let mut stdout = io::stdout();
-    let _ = write!(stdout, "{}", renderer.push(markdown));
-    let _ = write!(stdout, "{}", renderer.flush());
-    let _ = stdout.flush();
-}
-
 pub struct StreamRenderer {
     reasoning_mode: ReasoningDisplayMode,
     tool_call_mode: ToolCallDisplayMode,
@@ -103,13 +72,8 @@ pub struct StreamRenderer {
     mode: Option<ChatStreamKind>,
     cursor_hidden: bool,
     markdown: MarkdownStreamRenderer,
-    reasoning_chars: usize,
-    reasoning_lines: usize,
-    tool_stats: BTreeMap<String, ToolStats>,
-    readable_tool_names: bool,
-    summary_line_active: bool,
-    summary_lines_active: u16,
-    live_summary: bool,
+    summary: StreamSummary,
+    wait_spinner: Option<WaitSpinner>,
 }
 
 impl StreamRenderer {
@@ -136,14 +100,22 @@ impl StreamRenderer {
             mode: None,
             cursor_hidden: false,
             markdown: MarkdownStreamRenderer::new(),
-            reasoning_chars: 0,
-            reasoning_lines: 0,
-            tool_stats: BTreeMap::new(),
-            readable_tool_names,
-            summary_line_active: false,
-            summary_lines_active: 0,
-            live_summary: io::stdout().is_terminal(),
+            summary: StreamSummary::new(readable_tool_names),
+            wait_spinner: None,
         }
+    }
+
+    /// 启动等待响应动画。
+    ///
+    /// 返回:
+    /// - 启动是否成功
+    pub fn start_waiting(&mut self) -> Result<()> {
+        if self.plain || self.wait_spinner.is_some() || !WaitSpinner::supported() {
+            return Ok(());
+        }
+        self.hide_cursor()?;
+        self.wait_spinner = Some(WaitSpinner::start(t("thinking", "思考").to_string()));
+        Ok(())
     }
 
     /// 写入模型流式文本片段。
@@ -168,12 +140,17 @@ impl StreamRenderer {
             && chunk.kind == ChatStreamKind::Reasoning
         {
             self.finalize_tools_summary()?;
-            self.reasoning_chars += text.chars().count();
-            self.reasoning_lines += text.matches('\n').count();
+            self.summary.add_reasoning_text(&text);
             self.mode = Some(ChatStreamKind::Reasoning);
-            self.render_summary_line(&self.reasoning_summary_text(), SummaryStyle::Reasoning)?;
+            if self.wait_spinner.is_some() {
+                self.summary.clear_live_lines()?;
+                self.set_waiting_phase(self.summary.reasoning_text());
+            } else {
+                self.summary.render_reasoning_live()?;
+            }
             return Ok(());
         }
+        self.stop_waiting()?;
         if self.mode != Some(chunk.kind) {
             if chunk.kind == ChatStreamKind::Content {
                 self.finalize_reasoning_summary()?;
@@ -203,6 +180,7 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.stop_waiting()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         if name == "run_command" {
@@ -210,18 +188,18 @@ impl StreamRenderer {
             write_command_block(&mut stdout, arguments)?;
             stdout.flush()?;
             if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                self.tool_stats.entry(name.to_string()).or_default().calls += 1;
+                self.summary.note_tool_call(name);
             }
             return Ok(());
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             let mut stdout = io::stdout();
-            writeln!(stdout, "tool {}", self.display_tool_name(name))?;
+            writeln!(stdout, "tool {}", self.summary.display_tool_name(name))?;
             write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            self.tool_stats.entry(name.to_string()).or_default().calls += 1;
-            self.render_summary_line(&self.tool_summary_text(), SummaryStyle::Tool)?;
+            self.summary.note_tool_call(name);
+            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -239,15 +217,12 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.stop_waiting()?;
         let status = if ok { "ok" } else { "err" };
         if name == "run_command" {
             if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                let stats = self.tool_stats.entry(name.to_string()).or_default();
-                if ok {
-                    stats.ok += 1;
-                } else {
-                    stats.error += 1;
-                    stats.progress = None;
+                self.summary.note_tool_result(name, ok);
+                if !ok {
                     let mut stdout = io::stdout();
                     write_command_error_block(&mut stdout, output)?;
                     stdout.flush()?;
@@ -263,18 +238,16 @@ impl StreamRenderer {
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             let mut stdout = io::stdout();
-            writeln!(stdout, "result {} {status}", self.display_tool_name(name))?;
+            writeln!(
+                stdout,
+                "result {} {status}",
+                self.summary.display_tool_name(name)
+            )?;
             write_tool_payload(&mut stdout, t("output", "输出"), output)?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            let stats = self.tool_stats.entry(name.to_string()).or_default();
-            if ok {
-                stats.ok += 1;
-            } else {
-                stats.error += 1;
-                stats.progress = None;
-            }
-            self.render_summary_line(&self.tool_summary_text(), SummaryStyle::Tool)?;
+            self.summary.note_tool_result(name, ok);
+            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -295,6 +268,7 @@ impl StreamRenderer {
             self.prepare_for_external_output()?;
             return Ok(());
         }
+        self.stop_waiting()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         if self.tool_call_mode == ToolCallDisplayMode::Full {
@@ -302,15 +276,12 @@ impl StreamRenderer {
             writeln!(
                 stdout,
                 "progress {}: {message}",
-                self.display_tool_name(name)
+                self.summary.display_tool_name(name)
             )?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            self.tool_stats
-                .entry(name.to_string())
-                .or_default()
-                .progress = Some(message.to_string());
-            self.render_summary_line(&self.tool_summary_text(), SummaryStyle::Tool)?;
+            self.summary.note_tool_progress(name, message);
+            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -320,12 +291,8 @@ impl StreamRenderer {
     /// 返回:
     /// - 准备是否成功
     pub fn prepare_for_external_output(&mut self) -> Result<()> {
-        if self.summary_line_active {
-            let mut stdout = io::stdout();
-            execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-            stdout.flush()?;
-            self.summary_line_active = false;
-        }
+        self.stop_waiting()?;
+        self.summary.clear_live_lines()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         self.finalize_tools_summary()?;
@@ -338,10 +305,8 @@ impl StreamRenderer {
     /// 返回:
     /// - 收尾是否成功
     pub fn finish(&mut self) -> Result<()> {
-        if self.summary_line_active {
-            self.clear_summary_lines()?;
-            self.summary_line_active = false;
-        }
+        self.stop_waiting()?;
+        self.summary.clear_live_lines()?;
         if self.mode == Some(ChatStreamKind::Content) && !self.plain {
             let mut stdout = io::stdout();
             write!(stdout, "{}", self.markdown.flush())?;
@@ -419,26 +384,9 @@ impl StreamRenderer {
     /// 返回:
     /// - 固化是否成功
     fn finalize_reasoning_summary(&mut self) -> Result<()> {
-        if self.reasoning_mode == ReasoningDisplayMode::Summary && self.reasoning_chars > 0 {
-            if self.summary_line_active {
-                let mut stdout = io::stdout();
-                self.clear_summary_lines()?;
-                writeln!(
-                    stdout,
-                    "{}",
-                    style_summary_text(&self.reasoning_summary_text(), SummaryStyle::Reasoning)
-                )?;
-                stdout.flush()?;
-                self.summary_line_active = false;
-                self.summary_lines_active = 0;
-            } else {
-                println!(
-                    "{}",
-                    style_summary_text(&self.reasoning_summary_text(), SummaryStyle::Reasoning)
-                );
-            }
-            self.reasoning_chars = 0;
-            self.reasoning_lines = 0;
+        if self.reasoning_mode == ReasoningDisplayMode::Summary && self.summary.has_reasoning() {
+            self.stop_waiting()?;
+            self.summary.finalize_reasoning()?;
             self.mode = None;
         }
         Ok(())
@@ -449,135 +397,32 @@ impl StreamRenderer {
     /// 返回:
     /// - 固化是否成功
     fn finalize_tools_summary(&mut self) -> Result<()> {
-        if self.tool_call_mode == ToolCallDisplayMode::Summary && !self.tool_stats.is_empty() {
-            if self.summary_line_active {
-                let mut stdout = io::stdout();
-                self.clear_summary_lines()?;
-                writeln!(
-                    stdout,
-                    "{}",
-                    style_summary_text(&self.tool_summary_text(), SummaryStyle::Tool)
-                )?;
-                stdout.flush()?;
-                self.summary_line_active = false;
-                self.summary_lines_active = 0;
-            } else {
-                println!(
-                    "{}",
-                    style_summary_text(&self.tool_summary_text(), SummaryStyle::Tool)
-                );
-            }
-            self.tool_stats.clear();
+        if self.tool_call_mode == ToolCallDisplayMode::Summary && self.summary.has_tools() {
+            self.stop_waiting()?;
+            self.summary.finalize_tools()?;
         }
         Ok(())
     }
 
-    /// 渲染实时摘要行。
+    /// 更新等待动画状态文本。
     ///
     /// 参数:
-    /// - `text`: 摘要文本
-    /// - `style`: 摘要样式
+    /// - `phase`: 新状态文本
+    fn set_waiting_phase(&mut self, phase: String) {
+        if let Some(spinner) = &self.wait_spinner {
+            spinner.set_phase(phase);
+        }
+    }
+
+    /// 停止等待动画。
     ///
     /// 返回:
-    /// - 渲染是否成功
-    fn render_summary_line(&mut self, text: &str, style: SummaryStyle) -> Result<()> {
-        if !self.live_summary {
-            return Ok(());
+    /// - 停止是否成功
+    fn stop_waiting(&mut self) -> Result<()> {
+        if let Some(mut spinner) = self.wait_spinner.take() {
+            spinner.stop()?;
         }
-        let mut stdout = io::stdout();
-        self.clear_summary_lines()?;
-        let lines = text.lines().collect::<Vec<_>>();
-        for (index, line) in lines.iter().enumerate() {
-            if index > 0 {
-                writeln!(stdout)?;
-            }
-            write!(stdout, "{}\x1b[K", style_summary_text(line, style))?;
-        }
-        stdout.flush()?;
-        self.summary_line_active = true;
-        self.summary_lines_active = lines.len().max(1) as u16;
         Ok(())
-    }
-
-    /// 清除当前实时摘要行。
-    ///
-    /// 返回:
-    /// - 清除是否成功
-    fn clear_summary_lines(&mut self) -> Result<()> {
-        if !self.summary_line_active {
-            return Ok(());
-        }
-        let mut stdout = io::stdout();
-        let lines = self.summary_lines_active.max(1);
-        for index in 0..lines {
-            if index > 0 {
-                execute!(stdout, crossterm::cursor::MoveUp(1))?;
-            }
-            execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        }
-        stdout.flush()?;
-        self.summary_line_active = false;
-        self.summary_lines_active = 0;
-        Ok(())
-    }
-
-    /// 生成推理摘要文本。
-    ///
-    /// 返回:
-    /// - 推理摘要文本
-    fn reasoning_summary_text(&self) -> String {
-        format!(
-            "{} · {} {} · {} {}",
-            t("thinking", "思考"),
-            self.reasoning_lines.max(1),
-            t("lines", "行"),
-            self.reasoning_chars,
-            t("chars", "字符")
-        )
-    }
-
-    /// 生成工具调用摘要文本。
-    ///
-    /// 返回:
-    /// - 工具调用摘要文本
-    fn tool_summary_text(&self) -> String {
-        let parts = self
-            .tool_stats
-            .iter()
-            .map(|(name, stats)| {
-                let header = tool_status_text(self.display_tool_name(name), stats);
-                stats.progress.as_ref().map_or(header.clone(), |message| {
-                    let progress = message
-                        .lines()
-                        .filter(|line| !line.trim().is_empty())
-                        .map(|line| format!("· {}", clip_progress_line(line, 120)))
-                        .collect::<Vec<_>>()
-                        .join("\n");
-                    if progress.is_empty() {
-                        header
-                    } else {
-                        format!("{header}\n{progress}")
-                    }
-                })
-            })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("{}: {parts}", t("tools", "工具"))
-    }
-
-    /// 返回展示用工具名称。
-    ///
-    /// 参数:
-    /// - `name`: 工具原始名称
-    ///
-    /// 返回:
-    /// - 展示名称
-    fn display_tool_name<'a>(&self, name: &'a str) -> &'a str {
-        if self.readable_tool_names {
-            readable_tool_name(name)
-        } else {
-            name
-        }
     }
 
     /// 隐藏终端光标。
@@ -605,98 +450,10 @@ impl StreamRenderer {
     }
 }
 
-#[derive(Default)]
-struct ToolStats {
-    calls: usize,
-    ok: usize,
-    error: usize,
-    progress: Option<String>,
-}
-
-#[derive(Clone, Copy)]
-enum SummaryStyle {
-    Reasoning,
-    Tool,
-}
-
-/// 为摘要文本添加终端样式。
-///
-/// 参数:
-/// - `text`: 摘要文本
-/// - `style`: 摘要类型
-///
-/// 返回:
-/// - 带 ANSI 样式的摘要文本
-fn style_summary_text(text: &str, style: SummaryStyle) -> String {
-    match style {
-        SummaryStyle::Reasoning => format!("\x1b[2m\x1b[36m{text}\x1b[0m"),
-        SummaryStyle::Tool => format!("\x1b[2m{text}\x1b[0m"),
-    }
-}
-
-/// 生成工具状态文本。
-///
-/// 参数:
-/// - `name`: 工具展示名称
-/// - `stats`: 工具调用统计
-///
-/// 返回:
-/// - 工具状态摘要
-fn tool_status_text(name: &str, stats: &ToolStats) -> String {
-    let calls = stats.calls.max(stats.ok + stats.error).max(1);
-    let running = stats.calls.saturating_sub(stats.ok + stats.error);
-    if calls == 1 {
-        if running > 0 {
-            return format!("{name}×1 {}", t("running", "运行中"));
-        }
-        if stats.error > 0 {
-            return format!("{name}×1 err");
-        }
-        if stats.ok > 0 {
-            return format!("{name}×1 ok");
-        }
-    }
-    if running > 0 {
-        format!(
-            "{name}×{calls} {}:{} ok:{} err:{}",
-            t("running", "运行中"),
-            running,
-            stats.ok,
-            stats.error
-        )
-    } else {
-        format!("{name}×{calls} ok:{} err:{}", stats.ok, stats.error)
-    }
-}
-
-/// 压缩进度文本为单行。
-///
-/// 参数:
-/// - `text`: 原始文本
-/// - `max_chars`: 最大字符数
-///
-/// 返回:
-/// - 压缩后的文本
-fn clip_progress_line(text: &str, max_chars: usize) -> String {
-    let text = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    if text.chars().count() <= max_chars {
-        text
-    } else {
-        format!(
-            "{}...",
-            text.chars()
-                .take(max_chars.saturating_sub(3))
-                .collect::<String>()
-        )
-    }
-}
-
 impl Drop for StreamRenderer {
     fn drop(&mut self) {
-        if self.summary_line_active {
-            let _ = self.clear_summary_lines();
-            eprintln!();
-        }
+        let _ = self.stop_waiting();
+        let _ = self.summary.clear_live_lines();
         let _ = self.show_cursor();
         let _ = execute!(io::stdout(), ResetColor);
     }
@@ -711,27 +468,6 @@ impl Drop for StreamRenderer {
 /// - 使用 `\n` 的文本
 fn normalize_stream_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-/// 打印推理内容块。
-///
-/// 参数:
-/// - `reasoning`: 推理内容
-///
-/// 返回:
-/// - 打印是否成功
-fn print_reasoning(reasoning: &str) -> Result<()> {
-    let mut stdout = io::stdout();
-    execute!(stdout, SetForegroundColor(Color::DarkCyan))?;
-    writeln!(stdout, "{}", t("thinking", "思考"))?;
-    for line in reasoning.trim().lines() {
-        writeln!(stdout, "  {line}")?;
-    }
-    execute!(stdout, ResetColor)?;
-    if terminal::size().is_ok() {
-        writeln!(stdout)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]
