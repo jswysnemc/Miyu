@@ -224,12 +224,12 @@ fn render_math_image(source: &str, temp_dir: &TempDir, mode: MathRenderMode) -> 
     if let Some(output) = try_render_ratex_math(source, temp_dir, mode)? {
         return Ok(output);
     }
-    if let Some(output) = try_render_typst_math(source, temp_dir)? {
+    if let Some(output) = try_render_typst_math(source, temp_dir, mode)? {
         return Ok(output);
     }
     let svg = temp_dir.path().join("formula.svg");
     let output = temp_dir.path().join("formula.png");
-    fs::write(&svg, build_math_svg(source))
+    fs::write(&svg, build_math_svg(source, mode))
         .with_context(|| format!("failed to write {}", svg.display()))?;
     convert_svg_to_png(&svg, &output)?;
     ensure_file_exists(&output)?;
@@ -261,8 +261,8 @@ fn try_render_ratex_math(
         MathRenderMode::Inline => MathStyle::Text,
     };
     let (font_size, padding, device_pixel_ratio) = match mode {
-        MathRenderMode::Block => (36.0, 6.0, 2.0),
-        MathRenderMode::Inline => (26.0, 0.0, 2.0),
+        MathRenderMode::Block => (28.0, 4.0, 1.5),
+        MathRenderMode::Inline => (18.0, 0.0, 1.5),
     };
     let layout_opts = LayoutOptions::default()
         .with_style(math_style)
@@ -315,17 +315,26 @@ fn normalize_math_source(source: &str) -> String {
 /// 参数:
 /// - `source`: 数学公式源码
 /// - `temp_dir`: 临时目录
+/// - `mode`: 数学公式展示模式
 ///
 /// 返回:
 /// - 成功时返回图片路径，未启用时返回空
-fn try_render_typst_math(source: &str, temp_dir: &TempDir) -> Result<Option<PathBuf>> {
+fn try_render_typst_math(
+    source: &str,
+    temp_dir: &TempDir,
+    mode: MathRenderMode,
+) -> Result<Option<PathBuf>> {
     if !command_available("typst") {
         return Ok(None);
     }
     let input = temp_dir.path().join("formula.typ");
     let output = temp_dir.path().join("formula.png");
+    let (margin, text_size) = match mode {
+        MathRenderMode::Block => (6, 14),
+        MathRenderMode::Inline => (2, 11),
+    };
     let content = format!(
-        "#set page(width: auto, height: auto, margin: 12pt)\n#set text(fill: rgb(\"d7e3ff\"), size: 18pt)\n$ {} $\n",
+        "#set page(width: auto, height: auto, margin: {margin}pt)\n#set text(fill: rgb(\"d7e3ff\"), size: {text_size}pt)\n$ {} $\n",
         source.trim()
     );
     fs::write(&input, content).with_context(|| format!("failed to write {}", input.display()))?;
@@ -369,23 +378,36 @@ fn convert_svg_to_png(svg: &Path, output: &Path) -> Result<()> {
 ///
 /// 参数:
 /// - `source`: 数学公式源码
+/// - `mode`: 数学公式展示模式
 ///
 /// 返回:
 /// - SVG 文本
-fn build_math_svg(source: &str) -> String {
+fn build_math_svg(source: &str, mode: MathRenderMode) -> String {
     let lines = wrap_math_lines(source.trim(), 72);
+    let (font_size, char_width, line_height, side_padding, top_padding) = match mode {
+        MathRenderMode::Block => (17, 9, 24, 28, 30),
+        MathRenderMode::Inline => (13, 7, 18, 12, 20),
+    };
     let max_chars = lines
         .iter()
         .map(|line| line.chars().count())
         .max()
         .unwrap_or(1);
-    let width = (max_chars * 11 + 48).clamp(240, 1200);
-    let height = (lines.len() * 30 + 32).clamp(72, 1200);
+    let min_width = match mode {
+        MathRenderMode::Block => 180,
+        MathRenderMode::Inline => 40,
+    };
+    let min_height = match mode {
+        MathRenderMode::Block => 48,
+        MathRenderMode::Inline => 24,
+    };
+    let width = (max_chars * char_width + side_padding * 2).clamp(min_width, 1200);
+    let height = (lines.len() * line_height + top_padding).clamp(min_height, 1200);
     let mut text = String::new();
     for (index, line) in lines.iter().enumerate() {
-        let y = 38 + index * 30;
+        let y = top_padding + index * line_height;
         text.push_str(&format!(
-            r##"<text x="24" y="{y}" font-family="DejaVu Sans Mono, monospace" font-size="22" fill="#d7e3ff">{}</text>"##,
+            r##"<text x="{side_padding}" y="{y}" font-family="DejaVu Sans Mono, monospace" font-size="{font_size}" fill="#d7e3ff">{}</text>"##,
             escape_xml(line)
         ));
     }
@@ -540,7 +562,7 @@ mod tests {
 
     #[test]
     fn math_svg_escapes_formula_text() {
-        let svg = build_math_svg(r#"a < b && c > "d""#);
+        let svg = build_math_svg(r#"a < b && c > "d""#, MathRenderMode::Block);
         assert!(svg.contains("&lt;"));
         assert!(svg.contains("&gt;"));
         assert!(svg.contains("&quot;"));
