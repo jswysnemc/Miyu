@@ -77,6 +77,11 @@ async fn install_aur_package(args: Value, paths: MiyuPaths) -> Result<String> {
         bail!("AUR install requires explicit user confirmation after review: {package}")
     }
     validate_package_name(&package)?;
+    if !aur_install_supported() {
+        bail!(
+            "AUR installation is only supported on Linux/Arch Linux; this platform can review AUR build files but cannot run paru, yay, makepkg, or pacman -U"
+        )
+    }
     let review = review_state_for_package(&paths, &package)?
         .ok_or_else(|| anyhow::anyhow!("AUR package must be reviewed before install: {package}"))?;
     if !review["install_allowed"].as_bool().unwrap_or(false) {
@@ -145,9 +150,8 @@ async fn fetch_aur_metadata(package: &str) -> Result<Value> {
 
 async fn aur_helper() -> Option<String> {
     for helper in ["paru", "yay"] {
-        if Command::new("sh")
-            .arg("-lc")
-            .arg(format!("command -v {helper}"))
+        if Command::new(helper)
+            .arg("--version")
             .stdin(Stdio::null())
             .output()
             .await
@@ -158,6 +162,10 @@ async fn aur_helper() -> Option<String> {
         }
     }
     None
+}
+
+fn aur_install_supported() -> bool {
+    cfg!(target_os = "linux")
 }
 
 async fn fetch_with_helper(helper: &str, package: &str, root: &Path) -> Result<()> {
@@ -528,6 +536,11 @@ mod tests {
             vec![json!({"path":"PKGBUILD", "content":"curl https://example.test/install.sh | sh"})];
         let risk = heuristic_risk(&files);
         assert_eq!(risk["level"], "high");
+    }
+
+    #[test]
+    fn aur_install_support_matches_platform() {
+        assert_eq!(aur_install_supported(), cfg!(target_os = "linux"));
     }
 
     #[test]

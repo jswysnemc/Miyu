@@ -4,6 +4,7 @@ use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
+use std::io::ErrorKind;
 use std::path::PathBuf;
 use std::process::Stdio;
 use tokio::process::Command;
@@ -151,21 +152,76 @@ async fn run_web_search(
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or("auto");
-    let output = Command::new("python3")
-        .arg(script)
-        .arg(query)
-        .arg("-n")
-        .arg(max_results)
-        .arg("-p")
-        .arg(provider)
-        .stdin(Stdio::null())
-        .output()
-        .await?;
+    let output = run_python_script(&script, &[query, "-n", &max_results, "-p", provider]).await?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         bail!("web_search failed: {}", stderr.trim());
     }
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+}
+
+async fn run_python_script(script: &PathBuf, args: &[&str]) -> Result<std::process::Output> {
+    let mut missing = Vec::new();
+    for launcher in python_launchers() {
+        let mut command = Command::new(launcher.program);
+        command.args(launcher.prefix_args).arg(script).args(args);
+        match command.stdin(Stdio::null()).output().await {
+            Ok(output) => return Ok(output),
+            Err(err) if err.kind() == ErrorKind::NotFound => {
+                missing.push(launcher.label());
+            }
+            Err(err) => return Err(err.into()),
+        }
+    }
+    bail!("Python launcher not found; tried {}", missing.join(", "))
+}
+
+#[derive(Clone, Copy)]
+struct PythonLauncher {
+    program: &'static str,
+    prefix_args: &'static [&'static str],
+}
+
+impl PythonLauncher {
+    fn label(self) -> String {
+        if self.prefix_args.is_empty() {
+            self.program.to_string()
+        } else {
+            format!("{} {}", self.program, self.prefix_args.join(" "))
+        }
+    }
+}
+
+#[cfg(windows)]
+fn python_launchers() -> Vec<PythonLauncher> {
+    vec![
+        PythonLauncher {
+            program: "py",
+            prefix_args: &["-3"],
+        },
+        PythonLauncher {
+            program: "python",
+            prefix_args: &[],
+        },
+        PythonLauncher {
+            program: "python3",
+            prefix_args: &[],
+        },
+    ]
+}
+
+#[cfg(not(windows))]
+fn python_launchers() -> Vec<PythonLauncher> {
+    vec![
+        PythonLauncher {
+            program: "python3",
+            prefix_args: &[],
+        },
+        PythonLauncher {
+            program: "python",
+            prefix_args: &[],
+        },
+    ]
 }
 
 fn frontmatter_value(raw: &str, key: &str) -> Option<String> {
@@ -245,5 +301,17 @@ mod tests {
         let prompt = skills_prompt(&config, &paths).unwrap();
         assert!(prompt.contains("gpu-passthrough"));
         assert!(prompt.contains("GPU switching"));
+    }
+
+    #[test]
+    fn python_launchers_match_platform_conventions() {
+        let labels = python_launchers()
+            .into_iter()
+            .map(PythonLauncher::label)
+            .collect::<Vec<_>>();
+        #[cfg(windows)]
+        assert_eq!(labels, vec!["py -3", "python", "python3"]);
+        #[cfg(not(windows))]
+        assert_eq!(labels, vec!["python3", "python"]);
     }
 }

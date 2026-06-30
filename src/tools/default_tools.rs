@@ -3,7 +3,7 @@ use crate::i18n::text as t;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
+use std::io::{BufRead, BufReader, ErrorKind, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -467,15 +467,7 @@ async fn run_command(args: Value, allowed: bool) -> Result<String> {
         .and_then(Value::as_u64)
         .unwrap_or(30)
         .min(120);
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout),
-        Command::new("sh")
-            .arg("-lc")
-            .arg(command)
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await??;
+    let output = run_shell_command(&command, timeout).await?;
     command_output(output)
 }
 
@@ -487,16 +479,54 @@ async fn run_readonly_command(args: Value) -> Result<String> {
         .and_then(Value::as_u64)
         .unwrap_or(30)
         .min(120);
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(timeout),
-        Command::new("sh")
-            .arg("-lc")
-            .arg(command)
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await??;
+    let output = run_shell_command(&command, timeout).await?;
     command_output(output)
+}
+
+async fn run_shell_command(command: &str, timeout_seconds: u64) -> Result<std::process::Output> {
+    let duration = std::time::Duration::from_secs(timeout_seconds);
+    let mut missing = Vec::new();
+    for (program, mut shell) in shell_commands(command) {
+        match tokio::time::timeout(duration, shell.stdin(Stdio::null()).output()).await {
+            Ok(Ok(output)) => return Ok(output),
+            Ok(Err(err)) if err.kind() == ErrorKind::NotFound => {
+                missing.push(program);
+            }
+            Ok(Err(err)) => return Err(err.into()),
+            Err(_) => bail!("shell command timed out after {timeout_seconds}s"),
+        }
+    }
+    bail!("no supported shell found; tried {}", missing.join(", "))
+}
+
+#[cfg(windows)]
+fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
+    let mut pwsh = Command::new("pwsh");
+    pwsh.arg("-NoLogo")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-Command")
+        .arg(command);
+
+    let mut powershell = Command::new("powershell");
+    powershell
+        .arg("-NoLogo")
+        .arg("-NoProfile")
+        .arg("-NonInteractive")
+        .arg("-Command")
+        .arg(command);
+
+    let mut cmd = Command::new("cmd");
+    cmd.arg("/S").arg("/C").arg(command);
+
+    vec![("pwsh", pwsh), ("powershell", powershell), ("cmd", cmd)]
+}
+
+#[cfg(not(windows))]
+fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
+    let mut shell = Command::new("sh");
+    shell.arg("-lc").arg(command);
+    vec![("sh", shell)]
 }
 
 fn ensure_readonly_command(command: &str) -> Result<()> {
@@ -551,6 +581,31 @@ fn ensure_readonly_command(command: &str) -> Result<()> {
         "npm install",
         "pnpm install",
         "yarn install",
+        "remove-item",
+        "ri ",
+        " ri ",
+        "del ",
+        "erase ",
+        "copy ",
+        "move ",
+        "ren ",
+        "rename ",
+        "move-item",
+        "copy-item",
+        "new-item",
+        "rename-item",
+        "set-content",
+        "add-content",
+        "clear-content",
+        "out-file",
+        "set-acl",
+        "start-process",
+        "stop-process",
+        "taskkill",
+        "winget install",
+        "winget uninstall",
+        "scoop install",
+        "choco install",
     ];
     if forbidden.iter().any(|needle| lower.contains(needle)) {
         bail!(
@@ -876,6 +931,24 @@ mod tests {
         assert!(ensure_readonly_command("rm file").is_err());
         assert!(ensure_readonly_command("sed -i 's/a/b/' file").is_err());
         assert!(ensure_readonly_command("cargo test").is_err());
+        assert!(ensure_readonly_command("Remove-Item file").is_err());
+        assert!(ensure_readonly_command("Set-Content file value").is_err());
+        assert!(ensure_readonly_command("winget install foo").is_err());
+    }
+
+    #[tokio::test]
+    async fn readonly_command_runs_with_platform_shell() {
+        #[cfg(windows)]
+        let command = "Write-Output hello";
+        #[cfg(not(windows))]
+        let command = "printf hello";
+
+        let result = run_readonly_command(json!({"command": command}))
+            .await
+            .unwrap();
+        let data: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(data["success"], true);
+        assert_eq!(data["stdout"], "hello");
     }
 
     #[test]
