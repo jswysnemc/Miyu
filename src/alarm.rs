@@ -120,20 +120,19 @@ pub fn cleanup_dead(paths: &MiyuPaths) -> Result<Vec<AlarmRecord>> {
     Ok(active)
 }
 
+#[cfg(unix)]
 pub fn stop_process(pid: u32) -> Result<()> {
-    #[cfg(unix)]
-    {
-        let status = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
-        if status != 0 && process_exists(pid) {
-            bail!("failed to stop alarm process {pid}")
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        let _ = pid;
-        bail!("alarm cancellation is not supported on this platform")
+    let status = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if status != 0 && process_exists(pid) {
+        bail!("failed to stop alarm process {pid}")
     }
     Ok(())
+}
+
+#[cfg(not(unix))]
+pub fn stop_process(pid: u32) -> Result<()> {
+    let _ = pid;
+    bail!("alarm cancellation is not supported on this platform")
 }
 
 pub fn process_exists(pid: u32) -> bool {
