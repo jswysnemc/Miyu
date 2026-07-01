@@ -10,7 +10,6 @@ pub(crate) const IMAGE_STYLE: &str = "\x1b[1m\x1b[38;5;213m";
 pub(crate) const BOLD_STYLE: &str = "\x1b[1m\x1b[34m";
 pub(crate) const ITALIC_STYLE: &str = "\x1b[3m\x1b[38;5;250m";
 pub(crate) const STRIKE_STYLE: &str = "\x1b[9m";
-pub(crate) const CODE_BLOCK_BG: &str = "";
 pub(crate) const CODE_BLOCK_FRAME_STYLE: &str = SECONDARY_STYLE;
 pub(crate) const CODE_TOKEN_RESET: &str = "\x1b[0m";
 pub(crate) const CODE_KEYWORD_STYLE: &str = "\x1b[38;2;196;167;231m";

@@ -1,10 +1,13 @@
 use super::style::{
-    CODE_BLOCK_BG, CODE_BLOCK_FRAME_STYLE, CODE_COMMENT_STYLE, CODE_FUNCTION_STYLE,
-    CODE_KEYWORD_STYLE, CODE_NUMBER_STYLE, CODE_STRING_STYLE, CODE_TOKEN_RESET, PRIMARY_STYLE,
-    RESET,
+    CODE_BLOCK_FRAME_STYLE, CODE_COMMENT_STYLE, CODE_FUNCTION_STYLE, CODE_KEYWORD_STYLE,
+    CODE_NUMBER_STYLE, CODE_STRING_STYLE, CODE_TOKEN_RESET, PRIMARY_STYLE, RESET,
 };
+use super::table::visible_width;
 
 /// 渲染普通代码块。
+///
+/// 格式: `── lang ────` / 代码行 / `──────────`
+/// 使用 U+2500 (─) 作为横线，宽度跟随最长内容行（CJK 双宽）。
 ///
 /// 参数:
 /// - `lang`: Markdown 代码块语言标识
@@ -13,69 +16,43 @@ use super::style::{
 /// 返回:
 /// - 带终端样式的代码块文本
 pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
-    let label = if lang.is_empty() {
-        "code".to_string()
-    } else {
-        format!("code {lang}")
-    };
-    let header = format!("-- {label}");
-    let footer = "--";
-    let width = lines
+    let content_width = lines
         .iter()
-        .map(|line| line.chars().count())
-        .chain([header.chars().count(), footer.chars().count()])
+        .map(|line| visible_width(line))
         .max()
-        .unwrap_or(footer.len())
-        .max(24);
+        .unwrap_or(0);
+
+    let (header, width) = if lang.is_empty() {
+        let width = content_width.max(1);
+        (
+            format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}", "─".repeat(width)),
+            width,
+        )
+    } else {
+        let prefix = format!("── {lang} ");
+        let prefix_width = visible_width(&prefix);
+        let width = content_width.max(prefix_width + 2);
+        (
+            format!(
+                "{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}",
+                "─".repeat(width.saturating_sub(prefix_width))
+            ),
+            width,
+        )
+    };
+
+    let footer = format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}", "─".repeat(width));
+
     let mut output = String::new();
-    output.push_str(&render_code_block_frame(&header, width));
+    output.push_str(&header);
     output.push('\n');
     for line in lines {
-        output.push_str(&render_code_block_line_with_width(lang, line, width));
+        output.push_str(&highlight_code_line(lang, line));
         output.push('\n');
     }
-    output.push_str(&render_code_block_frame(footer, width));
+    output.push_str(&footer);
     output.push('\n');
     output
-}
-
-/// 渲染代码块边框行。
-///
-/// 参数:
-/// - `text`: 边框标签
-/// - `width`: 目标宽度
-///
-/// 返回:
-/// - 带样式的边框文本
-fn render_code_block_frame(text: &str, width: usize) -> String {
-    if text == "--" {
-        return format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}", "-".repeat(width));
-    }
-    let prefix = format!("{text} ");
-    format!(
-        "{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}",
-        "-".repeat(width.saturating_sub(prefix.chars().count()))
-    )
-}
-
-/// 按固定宽度渲染代码块内容行。
-///
-/// 参数:
-/// - `lang`: 语言标识
-/// - `line`: 原始代码行
-/// - `width`: 目标宽度
-///
-/// 返回:
-/// - 已补齐宽度并高亮的代码行
-fn render_code_block_line_with_width(lang: &str, line: &str, width: usize) -> String {
-    let line_width = line.chars().count();
-    let padding = " ".repeat(width.saturating_sub(line_width));
-    let highlighted = highlight_code_line(lang, line);
-    if highlighted.is_empty() {
-        format!("{CODE_BLOCK_BG}{}{RESET}", " ".repeat(width.max(1)))
-    } else {
-        format!("{CODE_BLOCK_BG}{highlighted}{padding}{RESET}")
-    }
 }
 
 /// 对单行代码做轻量语法高亮。
