@@ -3,56 +3,57 @@ use super::style::{
     CODE_NUMBER_STYLE, CODE_STRING_STYLE, CODE_TOKEN_RESET, PRIMARY_STYLE, RESET,
 };
 use super::table::visible_width;
+use crossterm::terminal;
 
-/// 渲染普通代码块。
+/// 计算代码块边框的最小宽度（基于终端宽度）。
+pub(crate) fn frame_min_width() -> usize {
+    terminal::size()
+        .map(|(w, _)| usize::from(w) / 2)
+        .unwrap_or(24)
+        .clamp(20, 60)
+}
+
+/// 渲染代码块头部（开标签行）。
 ///
-/// 格式: `── lang ────` / 代码行 / `──────────`
-/// 使用 U+2500 (─) 作为横线，宽度跟随最长内容行（CJK 双宽）。
+/// 流式渲染时在遇到开标签 ``` 即输出，宽度基于终端宽度，
+/// 因为此时还不知道内容行的最长宽度。
 ///
 /// 参数:
 /// - `lang`: Markdown 代码块语言标识
+///
+/// 返回:
+/// - 头部文本（含结尾换行）
+pub(crate) fn render_code_header(lang: &str) -> String {
+    let width = frame_min_width();
+    if lang.is_empty() {
+        format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}\n", "─".repeat(width))
+    } else {
+        let prefix = format!("── {lang} ");
+        let prefix_width = visible_width(&prefix);
+        let padding = width.saturating_sub(prefix_width);
+        format!("{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}\n", "─".repeat(padding))
+    }
+}
+
+/// 渲染代码块尾部（闭标签行）。
+///
+/// 流式渲染时在遇到闭标签 ``` 或 flush 时输出，
+/// 宽度取最长内容行与终端最小宽度的较大值（CJK 双宽）。
+///
+/// 参数:
 /// - `lines`: 代码块内容行
 ///
 /// 返回:
-/// - 带终端样式的代码块文本
-pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
+/// - 尾部文本（含结尾换行）
+pub(crate) fn render_code_footer(lines: &[String]) -> String {
     let content_width = lines
         .iter()
         .map(|line| visible_width(line))
         .max()
         .unwrap_or(0);
 
-    let (header, width) = if lang.is_empty() {
-        let width = content_width.max(1);
-        (
-            format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}", "─".repeat(width)),
-            width,
-        )
-    } else {
-        let prefix = format!("── {lang} ");
-        let prefix_width = visible_width(&prefix);
-        let width = content_width.max(prefix_width + 2);
-        (
-            format!(
-                "{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}",
-                "─".repeat(width.saturating_sub(prefix_width))
-            ),
-            width,
-        )
-    };
-
-    let footer = format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}", "─".repeat(width));
-
-    let mut output = String::new();
-    output.push_str(&header);
-    output.push('\n');
-    for line in lines {
-        output.push_str(&highlight_code_line(lang, line));
-        output.push('\n');
-    }
-    output.push_str(&footer);
-    output.push('\n');
-    output
+    let width = content_width.max(frame_min_width());
+    format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}\n", "─".repeat(width))
 }
 
 /// 对单行代码做轻量语法高亮。
@@ -63,7 +64,7 @@ pub(crate) fn render_code_block(lang: &str, lines: &[String]) -> String {
 ///
 /// 返回:
 /// - 带 ANSI 样式的代码行
-fn highlight_code_line(lang: &str, line: &str) -> String {
+pub(crate) fn highlight_code_line(lang: &str, line: &str) -> String {
     let lang = lang.trim().to_ascii_lowercase();
     if lang.is_empty() {
         return line.to_string();

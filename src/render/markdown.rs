@@ -1,5 +1,7 @@
 use crate::render::asset_block;
-use crate::render::code_block::render_code_block;
+use crate::render::code_block::{
+    highlight_code_line, render_code_footer, render_code_header,
+};
 use crate::render::style::{
     BOLD_STYLE, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE, LINK_LABEL_STYLE,
     RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
@@ -62,6 +64,8 @@ struct MarkdownLineRenderer {
     in_math_block: bool,
     code_lang: String,
     code_buffer: Vec<String>,
+    code_is_asset: bool,
+    just_closed_code_block: bool,
     math_buffer: Vec<String>,
     table_buffer: Vec<String>,
     active_table: Option<ActiveTable>,
@@ -83,6 +87,8 @@ impl MarkdownLineRenderer {
             in_math_block: false,
             code_lang: String::new(),
             code_buffer: Vec::new(),
+            code_is_asset: false,
+            just_closed_code_block: false,
             math_buffer: Vec::new(),
             table_buffer: Vec::new(),
             active_table: None,
@@ -97,100 +103,119 @@ impl MarkdownLineRenderer {
     /// 返回:
     /// - 当前可输出的终端文本
     fn render_line(&mut self, line: &str) -> String {
+        let skip_empty = std::mem::take(&mut self.just_closed_code_block);
+        if skip_empty && !self.in_code_block && line.trim().is_empty() {
+            return String::new();
+        }
+
         if line.trim_start().starts_with("```") {
             if self.in_code_block {
                 self.in_code_block = false;
-                let code = self.render_finished_code_block();
-                self.code_lang.clear();
+                let lang = std::mem::take(&mut self.code_lang);
+                let lines = std::mem::take(&mut self.code_buffer);
+                if self.code_is_asset {
+                    asset_block::render_asset_block(&lang, &lines)
+                } else {
+                    self.just_closed_code_block = true;
+                    render_code_footer(&lines)
+                }
+            } else {
+                let pending = self.flush();
+                self.in_code_block = true;
+                self.code_lang = line
+                    .trim_start()
+                    .trim_start_matches('`')
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .to_string();
+                self.code_is_asset = asset_block::is_asset_language(&self.code_lang);
                 self.code_buffer.clear();
-                return code;
+                if self.code_is_asset {
+                    pending
+                } else {
+                    pending + &render_code_header(&self.code_lang)
+                }
             }
-            let pending = self.flush();
-            self.in_code_block = true;
-            self.code_lang = line
-                .trim_start()
-                .trim_start_matches('`')
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_string();
-            self.code_buffer.clear();
-            return pending;
-        }
-        if self.in_code_block {
+        } else if self.in_code_block {
             self.code_buffer.push(line.to_string());
-            return String::new();
-        }
-        if line.trim() == "$$" {
+            if self.code_is_asset {
+                String::new()
+            } else {
+                format!("{}\n", highlight_code_line(&self.code_lang, line))
+            }
+        } else if line.trim() == "$$" {
             if self.in_math_block {
                 self.in_math_block = false;
                 let output = asset_block::render_math_block(&self.math_buffer);
                 self.math_buffer.clear();
-                return output;
+                output
+            } else {
+                let pending = self.flush();
+                self.in_math_block = true;
+                self.math_buffer.clear();
+                pending
             }
-            let pending = self.flush();
-            self.in_math_block = true;
-            self.math_buffer.clear();
-            return pending;
-        }
-        if self.in_math_block {
+        } else if self.in_math_block {
             self.math_buffer.push(line.to_string());
-            return String::new();
-        }
-        if let Some(table) = &self.active_table {
+            String::new()
+        } else if let Some(table) = &self.active_table {
             if table::looks_like_table_row(line) {
                 let row = table::parse_table_row(line, render_table_cell_content);
-                return table::render_table_row(&row, &table.widths, &table.alignments, false);
+                table::render_table_row(&row, &table.widths, &table.alignments, false)
+            } else {
+                let mut output = table::bottom_border(&table.widths);
+                self.active_table = None;
+                output.push_str(&self.render_line(line));
+                output
             }
-            let mut output = table::bottom_border(&table.widths);
-            self.active_table = None;
-            output.push_str(&self.render_line(line));
-            return output;
-        }
-        if table::looks_like_table_row(line) {
+        } else if table::looks_like_table_row(line) {
             self.table_buffer.push(line.to_string());
             if self.table_buffer.len() < 3 {
-                return String::new();
+                String::new()
+            } else {
+                let second = self.table_buffer.get(1).cloned().unwrap_or_default();
+                if table::is_table_separator(&second) {
+                    let header = table::parse_table_row(
+                        self.table_buffer.first().map(String::as_str).unwrap_or(""),
+                        render_table_cell_content,
+                    );
+                    let alignments = table::parse_table_alignments(&second);
+                    let first_row = table::parse_table_row(
+                        self.table_buffer.get(2).map(String::as_str).unwrap_or(""),
+                        render_table_cell_content,
+                    );
+                    let widths = table::compute_table_widths(&[header.clone(), first_row.clone()]);
+                    self.table_buffer.clear();
+                    self.active_table = Some(ActiveTable {
+                        widths: widths.clone(),
+                        alignments: alignments.clone(),
+                    });
+                    let mut output = table::top_border(&widths);
+                    output.push_str(&table::render_table_row(
+                        &header,
+                        &widths,
+                        &alignments,
+                        true,
+                    ));
+                    output.push_str(&table::middle_border(&widths));
+                    output.push_str(&table::render_table_row(
+                        &first_row,
+                        &widths,
+                        &alignments,
+                        false,
+                    ));
+                    output
+                } else {
+                    self.flush()
+                }
             }
-            let second = self.table_buffer.get(1).cloned().unwrap_or_default();
-            if table::is_table_separator(&second) {
-                let header = table::parse_table_row(
-                    self.table_buffer.first().map(String::as_str).unwrap_or(""),
-                    render_table_cell_content,
-                );
-                let alignments = table::parse_table_alignments(&second);
-                let first_row = table::parse_table_row(
-                    self.table_buffer.get(2).map(String::as_str).unwrap_or(""),
-                    render_table_cell_content,
-                );
-                let widths = table::compute_table_widths(&[header.clone(), first_row.clone()]);
-                self.table_buffer.clear();
-                self.active_table = Some(ActiveTable {
-                    widths: widths.clone(),
-                    alignments: alignments.clone(),
-                });
-                let mut output = table::top_border(&widths);
-                output.push_str(&table::render_table_row(
-                    &header,
-                    &widths,
-                    &alignments,
-                    true,
-                ));
-                output.push_str(&table::middle_border(&widths));
-                output.push_str(&table::render_table_row(
-                    &first_row,
-                    &widths,
-                    &alignments,
-                    false,
-                ));
-                return output;
-            }
-            return self.flush();
+        } else {
+            let mut output = self.flush();
+            output.push_str(&render_markdown_line(line));
+            output.push('\n');
+            output
         }
-        let mut output = self.flush();
-        output.push_str(&render_markdown_line(line));
-        output.push('\n');
-        output
     }
 
     /// 刷新行级渲染器缓冲。
@@ -200,47 +225,36 @@ impl MarkdownLineRenderer {
     fn flush(&mut self) -> String {
         if self.in_code_block {
             self.in_code_block = false;
-            let output = self.render_finished_code_block();
-            self.code_lang.clear();
-            self.code_buffer.clear();
-            return output;
-        }
-        if self.in_math_block {
+            let lang = std::mem::take(&mut self.code_lang);
+            let lines = std::mem::take(&mut self.code_buffer);
+            if self.code_is_asset {
+                asset_block::render_asset_block(&lang, &lines)
+            } else {
+                render_code_footer(&lines)
+            }
+        } else if self.in_math_block {
             self.in_math_block = false;
             let output = asset_block::render_math_block(&self.math_buffer);
             self.math_buffer.clear();
-            return output;
-        }
-        if let Some(table) = self.active_table.take() {
-            return table::bottom_border(&table.widths);
-        }
-        if self.table_buffer.is_empty() {
-            return String::new();
-        }
-        let lines = std::mem::take(&mut self.table_buffer);
-        if lines.len() >= 2
-            && table::is_table_separator(lines.get(1).map(String::as_str).unwrap_or(""))
-        {
-            table::render_table(&lines, render_table_cell_content)
-        } else {
-            let mut output = String::new();
-            for line in lines {
-                output.push_str(&render_markdown_line(&line));
-                output.push('\n');
-            }
             output
-        }
-    }
-
-    /// 渲染已经收集完成的代码块。
-    ///
-    /// 返回:
-    /// - 代码块或资产块渲染结果
-    fn render_finished_code_block(&self) -> String {
-        if asset_block::is_asset_language(&self.code_lang) {
-            asset_block::render_asset_block(&self.code_lang, &self.code_buffer)
+        } else if let Some(table) = self.active_table.take() {
+            table::bottom_border(&table.widths)
+        } else if self.table_buffer.is_empty() {
+            String::new()
         } else {
-            render_code_block(&self.code_lang, &self.code_buffer)
+            let lines = std::mem::take(&mut self.table_buffer);
+            if lines.len() >= 2
+                && table::is_table_separator(lines.get(1).map(String::as_str).unwrap_or(""))
+            {
+                table::render_table(&lines, render_table_cell_content)
+            } else {
+                let mut output = String::new();
+                for line in lines {
+                    output.push_str(&render_markdown_line(&line));
+                    output.push('\n');
+                }
+                output
+            }
         }
     }
 }

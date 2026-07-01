@@ -1,4 +1,5 @@
 use super::*;
+use crate::render::code_block::frame_min_width;
 use crate::render::style::{
     BOLD_STYLE, CODE_BLOCK_FRAME_STYLE, CODE_FUNCTION_STYLE, CODE_KEYWORD_STYLE,
     CODE_TOKEN_RESET, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE,
@@ -92,9 +93,45 @@ fn code_block_has_label_and_readable_content() {
     assert!(output.contains(&format!("{CODE_BLOCK_FRAME_STYLE}── rust ")));
     assert!(output.contains(&format!(
         "{CODE_BLOCK_FRAME_STYLE}{}{RESET}",
-        "─".repeat(12)
+        "─".repeat(12.max(frame_min_width()))
     )));
     assert!(!output.contains("`--"));
+}
+
+#[test]
+fn code_block_streams_line_by_line() {
+    let mut renderer = MarkdownStreamRenderer::new();
+
+    // Opening ``` → header immediately
+    let out = renderer.push("```rust\n");
+    assert!(out.contains("── rust ──"));
+    assert!(!out.contains("fn main"));
+
+    // First code line → highlighted immediately
+    let out = renderer.push("fn main() {}\n");
+    assert!(out.contains("fn") || out.contains(&format!("{CODE_KEYWORD_STYLE}fn")));
+    assert!(!out.contains("── rust"));
+    assert!(!out.contains("────"));
+
+    // Second code line → highlighted immediately
+    let out = renderer.push("let x = 42;\n");
+    assert!(out.contains("42"));
+
+    // Closing ``` → footer only
+    let out = renderer.push("```\n");
+    assert!(out.contains("─"));
+    assert!(!out.contains("fn main"));
+    assert!(!out.contains("── rust"));
+}
+
+#[test]
+fn code_block_suppresses_first_empty_line() {
+    let mut renderer = MarkdownStreamRenderer::new();
+    let output = renderer.push("```rust\nfn main() {}\n```\n\nNext\n");
+    // Footer ends with \n, then the empty line is suppressed.
+    // "Next" should follow immediately without a blank line.
+    assert!(!output.contains("\n\nNext"));
+    assert!(output.contains("\nNext"));
 }
 
 #[test]
@@ -105,7 +142,7 @@ fn code_block_content_has_default_color() {
     assert!(!output.contains("\x1b[33mXMODIFIERS"));
     assert!(output.contains(&format!(
         "{CODE_BLOCK_FRAME_STYLE}{}{RESET}",
-        "─".repeat(22)
+        "─".repeat(22.max(frame_min_width()))
     )));
 }
 
@@ -124,7 +161,7 @@ fn code_block_frame_uses_longest_line_width() {
     assert!(output.contains("\nlonger line\n"));
     assert!(output.contains(&format!(
         "{CODE_BLOCK_FRAME_STYLE}{}{RESET}",
-        "─".repeat(11)
+        "─".repeat(11.max(frame_min_width()))
     )));
     assert!(!output.contains("48;5;236"));
 }
@@ -137,7 +174,7 @@ fn code_block_frame_width_accommodates_cjk_content() {
     // visible width: "let 中文 = 42;" = 3+1+2+2+1+1+1+1+1+1 = 14
     assert!(output.contains(&format!(
         "{CODE_BLOCK_FRAME_STYLE}{}{RESET}",
-        "─".repeat(14)
+        "─".repeat(14.max(frame_min_width()))
     )));
 }
 
