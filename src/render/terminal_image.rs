@@ -1,3 +1,4 @@
+use crate::render::table::CellContent;
 use anyhow::{bail, Context, Result};
 use base64::{engine::general_purpose, Engine as _};
 use crossterm::terminal;
@@ -22,6 +23,48 @@ const ANSI_FALLBACK_BG: Rgba = Rgba {
     b: 32,
     a: 255,
 };
+
+/// 查询终端单元格的像素尺寸。
+///
+/// 通过 `ioctl(TIOCGWINSIZE)` 获取终端窗口总像素尺寸，
+/// 除以字符行列数得到单个单元格的像素宽高。
+/// 不支持时回退到 8×16。
+#[cfg(unix)]
+fn terminal_cell_pixel_size() -> (usize, usize) {
+    use std::os::unix::io::AsRawFd;
+
+    const TIOCGWINSIZE: libc::c_ulong = 0x5413;
+
+    #[repr(C)]
+    struct Winsize {
+        ws_row: u16,
+        ws_col: u16,
+        ws_xpixel: u16,
+        ws_ypixel: u16,
+    }
+
+    let fd = std::io::stdout().as_raw_fd();
+    let mut ws = Winsize {
+        ws_row: 0,
+        ws_col: 0,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    let ret = unsafe { libc::ioctl(fd, TIOCGWINSIZE, &mut ws) };
+    if ret == 0 && ws.ws_col > 0 && ws.ws_row > 0 && ws.ws_xpixel > 0 && ws.ws_ypixel > 0 {
+        let cw = ws.ws_xpixel as usize / ws.ws_col as usize;
+        let ch = ws.ws_ypixel as usize / ws.ws_row as usize;
+        if cw > 0 && ch > 0 {
+            return (cw, ch);
+        }
+    }
+    (SIXEL_CELL_WIDTH_PX, SIXEL_CELL_HEIGHT_PX)
+}
+
+#[cfg(not(unix))]
+fn terminal_cell_pixel_size() -> (usize, usize) {
+    (SIXEL_CELL_WIDTH_PX, SIXEL_CELL_HEIGHT_PX)
+}
 
 #[derive(Clone, Copy, Debug)]
 struct Rgba {
@@ -295,6 +338,94 @@ fn render_ansi_halfblock_image(path: &Path, size: &TerminalImageSize) -> Result<
         output.push('\n');
     }
     Ok(output)
+}
+
+/// 将 PNG 渲染为单终端行半块图片，尾部补齐空格以匹配显示宽度。
+///
+/// 参数:
+/// - `path`: PNG 图片路径
+/// - `target_height_px`: 目标像素高度（应为 2 的倍数）
+///
+/// 返回:
+/// - 单行 ANSI 半块文本，宽度由图片比例决定
+pub(crate) fn render_halfblock_line(path: &Path, target_height_px: usize) -> Result<String> {
+    let image = load_image_rgba(path)?;
+    let target_height_px = target_height_px.max(2);
+    let target_width = if image.height == 0 {
+        1
+    } else {
+        (image.width as usize * target_height_px / image.height as usize).max(1)
+    };
+    let mut output = String::new();
+    let reset = "\x1b[0m";
+    for x in 0..target_width {
+        let top = sample_resized_pixel(&image, x, 0, target_width, target_height_px);
+        let bottom = if target_height_px > 1 {
+            sample_resized_pixel(&image, x, 1, target_width, target_height_px)
+        } else {
+            Rgba { a: 0, ..top }
+        };
+        output.push_str(&render_halfblock_cell(top, bottom));
+    }
+    output.push_str(reset);
+    Ok(output)
+}
+
+/// 将 PNG 按当前终端图片协议渲染，并返回已知终端单元格尺寸。
+///
+/// 优先使用 Kitty 图形协议，其次 iTerm2，最后 Sixel。
+///
+/// 参数:
+/// - `path`: PNG 图片路径
+///
+/// 返回:
+/// - 包含图片协议文本和终端宽度的单元格内容
+pub(crate) fn render_inline_image_with_cell_size(path: &Path) -> Result<CellContent> {
+    let image = load_image_rgba(path)?;
+    let (cell_pw, cell_ph) = terminal_cell_pixel_size();
+    let cell_width = ((image.width + cell_pw - 1) / cell_pw).clamp(1, 30);
+    let cell_height = ((image.height + cell_ph - 1) / cell_ph).clamp(1, 4);
+    let (pixel_width, pixel_height) =
+        sixel_dimensions(image.width, image.height, &TerminalImageSize::default());
+
+    if supports_kitty_graphics() {
+        let kitty = render_kitty_image(path)?;
+        let kitty = kitty.trim_end().to_string();
+        let mut lines = vec![kitty];
+        for _ in 1..cell_height {
+            lines.push(String::new());
+        }
+        return Ok(CellContent {
+            lines,
+            width: cell_width,
+            is_image: true,
+        });
+    }
+    if supports_iterm_inline_image() {
+        let iterm = render_iterm_image(path)?;
+        let iterm = iterm.trim_end().to_string();
+        let mut lines = vec![iterm];
+        for _ in 1..cell_height {
+            lines.push(String::new());
+        }
+        return Ok(CellContent {
+            lines,
+            width: cell_width,
+            is_image: true,
+        });
+    }
+    let pixels = quantize_for_sixel(&image, pixel_width, pixel_height);
+    let sixel = encode_sixel(&pixels, pixel_width, pixel_height);
+    let sixel = sixel.trim_end().to_string();
+    let mut lines = vec![sixel];
+    for _ in 1..cell_height {
+        lines.push(String::new());
+    }
+    Ok(CellContent {
+        lines,
+        width: cell_width,
+        is_image: true,
+    })
 }
 
 struct RasterImage {

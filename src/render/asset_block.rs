@@ -1,4 +1,5 @@
-use crate::render::style::{ASSET_ERROR_STYLE, RESET, SECONDARY_STYLE};
+use crate::render::style::{ASSET_ERROR_STYLE, INLINE_CODE_STYLE, RESET, SECONDARY_STYLE};
+use crate::render::table::CellContent;
 use crate::render::terminal_image;
 use anyhow::{bail, Context, Result};
 use ratex_layout::{layout, to_display_list, LayoutOptions};
@@ -82,6 +83,66 @@ pub(crate) fn render_math_block(lines: &[String]) -> String {
 /// - 终端图片协议文本或错误提示
 pub(crate) fn render_inline_math(source: &str) -> String {
     render_math_source(source, MathRenderMode::Inline)
+}
+
+/// 渲染行内数学公式为单行半块图片，用于表格单元格。
+///
+/// 参数:
+/// - `source`: 数学公式源码
+///
+/// 返回:
+/// - 单行终端半块文本，失败时回退为带样式源码
+pub(crate) fn render_inline_math_halfblock(source: &str) -> String {
+    if source.trim().is_empty() {
+        return String::new();
+    }
+    match render_inline_math_halfblock_inner(source) {
+        Ok(rendered) => rendered,
+        Err(_) => {
+            let mut fallback = String::new();
+            fallback.push_str(INLINE_CODE_STYLE);
+            fallback.push_str(source);
+            fallback.push_str(RESET);
+            fallback
+        }
+    }
+}
+
+/// 生成行内公式图片并转换为单行半块文本。
+fn render_inline_math_halfblock_inner(source: &str) -> Result<String> {
+    let temp_dir = tempfile::tempdir().context("failed to create temporary render directory")?;
+    let png = render_math_image(source, &temp_dir, MathRenderMode::Inline)?;
+    terminal_image::render_halfblock_line(&png, 8)
+}
+
+/// 渲染行内数学公式为终端图片协议，用于表格单元格。
+///
+/// 参数:
+/// - `source`: 数学公式源码
+///
+/// 返回:
+/// - 带已知终端宽度的单元格内容，失败时回退为带样式源码
+pub(crate) fn render_inline_math_sixel(source: &str) -> CellContent {
+    if source.trim().is_empty() {
+        return CellContent::empty();
+    }
+    match render_inline_math_sixel_inner(source) {
+        Ok(content) => content,
+        Err(_) => {
+            let mut fallback = String::new();
+            fallback.push_str(INLINE_CODE_STYLE);
+            fallback.push_str(source);
+            fallback.push_str(RESET);
+            CellContent::from_inline(fallback)
+        }
+    }
+}
+
+/// 生成行内公式图片并以终端图片协议渲染，返回已知尺寸的单元格内容。
+fn render_inline_math_sixel_inner(source: &str) -> Result<CellContent> {
+    let temp_dir = tempfile::tempdir().context("failed to create temporary render directory")?;
+    let png = render_math_image(source, &temp_dir, MathRenderMode::Inline)?;
+    terminal_image::render_inline_image_with_cell_size(&png)
 }
 
 /// 解析资产代码块类型。

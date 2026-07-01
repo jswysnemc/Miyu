@@ -4,7 +4,7 @@ use crate::render::style::{
     BOLD_STYLE, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE, LINK_LABEL_STYLE,
     RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
 };
-use crate::render::table::{self, TableAlign};
+use crate::render::table::{self, CellContent, TableAlign};
 use crossterm::terminal;
 
 pub(crate) struct MarkdownStreamRenderer {
@@ -139,7 +139,7 @@ impl MarkdownLineRenderer {
         }
         if let Some(table) = &self.active_table {
             if table::looks_like_table_row(line) {
-                let row = table::parse_table_row(line, render_inline);
+                let row = table::parse_table_row(line, render_table_cell_content);
                 return table::render_table_row(&row, &table.widths, &table.alignments, false);
             }
             let mut output = table::bottom_border(&table.widths);
@@ -149,16 +149,21 @@ impl MarkdownLineRenderer {
         }
         if table::looks_like_table_row(line) {
             self.table_buffer.push(line.to_string());
-            if self.table_buffer.len() < 2 {
+            if self.table_buffer.len() < 3 {
                 return String::new();
             }
-            let first = self.table_buffer.first().cloned().unwrap_or_default();
             let second = self.table_buffer.get(1).cloned().unwrap_or_default();
             if table::is_table_separator(&second) {
-                let header = table::parse_table_row(&first, render_inline);
+                let header = table::parse_table_row(
+                    self.table_buffer.first().map(String::as_str).unwrap_or(""),
+                    render_table_cell_content,
+                );
                 let alignments = table::parse_table_alignments(&second);
-                let widths =
-                    table::bounded_table_widths_for_cols(header.len().max(alignments.len()));
+                let first_row = table::parse_table_row(
+                    self.table_buffer.get(2).map(String::as_str).unwrap_or(""),
+                    render_table_cell_content,
+                );
+                let widths = table::compute_table_widths(&[header.clone(), first_row.clone()]);
                 self.table_buffer.clear();
                 self.active_table = Some(ActiveTable {
                     widths: widths.clone(),
@@ -172,6 +177,12 @@ impl MarkdownLineRenderer {
                     true,
                 ));
                 output.push_str(&table::middle_border(&widths));
+                output.push_str(&table::render_table_row(
+                    &first_row,
+                    &widths,
+                    &alignments,
+                    false,
+                ));
                 return output;
             }
             return self.flush();
@@ -210,7 +221,7 @@ impl MarkdownLineRenderer {
         if lines.len() >= 2
             && table::is_table_separator(lines.get(1).map(String::as_str).unwrap_or(""))
         {
-            table::render_table(&lines, render_inline)
+            table::render_table(&lines, render_table_cell_content)
         } else {
             let mut output = String::new();
             for line in lines {
@@ -421,6 +432,233 @@ pub(crate) fn render_inline(text: &str) -> String {
         index += 1;
     }
     output
+}
+
+/// 预处理表格单元格文本，将多行内容折叠为单行。
+///
+/// - 列表项去除标记后用 ` · ` 连接
+/// - 引用去除前缀后按层级连接
+/// - 普通多行用空格连接
+///
+/// 参数:
+/// - `text`: 原始单元格文本
+///
+/// 返回:
+/// - 折叠后的单行文本
+fn normalize_cell_text(text: &str) -> String {
+    let has_newline = text.contains('\n');
+    let has_br = text.contains("<br>") || text.contains("<br/>") || text.contains("<br />");
+    let has_literal_newline = text.contains("\\n");
+    if !has_newline && !has_br && !has_literal_newline {
+        return text.to_string();
+    }
+    let text = text
+        .replace("<br/>", "\n")
+        .replace("<br />", "\n")
+        .replace("<br>", "\n")
+        .replace("\\n", "\n");
+    if !text.contains('\n') {
+        return text;
+    }
+    let mut items: Vec<String> = Vec::new();
+    let mut current = String::new();
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if let Some(rest) = trimmed
+            .strip_prefix("- ")
+            .or_else(|| trimmed.strip_prefix("* "))
+            .or_else(|| trimmed.strip_prefix("+ "))
+        {
+            if !current.is_empty() {
+                items.push(std::mem::take(&mut current));
+            }
+            current.push_str(rest);
+        } else if trimmed.starts_with('>') {
+            if !current.is_empty() {
+                items.push(std::mem::take(&mut current));
+            }
+            let mut rest = trimmed;
+            while let Some(stripped) = rest.strip_prefix("> ") {
+                rest = stripped;
+            }
+            if rest == ">" {
+                rest = "";
+            }
+            current.push_str(rest);
+        } else {
+            if !current.is_empty() {
+                current.push(' ');
+            }
+            current.push_str(trimmed);
+        }
+    }
+    if !current.is_empty() {
+        items.push(current);
+    }
+    items.join(" · ")
+}
+
+/// 渲染表格单元格内的 Markdown 行内语法。
+///
+/// 与 `render_inline` 不同，此函数保证输出为单行文本：
+/// - 图片渲染为 `[image]` 占位符
+/// - 数学公式渲染为终端半块图片
+/// - 链接仅显示标签文本
+/// - 列表和引用折叠为单行
+///
+/// 参数:
+/// - `text`: 原始行内文本
+///
+/// 返回:
+/// - 带 ANSI 样式的单行文本
+pub(crate) fn render_table_cell(text: &str) -> String {
+    let text = normalize_cell_text(text);
+    let mut output = String::new();
+    let chars = text.chars().collect::<Vec<_>>();
+    let mut index = 0;
+    while index < chars.len() {
+        if index + 1 < chars.len() && chars[index] == '!' && chars[index + 1] == '[' {
+            if let Some(label_end) = find_marker(&chars, index + 2, ']') {
+                if chars.get(label_end + 1) == Some(&'(') {
+                    if let Some(url_end) = find_marker(&chars, label_end + 2, ')') {
+                        output.push_str(IMAGE_STYLE);
+                        output.push_str("[image]");
+                        output.push_str(RESET);
+                        index = url_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        if chars[index] == '`' {
+            if let Some(end) = find_marker(&chars, index + 1, '`') {
+                output.push_str(INLINE_CODE_STYLE);
+                output.extend(chars[index + 1..end].iter());
+                output.push_str(RESET);
+                index = end + 1;
+                continue;
+            }
+        }
+        if index + 1 < chars.len() && chars[index] == '$' && chars[index + 1] == '$' {
+            if let Some(end) = find_double_marker(&chars, index + 2, '$') {
+                let formula = chars[index + 2..end].iter().collect::<String>();
+                output.push_str(&asset_block::render_inline_math_halfblock(&formula));
+                index = end + 2;
+                continue;
+            }
+        }
+        if chars[index] == '$' {
+            if let Some(end) = find_marker(&chars, index + 1, '$') {
+                let formula = chars[index + 1..end].iter().collect::<String>();
+                output.push_str(&asset_block::render_inline_math_halfblock(&formula));
+                index = end + 1;
+                continue;
+            }
+        }
+        if index + 1 < chars.len() && chars[index] == '~' && chars[index + 1] == '~' {
+            if let Some(end) = find_double_marker(&chars, index + 2, '~') {
+                output.push_str(STRIKE_STYLE);
+                output.extend(chars[index + 2..end].iter());
+                output.push_str(RESET);
+                index = end + 2;
+                continue;
+            }
+        }
+        if index + 1 < chars.len() && chars[index] == '*' && chars[index + 1] == '*' {
+            if let Some(end) = find_double_marker(&chars, index + 2, '*') {
+                output.push_str(BOLD_STYLE);
+                output.extend(chars[index + 2..end].iter());
+                output.push_str(RESET);
+                index = end + 2;
+                continue;
+            }
+        }
+        if chars[index] == '*' {
+            if let Some(end) = find_marker(&chars, index + 1, '*') {
+                output.push_str(ITALIC_STYLE);
+                output.extend(chars[index + 1..end].iter());
+                output.push_str(RESET);
+                index = end + 1;
+                continue;
+            }
+        }
+        if chars[index] == '_' {
+            if is_emphasis_start(&chars, index) {
+                if let Some(end) = find_emphasis_end(&chars, index + 1, '_') {
+                    output.push_str(ITALIC_STYLE);
+                    output.extend(chars[index + 1..end].iter());
+                    output.push_str(RESET);
+                    index = end + 1;
+                    continue;
+                }
+            }
+        }
+        if chars[index] == '[' {
+            if let Some(label_end) = find_marker(&chars, index + 1, ']') {
+                if chars.get(label_end + 1) == Some(&'(') {
+                    if let Some(url_end) = find_marker(&chars, label_end + 2, ')') {
+                        output.push_str(LINK_LABEL_STYLE);
+                        output.extend(chars[index + 1..label_end].iter());
+                        output.push_str(RESET);
+                        index = url_end + 1;
+                        continue;
+                    }
+                }
+            }
+        }
+        if chars[index] == '<' {
+            if let Some(end) = find_marker(&chars, index + 1, '>') {
+                let value = chars[index + 1..end].iter().collect::<String>();
+                if value.starts_with("http://") || value.starts_with("https://") {
+                    output.push_str(URL_STYLE);
+                    output.push('<');
+                    output.push_str(&value);
+                    output.push('>');
+                    output.push_str(RESET);
+                    index = end + 1;
+                    continue;
+                }
+                if let Some(rendered) = render_html_tag(&value) {
+                    output.push_str(&rendered);
+                    index = end + 1;
+                    continue;
+                }
+            }
+        }
+        output.push(chars[index]);
+        index += 1;
+    }
+    output
+}
+
+/// 渲染表格单元格，返回带显示宽度的单元格内容。
+///
+/// 仅当整个单元格为纯公式（`$...$` 或 `$$...$$`）时使用终端图片协议渲染，
+/// 混合内容（文本+公式）走 `render_table_cell` 半块渲染以保留全部文本。
+pub(crate) fn render_table_cell_content(text: &str) -> CellContent {
+    let text = normalize_cell_text(text);
+    let trimmed = text.trim();
+    let dollar_count = trimmed.chars().filter(|&c| c == '$').count();
+    if dollar_count == 2
+        && trimmed.starts_with('$')
+        && trimmed.ends_with('$')
+        && trimmed.len() > 2
+    {
+        let formula = &trimmed[1..trimmed.len() - 1];
+        return asset_block::render_inline_math_sixel(formula);
+    }
+    if dollar_count == 4
+        && trimmed.starts_with("$$")
+        && trimmed.ends_with("$$")
+        && trimmed.len() > 4
+    {
+        let formula = &trimmed[2..trimmed.len() - 2];
+        return asset_block::render_inline_math_sixel(formula);
+    }
+    CellContent::from_inline(render_table_cell(&text))
 }
 
 /// 判断当前位置是否为独立公式行前的孤立前缀。

@@ -1,9 +1,10 @@
 use super::*;
 use crate::render::style::{
     BOLD_STYLE, CODE_BLOCK_BG, CODE_BLOCK_FRAME_STYLE, CODE_FUNCTION_STYLE, CODE_KEYWORD_STYLE,
-    CODE_TOKEN_RESET, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE, PRIMARY_STYLE,
-    RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
+    CODE_TOKEN_RESET, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE, LINK_LABEL_STYLE,
+    PRIMARY_STYLE, RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
 };
+use crate::render::table;
 use std::sync::Mutex;
 
 static ASSET_STUB_LOCK: Mutex<()> = Mutex::new(());
@@ -55,13 +56,15 @@ fn list_markers_use_tertiary_color() {
 fn buffers_tables_until_non_table_line() {
     let mut renderer = MarkdownStreamRenderer::new();
     assert_eq!(renderer.push("| a | b |\n"), "");
-    let header = renderer.push("| - | - |\n");
-    assert!(header.contains("\x1b[1ma\x1b[0m"));
-    let row = renderer.push("| 1 | 2 |\n");
-    assert!(row.contains("1"));
+    assert_eq!(renderer.push("| - | - |\n"), "");
+    let first_row = renderer.push("| 1 | 2 |\n");
+    assert!(first_row.contains("\x1b[1ma\x1b[0m"));
+    assert!(first_row.contains("1"));
+    assert!(first_row.contains('┌'));
+    assert!(first_row.contains('├'));
+    assert!(!first_row.contains('+'));
     let output = renderer.push("done\n");
     assert!(output.contains('└'));
-    assert!(!output.contains('+'));
     assert!(output.ends_with("done\n"));
 }
 
@@ -254,6 +257,7 @@ fn supports_table_alignment_markers() {
     let output = renderer.push("| left | mid | right |\n| :--- | :---: | ---: |\n| a | b | c |\n");
     let output = format!("{output}{}", renderer.flush());
     assert!(output.contains('┌'));
+    assert!(output.contains('│'));
     assert!(!output.contains('+'));
     assert!(!output.contains(":---"));
     assert!(output.contains("\x1b[1mleft\x1b[0m"));
@@ -264,4 +268,105 @@ fn does_not_buffer_plain_lines_with_pipes_as_tables() {
     let mut renderer = MarkdownStreamRenderer::new();
     let output = renderer.push("echo hi | wc -l\nnext\n");
     assert!(output.contains("echo hi | wc -l\nnext\n"));
+}
+
+#[test]
+fn table_cell_renders_images_as_compact_placeholder() {
+    let output = render_table_cell("![tux](https://example.com/tux.png)");
+    assert!(output.contains(&format!("{IMAGE_STYLE}[image]{RESET}")));
+    assert!(!output.contains("https://example.com"));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_cell_renders_math_as_halfblock_image() {
+    let output = render_table_cell("公式 $E=mc^2$ 在这里");
+    assert!(output.contains("公式 "));
+    assert!(output.contains("在这里"));
+    assert!(output.contains('▀') || output.contains('▄'));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_cell_renders_display_math_as_halfblock_image() {
+    let output = render_table_cell("$$a^2+b^2$$");
+    assert!(output.contains('▀') || output.contains('▄'));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_cell_renders_links_as_label_only() {
+    let output = render_table_cell("[点我去 ArchWiki](https://wiki.archlinux.org)");
+    assert!(output.contains(&format!(
+        "{LINK_LABEL_STYLE}点我去 ArchWiki{RESET}"
+    )));
+    assert!(!output.contains("https://wiki.archlinux.org"));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_cell_preserves_bold_italic_code() {
+    let output = render_table_cell("**加粗** _斜体_ `代码`");
+    assert!(output.contains(&format!("{BOLD_STYLE}加粗{RESET}")));
+    assert!(output.contains(&format!("{ITALIC_STYLE}斜体{RESET}")));
+    assert!(output.contains(&format!("{INLINE_CODE_STYLE}代码{RESET}")));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_cell_collapses_list_items() {
+    let output = render_table_cell("- 第一项\n- 第二项\n- 第三项");
+    assert!(output.contains("第一项"));
+    assert!(output.contains("第二项"));
+    assert!(output.contains("第三项"));
+    assert!(!output.contains('\n'));
+    assert!(output.contains("·"));
+}
+
+#[test]
+fn table_cell_collapses_blockquotes() {
+    let output = render_table_cell("> 第一层\n> > 第二层");
+    assert!(output.contains("第一层"));
+    assert!(output.contains("第二层"));
+    assert!(!output.contains('\n'));
+    assert!(!output.contains("> "));
+}
+
+#[test]
+fn table_cell_handles_br_tags() {
+    let output = render_table_cell("- 第一项<br>- 第二项<br>- 第三项");
+    assert!(output.contains("第一项"));
+    assert!(output.contains("第二项"));
+    assert!(!output.contains("<br>"));
+    assert!(!output.contains('\n'));
+}
+
+#[test]
+fn table_with_mixed_inline_markdown_stays_aligned() {
+    let output = table::render_table(
+        &[
+            "| 类型 | 示例 |".to_string(),
+            "|---|---|".to_string(),
+            "| 加粗 | **粗体文字** |".to_string(),
+            "| 图片 | ![tux](https://example.com/tux.png) |".to_string(),
+            "| 公式 | $E=mc^2$ |".to_string(),
+            "| 链接 | [ArchWiki](https://wiki.archlinux.org) |".to_string(),
+        ],
+        render_table_cell_content,
+    );
+    for line in output.lines() {
+        let width = table::visible_width(line);
+        let next = output
+            .lines()
+            .map(|l| table::visible_width(l))
+            .max()
+            .unwrap_or(0);
+        assert!(
+            width <= next,
+            "line wider than max: {line} (width={width}, max={next})"
+        );
+    }
+    assert!(!output.contains("https://"));
+    let border_count = output.matches('├').count();
+    assert_eq!(border_count, 4, "expected 4 middle borders for 5 rows");
 }
