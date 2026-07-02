@@ -398,10 +398,6 @@ fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
                 config.plugins.memes.auto_send_probability.to_string(),
             ),
             Field::new(
-                "自动发送冷却秒数",
-                config.plugins.memes.auto_send_cooldown_seconds.to_string(),
-            ),
-            Field::new(
                 "自动发送最低置信度",
                 config.plugins.memes.auto_send_min_confidence.to_string(),
             ),
@@ -533,10 +529,17 @@ fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
             "启用",
             config.plugins.package_advisor.enabled,
         )],
-        12 => vec![Field::boolean(
-            "启用",
-            config.plugins.linux_game_compatibility.enabled,
-        )],
+        12 => vec![
+            Field::boolean("启用", config.plugins.linux_game_compatibility.enabled),
+            Field::new(
+                "子代理最大工具次数",
+                config
+                    .plugins
+                    .linux_game_compatibility
+                    .max_tool_steps
+                    .to_string(),
+            ),
+        ],
         _ => vec![Field::boolean("启用", plugin_enabled(config, index))],
     }
 }
@@ -617,10 +620,8 @@ fn apply_plugin_fields(config: &mut AppConfig, index: usize, fields: &[Field]) -
             config.plugins.memes.auto_send_enabled = parse_bool_field(&fields[5].value)?;
             config.plugins.memes.auto_send_probability =
                 fields[6].value.trim().parse::<f32>()?.clamp(0.0, 1.0);
-            config.plugins.memes.auto_send_cooldown_seconds =
-                fields[7].value.trim().parse::<u64>()?;
             config.plugins.memes.auto_send_min_confidence =
-                fields[8].value.trim().parse::<f32>()?.clamp(0.0, 1.0);
+                fields[7].value.trim().parse::<f32>()?.clamp(0.0, 1.0);
         }
         7 => {
             config.plugins.knowledge_base.enabled = parse_bool_field(&fields[0].value)?;
@@ -676,6 +677,8 @@ fn apply_plugin_fields(config: &mut AppConfig, index: usize, fields: &[Field]) -
         }
         12 => {
             config.plugins.linux_game_compatibility.enabled = parse_bool_field(&fields[0].value)?;
+            config.plugins.linux_game_compatibility.max_tool_steps =
+                fields[1].value.trim().parse::<usize>()?.clamp(1, 500);
         }
         _ => {
             let value = parse_bool_field(&fields[0].value)?;

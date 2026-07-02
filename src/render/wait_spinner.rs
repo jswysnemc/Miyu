@@ -1,26 +1,39 @@
 use anyhow::Result;
-use crossterm::cursor::MoveToColumn;
+use crossterm::cursor::{MoveToColumn, MoveUp};
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType};
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant};
 
-const DOT_COUNT: usize = 8;
+const WIDTH: usize = 7;
 const TRAIL_LEN: usize = 6;
 const HOLD_END: usize = 9;
 const HOLD_START: usize = 30;
-const INTERVAL: Duration = Duration::from_millis(40);
-const ACCENT_RGB: Rgb = Rgb(133, 153, 0);
-const BASE_RGB: (f64, f64, f64) = (0.522, 0.600, 0.0);
-const ACTIVE_DOT: &str = "■";
-const INACTIVE_DOT: &str = "⬝";
-const DEFAULT_FACE: &str = "(◕‿◕)";
-const BLINK_FACE: &str = "(-‿-)";
-const SLEEPY_FACE: &str = "(◡‿◡)";
-const GLANCE_FACES: [&str; 3] = ["(◐‿◐)", "(◑‿◑)", "(◔‿◔)"];
+const INTERVAL: Duration = Duration::from_millis(80);
+const MIN_FADE_ALPHA: f64 = 0.12;
+const ACTIVE_DOTS: [&str; TRAIL_LEN] = ["▪", "▪", "▫", "▫", "·", "·"];
+const INACTIVE_DOT: &str = "·";
+const BRAILLE_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum SpinnerStyle {
+    Scanner,
+    Braille,
+}
+
+#[derive(Clone, Copy)]
+struct ScannerState {
+    active_position: usize,
+    is_holding: bool,
+    hold_progress: usize,
+    hold_total: usize,
+    movement_progress: usize,
+    movement_total: usize,
+    is_moving_forward: bool,
+}
 
 pub(crate) struct WaitSpinner {
     state: Arc<Mutex<WaitSpinnerState>>,
@@ -30,23 +43,11 @@ pub(crate) struct WaitSpinner {
 
 struct WaitSpinnerState {
     phase: String,
+    sub_phase: Option<String>,
     start: Instant,
-    seed: u64,
+    lines_rendered: u16,
+    style: SpinnerStyle,
 }
-
-#[derive(Clone, Copy)]
-struct ScannerState {
-    active_pos: usize,
-    is_holding: bool,
-    hold_progress: usize,
-    hold_total: usize,
-    move_progress: usize,
-    move_total: usize,
-    forward: bool,
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-struct Rgb(u8, u8, u8);
 
 impl WaitSpinner {
     /// 判断当前终端是否适合显示等待动画。
@@ -61,14 +62,17 @@ impl WaitSpinner {
     ///
     /// 参数:
     /// - `phase`: 初始状态文本
+    /// - `style`: 动画样式
     ///
     /// 返回:
     /// - 等待动画控制器
-    pub(crate) fn start(phase: String) -> Self {
+    pub(crate) fn start(phase: String, style: SpinnerStyle) -> Self {
         let state = Arc::new(Mutex::new(WaitSpinnerState {
             phase,
+            sub_phase: None,
             start: Instant::now(),
-            seed: spinner_seed(),
+            lines_rendered: 0,
+            style,
         }));
         let running = Arc::new(AtomicBool::new(true));
         let thread_state = Arc::clone(&state);
@@ -81,7 +85,7 @@ impl WaitSpinner {
         }
     }
 
-    /// 更新等待动画的状态文本。
+    /// 更新等待动画的主状态文本。
     ///
     /// 参数:
     /// - `phase`: 新状态文本
@@ -91,7 +95,17 @@ impl WaitSpinner {
         }
     }
 
-    /// 停止等待动画并清理当前行。
+    /// 更新等待动画的子状态文本。
+    ///
+    /// 参数:
+    /// - `sub_phase`: 新子状态文本，空值表示隐藏
+    pub(crate) fn set_sub_phase(&self, sub_phase: Option<String>) {
+        if let Ok(mut state) = self.state.lock() {
+            state.sub_phase = sub_phase;
+        }
+    }
+
+    /// 停止等待动画并清理已渲染行。
     ///
     /// 返回:
     /// - 停止是否成功
@@ -100,7 +114,12 @@ impl WaitSpinner {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        clear_spinner_line()
+        let lines = self
+            .state
+            .lock()
+            .map(|state| state.lines_rendered)
+            .unwrap_or(0);
+        clear_spinner_lines(lines)
     }
 }
 
@@ -110,170 +129,141 @@ impl Drop for WaitSpinner {
     }
 }
 
-/// 执行等待动画循环。
-///
-/// 参数:
-/// - `state`: 等待动画共享状态
-/// - `running`: 是否继续运行动画
 fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool>) {
     let mut frame = 0usize;
-    let mut cycle = 0usize;
     while running.load(Ordering::SeqCst) {
-        let line = match state.lock() {
-            Ok(state) => render_frame(frame, cycle, &state),
-            Err(_) => String::new(),
+        let (output, prev_lines, lines, total) = match state.lock() {
+            Ok(mut guard) => {
+                let prev = guard.lines_rendered;
+                let total = total_frames_for_style(guard.style);
+                let (output, lines) = render_frame(frame, &guard);
+                guard.lines_rendered = lines;
+                (output, prev, lines, total)
+            }
+            Err(_) => (String::new(), 0, 0, 1),
         };
-        if !line.is_empty() {
-            let _ = write_spinner_line(&line);
+        if !output.is_empty() {
+            let _ = write_spinner_lines(&output, prev_lines, lines);
         }
         thread::sleep(INTERVAL);
-        frame += 1;
-        if frame >= total_frames() {
-            frame = 0;
-            cycle += 1;
+        frame = (frame + 1) % total.max(1);
+    }
+}
+
+fn render_frame(frame: usize, state: &WaitSpinnerState) -> (String, u16) {
+    let elapsed = if state.start.elapsed() > Duration::from_secs(1) {
+        format!(" {:.1}s", state.start.elapsed().as_secs_f64())
+    } else {
+        String::new()
+    };
+    let spinner_prefix = match state.style {
+        SpinnerStyle::Scanner => {
+            let scanner = scanner_state(frame % total_frames_scanner());
+            (0..WIDTH)
+                .map(|char_index| render_cell(char_index, scanner))
+                .collect::<String>()
         }
+        SpinnerStyle::Braille => paint_secondary(BRAILLE_FRAMES[frame % BRAILLE_FRAMES.len()]),
+    };
+    let main_line = format!(
+        "{} {}{}",
+        spinner_prefix,
+        paint_secondary(&state.phase),
+        paint_secondary(&elapsed)
+    );
+    match &state.sub_phase {
+        Some(sub_phase) if !sub_phase.trim().is_empty() => {
+            let sub_line = format!("  {}", paint_secondary(sub_phase));
+            (format!("{main_line}\n{sub_line}"), 2)
+        }
+        _ => (main_line, 1),
     }
 }
 
-/// 渲染单帧等待动画。
-///
-/// 参数:
-/// - `frame`: 当前周期内帧序号
-/// - `cycle`: 已完成周期数量
-/// - `state`: 等待动画共享状态
-///
-/// 返回:
-/// - 单行 ANSI 文本
-fn render_frame(frame: usize, cycle: usize, state: &WaitSpinnerState) -> String {
-    let scanner = scanner_state(frame);
-    let inactive_color = inactive_rgb(fade_factor(scanner));
-    let abs_frame = cycle * total_frames() + frame;
-    let mut output = String::new();
-    output.push_str(&paint_rgb(
-        face_for_frame(abs_frame, state.seed),
-        ACCENT_RGB,
-    ));
-    output.push(' ');
-    for index in 0..DOT_COUNT {
-        let dot = color_index(index, scanner)
-            .filter(|color_index| *color_index < TRAIL_LEN)
-            .map(|color_index| paint_rgb(ACTIVE_DOT, trail_rgb(color_index)))
-            .unwrap_or_else(|| paint_rgb(INACTIVE_DOT, inactive_color));
-        output.push_str(&dot);
+fn render_cell(char_index: usize, state: ScannerState) -> String {
+    let fade = fade_factor(state);
+    match color_index(char_index, state) {
+        Some(index) if index < TRAIL_LEN => paint_active_dot(index),
+        _ => paint_inactive_dot(fade),
     }
-    output.push(' ');
-    output.push_str(&paint_bold_rgb(&state.phase, ACCENT_RGB));
-    let elapsed = state.start.elapsed();
-    if elapsed > Duration::from_secs(1) {
-        output.push_str(&paint_faint(&format!(" {:.1}s", elapsed.as_secs_f64())));
+}
+
+fn paint_active_dot(index: usize) -> String {
+    let dot = ACTIVE_DOTS[index.min(ACTIVE_DOTS.len() - 1)];
+    match index {
+        0 | 1 => format!("\x1b[36m{dot}\x1b[0m"),
+        _ => format!("\x1b[2m\x1b[36m{dot}\x1b[0m"),
     }
-    output
 }
 
-/// 写入等待动画行。
-///
-/// 参数:
-/// - `line`: 已渲染的等待动画文本
-///
-/// 返回:
-/// - 写入是否成功
-fn write_spinner_line(line: &str) -> Result<()> {
-    let mut stdout = io::stdout();
-    execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-    write!(stdout, "{line}")?;
-    stdout.flush()?;
-    Ok(())
+fn paint_inactive_dot(_fade: f64) -> String {
+    format!("\x1b[2m\x1b[36m{INACTIVE_DOT}\x1b[0m")
 }
 
-/// 清理等待动画行。
-///
-/// 返回:
-/// - 清理是否成功
-fn clear_spinner_line() -> Result<()> {
-    let mut stdout = io::stdout();
-    execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-    stdout.flush()?;
-    Ok(())
+fn total_frames_scanner() -> usize {
+    WIDTH + HOLD_END + (WIDTH - 1) + HOLD_START
 }
 
-/// 计算完整往返周期帧数。
-///
-/// 返回:
-/// - 完整周期帧数
-fn total_frames() -> usize {
-    DOT_COUNT + HOLD_END + (DOT_COUNT - 1) + HOLD_START
+fn total_frames_for_style(style: SpinnerStyle) -> usize {
+    match style {
+        SpinnerStyle::Scanner => total_frames_scanner(),
+        SpinnerStyle::Braille => BRAILLE_FRAMES.len(),
+    }
 }
 
-/// 计算扫描点状态。
-///
-/// 参数:
-/// - `frame`: 当前周期内帧序号
-///
-/// 返回:
-/// - 扫描点状态
 fn scanner_state(mut frame: usize) -> ScannerState {
-    let forward_frames = DOT_COUNT;
-    let backward_frames = DOT_COUNT - 1;
-    if frame < forward_frames {
+    if frame < WIDTH {
         return ScannerState {
-            active_pos: frame,
+            active_position: frame,
             is_holding: false,
             hold_progress: 0,
             hold_total: 0,
-            move_progress: frame,
-            move_total: forward_frames,
-            forward: true,
+            movement_progress: frame,
+            movement_total: WIDTH,
+            is_moving_forward: true,
         };
     }
-    frame -= forward_frames;
+    frame -= WIDTH;
     if frame < HOLD_END {
         return ScannerState {
-            active_pos: DOT_COUNT - 1,
+            active_position: WIDTH - 1,
             is_holding: true,
             hold_progress: frame,
             hold_total: HOLD_END,
-            move_progress: 0,
-            move_total: 0,
-            forward: true,
+            movement_progress: 0,
+            movement_total: 0,
+            is_moving_forward: true,
         };
     }
     frame -= HOLD_END;
-    if frame < backward_frames {
+    if frame < WIDTH - 1 {
         return ScannerState {
-            active_pos: DOT_COUNT - 2 - frame,
+            active_position: WIDTH - 2 - frame,
             is_holding: false,
             hold_progress: 0,
             hold_total: 0,
-            move_progress: frame,
-            move_total: backward_frames,
-            forward: false,
+            movement_progress: frame,
+            movement_total: WIDTH - 1,
+            is_moving_forward: false,
         };
     }
-    frame -= backward_frames;
+    frame -= WIDTH - 1;
     ScannerState {
-        active_pos: 0,
+        active_position: 0,
         is_holding: true,
         hold_progress: frame,
         hold_total: HOLD_START,
-        move_progress: 0,
-        move_total: 0,
-        forward: false,
+        movement_progress: 0,
+        movement_total: 0,
+        is_moving_forward: false,
     }
 }
 
-/// 计算指定位置的尾迹颜色索引。
-///
-/// 参数:
-/// - `char_index`: 点位序号
-/// - `state`: 当前扫描状态
-///
-/// 返回:
-/// - 有颜色时返回尾迹索引，否则返回空
 fn color_index(char_index: usize, state: ScannerState) -> Option<usize> {
-    let distance = if state.forward {
-        state.active_pos as isize - char_index as isize
+    let distance = if state.is_moving_forward {
+        state.active_position as isize - char_index as isize
     } else {
-        char_index as isize - state.active_pos as isize
+        char_index as isize - state.active_position as isize
     };
     if state.is_holding {
         return usize::try_from(distance)
@@ -289,218 +279,102 @@ fn color_index(char_index: usize, state: ScannerState) -> Option<usize> {
     None
 }
 
-/// 计算非活动点的淡入淡出系数。
-///
-/// 参数:
-/// - `state`: 当前扫描状态
-///
-/// 返回:
-/// - 颜色系数
 fn fade_factor(state: ScannerState) -> f64 {
-    const MIN_ALPHA: f64 = 0.3;
     if state.is_holding && state.hold_total > 0 {
         let progress = (state.hold_progress as f64 / state.hold_total as f64).min(1.0);
-        (1.0 - progress * (1.0 - MIN_ALPHA)).max(MIN_ALPHA)
-    } else if !state.is_holding && state.move_total > 0 {
-        let denom = state.move_total.saturating_sub(1).max(1);
-        let progress = (state.move_progress as f64 / denom as f64).min(1.0);
-        MIN_ALPHA + progress * (1.0 - MIN_ALPHA)
+        (1.0 - progress * (1.0 - MIN_FADE_ALPHA)).max(MIN_FADE_ALPHA)
+    } else if !state.is_holding && state.movement_total > 0 {
+        let denominator = state.movement_total.saturating_sub(1).max(1);
+        let progress = (state.movement_progress as f64 / denominator as f64).min(1.0);
+        MIN_FADE_ALPHA + progress * (1.0 - MIN_FADE_ALPHA)
     } else {
         1.0
     }
 }
 
-/// 根据帧序号选择表情。
-///
-/// 参数:
-/// - `frame`: 全局帧序号
-/// - `seed`: 进程级随机种子
-///
-/// 返回:
-/// - 表情文本
-fn face_for_frame(frame: usize, seed: u64) -> &'static str {
-    let mut blink_pos = 0usize;
-    let mut blink_segment = 0usize;
-    while blink_pos <= frame {
-        let hash = face_hash(blink_segment * 7 + seed as usize);
-        let gap = 25 + hash % 25;
-        if frame >= blink_pos + gap && frame < blink_pos + gap + 3 {
-            return BLINK_FACE;
+fn paint_secondary(text: &str) -> String {
+    format!("\x1b[2m\x1b[36m{text}\x1b[0m")
+}
+
+fn write_spinner_lines(output: &str, prev_lines: u16, lines: u16) -> Result<()> {
+    let mut stdout = io::stdout();
+    if prev_lines > 1 {
+        for _ in 1..prev_lines {
+            execute!(stdout, MoveUp(1))?;
         }
-        blink_pos += gap + 3;
-        blink_segment += 1;
     }
-    if frame > 200 {
-        return SLEEPY_FACE;
-    }
-    let mut position = 0usize;
-    let mut segment = 0usize;
-    while position <= frame {
-        let hash = face_hash(segment + seed as usize);
-        let segment_len = 25 + hash % 50;
-        if frame < position + segment_len {
-            let index = (hash / 50) % (GLANCE_FACES.len() + 1);
-            if index < GLANCE_FACES.len() {
-                return GLANCE_FACES[index];
-            }
-            return DEFAULT_FACE;
+    let rendered_lines = output.lines().collect::<Vec<_>>();
+    for (index, line) in rendered_lines.iter().enumerate() {
+        execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+        write!(stdout, "{line}")?;
+        if index + 1 < rendered_lines.len() {
+            write!(stdout, "\n")?;
         }
-        position += segment_len;
-        segment += 1;
     }
-    DEFAULT_FACE
-}
-
-/// 生成表情选择用哈希值。
-///
-/// 参数:
-/// - `value`: 输入数字
-///
-/// 返回:
-/// - 哈希值
-fn face_hash(value: usize) -> usize {
-    let mut value = value as u64;
-    value = ((value >> 16) ^ value).wrapping_mul(0x45d9f3b);
-    value = ((value >> 16) ^ value).wrapping_mul(0x45d9f3b);
-    ((value >> 16) ^ value) as usize
-}
-
-/// 生成当前进程的动画种子。
-///
-/// 返回:
-/// - 动画种子
-fn spinner_seed() -> u64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_nanos() as u64 & 0x7fff_ffff)
-        .unwrap_or(0)
-}
-
-/// 计算尾迹颜色。
-///
-/// 参数:
-/// - `index`: 尾迹索引
-///
-/// 返回:
-/// - RGB 颜色
-fn trail_rgb(index: usize) -> Rgb {
-    let (mut r, mut g, mut b) = BASE_RGB;
-    let alpha = match index {
-        0 => 1.0,
-        1 => {
-            r = (r * 1.15).min(1.0);
-            g = (g * 1.15).min(1.0);
-            b = (b * 1.15).min(1.0);
-            0.9
+    if prev_lines > lines {
+        for _ in lines..prev_lines {
+            execute!(stdout, MoveUp(1))?;
+            execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
         }
-        _ => 0.65_f64.powi(index.saturating_sub(1) as i32),
-    };
-    Rgb(
-        clamp8(r * alpha * 255.0),
-        clamp8(g * alpha * 255.0),
-        clamp8(b * alpha * 255.0),
-    )
+    }
+    stdout.flush()?;
+    Ok(())
 }
 
-/// 计算非活动点颜色。
-///
-/// 参数:
-/// - `factor`: 淡入淡出系数
-///
-/// 返回:
-/// - RGB 颜色
-fn inactive_rgb(factor: f64) -> Rgb {
-    let (r, g, b) = BASE_RGB;
-    let alpha = 0.6 * factor;
-    Rgb(
-        clamp8(r * alpha * 255.0),
-        clamp8(g * alpha * 255.0),
-        clamp8(b * alpha * 255.0),
-    )
-}
-
-/// 限制颜色通道范围。
-///
-/// 参数:
-/// - `value`: 原始浮点颜色值
-///
-/// 返回:
-/// - 8 位颜色通道
-fn clamp8(value: f64) -> u8 {
-    value.clamp(0.0, 255.0) as u8
-}
-
-/// 渲染真彩前景色文本。
-///
-/// 参数:
-/// - `text`: 原始文本
-/// - `rgb`: 文本颜色
-///
-/// 返回:
-/// - 带 ANSI 样式的文本
-fn paint_rgb(text: &str, rgb: Rgb) -> String {
-    format!("\x1b[38;2;{};{};{}m{text}\x1b[0m", rgb.0, rgb.1, rgb.2)
-}
-
-/// 渲染加粗真彩前景色文本。
-///
-/// 参数:
-/// - `text`: 原始文本
-/// - `rgb`: 文本颜色
-///
-/// 返回:
-/// - 带 ANSI 样式的文本
-fn paint_bold_rgb(text: &str, rgb: Rgb) -> String {
-    format!(
-        "\x1b[1m\x1b[38;2;{};{};{}m{text}\x1b[0m",
-        rgb.0, rgb.1, rgb.2
-    )
-}
-
-/// 渲染弱化文本。
-///
-/// 参数:
-/// - `text`: 原始文本
-///
-/// 返回:
-/// - 带 ANSI 样式的文本
-fn paint_faint(text: &str) -> String {
-    format!("\x1b[2m{text}\x1b[0m")
+fn clear_spinner_lines(lines: u16) -> Result<()> {
+    let mut stdout = io::stdout();
+    for i in 0..lines {
+        if i > 0 {
+            execute!(stdout, MoveUp(1))?;
+        }
+        execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+    }
+    stdout.flush()?;
+    Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn scanner_cycle_matches_expected_length() {
-        assert_eq!(total_frames(), 54);
+    fn make_state(phase: &str, sub_phase: Option<&str>, style: SpinnerStyle) -> WaitSpinnerState {
+        WaitSpinnerState {
+            phase: phase.to_string(),
+            sub_phase: sub_phase.map(str::to_string),
+            start: Instant::now(),
+            lines_rendered: 0,
+            style,
+        }
     }
 
     #[test]
-    fn scanner_moves_forward_then_holds() {
-        let moving = scanner_state(3);
-        assert_eq!(moving.active_pos, 3);
-        assert!(moving.forward);
-        assert!(!moving.is_holding);
-        let holding = scanner_state(DOT_COUNT);
-        assert_eq!(holding.active_pos, DOT_COUNT - 1);
-        assert!(holding.is_holding);
+    fn render_frame_scanner_has_phase() {
+        let state = make_state("思考", None, SpinnerStyle::Scanner);
+
+        let (frame, lines) = render_frame(0, &state);
+
+        assert!(frame.contains("思考"));
+        assert_eq!(lines, 1);
     }
 
     #[test]
-    fn color_index_tracks_tail_direction() {
-        let state = scanner_state(4);
-        assert_eq!(color_index(4, state), Some(0));
-        assert_eq!(color_index(3, state), Some(1));
-        assert_eq!(color_index(7, state), None);
+    fn render_frame_with_sub_phase_produces_two_lines() {
+        let state = make_state("工具运行中", Some("第 1 轮：诊断中"), SpinnerStyle::Scanner);
+
+        let (frame, lines) = render_frame(0, &state);
+
+        assert!(frame.contains("工具运行中"));
+        assert!(frame.contains("第 1 轮"));
+        assert_eq!(lines, 2);
     }
 
     #[test]
-    fn trail_colors_fade_after_head() {
-        assert_eq!(trail_rgb(0), ACCENT_RGB);
-        let tail = trail_rgb(4);
-        assert!(tail.0 < ACCENT_RGB.0);
-        assert!(tail.1 < ACCENT_RGB.1);
+    fn braille_frames_loop_over_pattern() {
+        let state = make_state("thinking", None, SpinnerStyle::Braille);
+
+        let (first, _) = render_frame(0, &state);
+        let (second, _) = render_frame(BRAILLE_FRAMES.len(), &state);
+
+        assert_eq!(first, second);
     }
 }

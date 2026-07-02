@@ -21,7 +21,7 @@ use crossterm::{execute, queue};
 use fuzzy_matcher::skim::SkimMatcherV2;
 use fuzzy_matcher::FuzzyMatcher;
 use std::io::Cursor;
-use std::io::{self, IsTerminal, Write};
+use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -116,9 +116,16 @@ fn apply_localized_help_flags(mut command: clap::Command, root: bool) -> clap::C
 }
 
 fn apply_chinese_help_template(mut command: clap::Command) -> clap::Command {
-    command = command.help_template(
-        "{about}\n\n用法: {usage}\n\n命令:\n{subcommands}\n参数:\n{positionals}\n选项:\n{options}\n{after-help}",
-    );
+    let has_subcommands = command.get_subcommands().next().is_some();
+    command = if has_subcommands {
+        command.help_template(
+            "{about}\n\n用法: {usage}\n\n命令:\n{subcommands}\n参数:\n{positionals}\n选项:\n{options}\n{after-help}",
+        )
+    } else {
+        command.help_template(
+            "{about}\n\n用法: {usage}\n\n参数:\n{positionals}\n选项:\n{options}\n{after-help}",
+        )
+    };
     let subcommands = command
         .get_subcommands()
         .map(|subcommand| subcommand.get_name().to_string())
@@ -225,7 +232,8 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("kb", localize_kb_command)
         .mut_subcommand("memory", localize_memory_command)
         .mut_subcommand("skills", localize_skills_command)
-        .mut_subcommand("config", localize_config_command);
+        .mut_subcommand("config", localize_config_command)
+        .mut_subcommand("reset", localize_reset_command);
     command
 }
 
@@ -272,6 +280,15 @@ fn localize_config_command(command: clap::Command) -> clap::Command {
         .mut_subcommand("paths", |subcommand| {
             subcommand.about(t("Show configuration paths", "显示配置路径"))
         })
+}
+
+fn localize_reset_command(command: clap::Command) -> clap::Command {
+    command.mut_arg("scope", |arg| {
+        arg.help(t(
+            "all also clears long-term memory",
+            "all 同时清空长期记忆",
+        ))
+    })
 }
 
 fn localize_kb_command(mut command: clap::Command) -> clap::Command {
@@ -407,7 +424,7 @@ pub enum Command {
     UpdateDefaultKb,
     Memory(MemoryArgs),
     Skills(SkillsArgs),
-    Reset,
+    Reset(ResetArgs),
 }
 
 #[derive(Debug, Args)]
@@ -417,6 +434,11 @@ pub struct MessageArgs {
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub message: Vec<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct ResetArgs {
+    pub scope: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -648,7 +670,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::UpdateDefaultKb) => run_update_default_kb(&paths).await,
         Some(Command::Memory(args)) => run_memory(&paths, args),
         Some(Command::Skills(args)) => run_skills(&paths, args),
-        Some(Command::Reset) => run_reset(&paths),
+        Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
             let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
             if input.message.is_empty() && !input.clipb {
@@ -842,10 +864,19 @@ fn read_shell_menu_key() -> Result<KeyCode> {
 }
 
 fn remove_shell_hooks(paths: &MiyuPaths) -> Result<()> {
-    shell::fish::uninstall(paths)?;
-    shell::bash::uninstall(paths)?;
-    shell::zsh::uninstall(paths)?;
+    let removed = shell::fish::uninstall(paths)?;
+    let removed = shell::bash::uninstall(paths)? || removed;
+    let removed = shell::zsh::uninstall(paths)? || removed;
     shell::powershell::uninstall(paths)?;
+    if !removed {
+        println!(
+            "{}",
+            t(
+                "no installed Miyu shell hooks found",
+                "未找到已安装的 Miyu shell hook"
+            )
+        );
+    }
     Ok(())
 }
 
@@ -1273,7 +1304,39 @@ async fn run_shell_intercept(
             t("not a natural language command", "不是自然语言命令")
         );
     }
-    run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb).await
+    let result = run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb).await;
+    drain_stdin();
+    result
+}
+
+fn drain_stdin() {
+    use std::os::fd::AsRawFd;
+
+    let stdin = io::stdin();
+    if !stdin.is_terminal() {
+        return;
+    }
+    let fd = stdin.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    if flags < 0 {
+        return;
+    }
+    if unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+        return;
+    }
+
+    let mut handle = stdin.lock();
+    let mut buffer = [0_u8; 4096];
+    loop {
+        match handle.read(&mut buffer) {
+            Ok(0) => break,
+            Ok(_) => continue,
+            Err(err) if err.kind() == io::ErrorKind::WouldBlock => break,
+            Err(_) => break,
+        }
+    }
+
+    let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
 }
 
 async fn run_chat_with_options(
@@ -1332,8 +1395,8 @@ async fn run_repl(paths: &MiyuPaths, initial_mode: AgentMode) -> Result<()> {
     println!(
         "\x1b[2m{}\x1b[0m",
         t(
-            "Tab toggles mode; /help shows commands; exit quits",
-            "Tab 切换模式；/help 查看命令；exit 退出",
+            "Tab toggles mode; Enter sends; Ctrl+J inserts newline",
+            "Tab 切换模式；Enter 发送；Ctrl+J 换行",
         )
     );
     crate::default_kb::check_update_if_due(paths).ok();
@@ -1388,7 +1451,12 @@ async fn run_repl(paths: &MiyuPaths, initial_mode: AgentMode) -> Result<()> {
             continue;
         }
         if input.eq_ignore_ascii_case("/reset") {
-            run_reset(paths)?;
+            run_reset(paths, None)?;
+            input_history.clear();
+            continue;
+        }
+        if input.eq_ignore_ascii_case("/reset all") {
+            run_reset(paths, Some("all"))?;
             input_history.clear();
             continue;
         }
@@ -1477,8 +1545,11 @@ fn print_repl_help() {
         )
     );
     println!(
-        "  /reset      {}",
-        t("clear current conversation history", "清空当前会话历史")
+        "  /reset [all] {}",
+        t(
+            "clear current conversation history; all also clears memory",
+            "清空当前会话历史；all 同时清空记忆"
+        )
     );
     println!("  /help       {}", t("show this help", "显示此帮助"));
     println!("  /exit       {}", t("leave REPL", "退出 REPL"));
@@ -1489,6 +1560,12 @@ fn print_repl_help() {
             "toggle YOLO/PLAN, or complete slash commands",
             "切换 YOLO/PLAN，或补全斜杠菜单"
         )
+    );
+    println!("  Enter       {}", t("send message", "发送消息"));
+    println!("  Ctrl+J      {}", t("insert newline", "插入换行"));
+    println!(
+        "  Ctrl+L      {}",
+        t("clear screen", "清屏")
     );
     println!(
         "  Up/Down     {}",
@@ -1518,6 +1595,7 @@ fn read_repl_input(
     execute!(stdout, EnableBracketedPaste)?;
     let (_, mut input_row) = cursor::position()?;
     let mut rendered_rows = 0u16;
+    let mut is_pasted = false;
     render_repl_input(
         &mut stdout,
         &mut input_row,
@@ -1525,12 +1603,14 @@ fn read_repl_input(
         mode,
         &input,
         cursor,
+        is_pasted,
     )?;
     loop {
         match event::read()? {
             Event::Paste(text) => {
                 let text = strip_terminal_control_sequences(&text);
                 insert_str_at_cursor(&mut input, &mut cursor, &text);
+                is_pasted = true;
                 render_repl_input(
                     &mut stdout,
                     &mut input_row,
@@ -1538,6 +1618,7 @@ fn read_repl_input(
                     mode,
                     &input,
                     cursor,
+                    is_pasted,
                 )?;
             }
             Event::Key(KeyEvent {
@@ -1556,6 +1637,7 @@ fn read_repl_input(
                             AgentMode::Yolo
                         };
                     }
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1563,11 +1645,13 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Esc => {
                     input.clear();
                     cursor = 0;
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1575,6 +1659,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Left => {
@@ -1586,6 +1671,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Right => {
@@ -1597,6 +1683,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Home => {
@@ -1608,6 +1695,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::End => {
@@ -1619,6 +1707,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Up => {
@@ -1626,6 +1715,7 @@ fn read_repl_input(
                         history_index = history_index.saturating_sub(1);
                         input = history.get(history_index).cloned().unwrap_or_default();
                         cursor = input.chars().count();
+                        is_pasted = false;
                         render_repl_input(
                             &mut stdout,
                             &mut input_row,
@@ -1633,6 +1723,7 @@ fn read_repl_input(
                             mode,
                             &input,
                             cursor,
+                            is_pasted,
                         )?;
                     }
                 }
@@ -1645,6 +1736,7 @@ fn read_repl_input(
                         input.clear();
                     }
                     cursor = input.chars().count();
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1652,6 +1744,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Enter => {
@@ -1661,10 +1754,24 @@ fn read_repl_input(
                     terminal::disable_raw_mode()?;
                     return Ok(Some((mode, input)));
                 }
+                KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    insert_newline_at_cursor(&mut input, &mut cursor);
+                    is_pasted = false;
+                    render_repl_input(
+                        &mut stdout,
+                        &mut input_row,
+                        &mut rendered_rows,
+                        mode,
+                        &input,
+                        cursor,
+                        is_pasted,
+                    )?;
+                }
                 KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
                     if !input.is_empty() {
                         input.clear();
                         cursor = 0;
+                        is_pasted = false;
                         render_repl_input(
                             &mut stdout,
                             &mut input_row,
@@ -1672,6 +1779,7 @@ fn read_repl_input(
                             mode,
                             &input,
                             cursor,
+                            is_pasted,
                         )?;
                         continue;
                     }
@@ -1688,8 +1796,11 @@ fn read_repl_input(
                     terminal::disable_raw_mode()?;
                     return Ok(None);
                 }
-                KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    remove_word_before_cursor(&mut input, &mut cursor);
+                KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    queue!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+                    stdout.flush()?;
+                    input_row = 0;
+                    rendered_rows = 0;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1697,12 +1808,27 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
+                    )?;
+                }
+                KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    remove_word_before_cursor(&mut input, &mut cursor);
+                    is_pasted = false;
+                    render_repl_input(
+                        &mut stdout,
+                        &mut input_row,
+                        &mut rendered_rows,
+                        mode,
+                        &input,
+                        cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Backspace => {
                     if cursor > 0 {
                         remove_char_before_cursor(&mut input, &mut cursor);
                     }
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1710,10 +1836,12 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Delete => {
                     remove_char_at_cursor(&mut input, cursor);
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1721,12 +1849,14 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
                     if !is_disallowed_control_char(ch) {
                         insert_char_at_cursor(&mut input, &mut cursor, ch);
                     }
+                    is_pasted = false;
                     render_repl_input(
                         &mut stdout,
                         &mut input_row,
@@ -1734,6 +1864,7 @@ fn read_repl_input(
                         mode,
                         &input,
                         cursor,
+                        is_pasted,
                     )?;
                 }
                 _ => {}
@@ -1750,13 +1881,14 @@ fn render_repl_input(
     mode: AgentMode,
     input: &str,
     cursor: usize,
+    is_pasted: bool,
 ) -> Result<()> {
     let suggestions = repl_command_suggestions(input);
     let lines = repl_input_lines(input);
     let prompt_prefix = format!("{} > ", colored_mode_label(mode));
     let plain_prefix = format!("[{}] > ", mode.label());
     let display_lines =
-        repl_visible_input_lines(&plain_prefix, &lines, REPL_MAX_VISIBLE_INPUT_ROWS);
+        repl_visible_input_lines(&plain_prefix, &lines, REPL_MAX_VISIBLE_INPUT_ROWS, is_pasted);
     let current_rows = repl_render_rows(&plain_prefix, &display_lines, !suggestions.is_empty());
     let rows_to_clear = (*rendered_rows).max(current_rows).max(1);
     ensure_repl_space(stdout, input_row, rows_to_clear)?;
@@ -1807,9 +1939,14 @@ fn render_repl_input(
     Ok(())
 }
 
-fn repl_visible_input_lines(prefix: &str, lines: &[String], max_rows: u16) -> Vec<String> {
+fn repl_visible_input_lines(
+    prefix: &str,
+    lines: &[String],
+    max_rows: u16,
+    is_pasted: bool,
+) -> Vec<String> {
     let total_rows = repl_prompt_rows(prefix, lines);
-    if total_rows <= max_rows || lines.len() <= 2 {
+    if total_rows <= max_rows || lines.len() <= 2 || !is_pasted {
         return lines.to_vec();
     }
 
@@ -1921,6 +2058,10 @@ fn insert_str_at_cursor(value: &mut String, cursor: &mut usize, text: &str) {
     let byte_index = byte_index_for_char(value, *cursor);
     value.insert_str(byte_index, text);
     *cursor += text.chars().count();
+}
+
+fn insert_newline_at_cursor(value: &mut String, cursor: &mut usize) {
+    insert_char_at_cursor(value, cursor, '\n');
 }
 
 fn remove_char_before_cursor(value: &mut String, cursor: &mut usize) {
@@ -2125,6 +2266,11 @@ mod repl_input_tests {
     }
 
     #[test]
+    fn drain_stdin_does_not_panic() {
+        drain_stdin();
+    }
+
+    #[test]
     fn input_helpers_edit_at_cursor() {
         let mut input = "abcd".to_string();
         let mut cursor = 2;
@@ -2166,11 +2312,20 @@ mod repl_input_tests {
     }
 
     #[test]
+    fn input_helpers_insert_newline_at_cursor() {
+        let mut input = "前后".to_string();
+        let mut cursor = 1;
+        insert_newline_at_cursor(&mut input, &mut cursor);
+        assert_eq!(input, "前\n后");
+        assert_eq!(cursor, 2);
+    }
+
+    #[test]
     fn long_paste_visible_lines_are_collapsed() {
         let lines = (0..20)
             .map(|index| format!("line {index}"))
             .collect::<Vec<_>>();
-        let visible = repl_visible_input_lines("[YOLO] > ", &lines, 12);
+        let visible = repl_visible_input_lines("[YOLO] > ", &lines, 12, true);
 
         assert_eq!(visible.len(), 3);
         assert_eq!(visible[0], "line 0");
@@ -2447,16 +2602,32 @@ fn skill_dir(paths: &MiyuPaths, name: &str) -> Result<PathBuf> {
     Ok(dir)
 }
 
-fn run_reset(paths: &MiyuPaths) -> Result<()> {
+fn run_reset(paths: &MiyuPaths, scope: Option<&str>) -> Result<()> {
+    let all = match scope {
+        None => false,
+        Some("all") => true,
+        Some(scope) => bail!("{}: {scope}", t("unknown reset scope", "未知 reset 范围")),
+    };
     let config = AppConfig::load_or_default(paths)?;
     StateStore::new(paths)?.reset_conversation()?;
     let memory = MemoryStore::new(&config, paths);
-    memory.clear_evicted_context()?;
-    memory.clear_pending_events()?;
+    if all {
+        memory.reset_all(false)?;
+    } else {
+        memory.clear_evicted_context()?;
+        memory.clear_pending_events()?;
+    }
     tools::clear_aur_review_state(paths)?;
     println!(
         "{}",
-        t("cleared current conversation history", "已清空当前会话历史")
+        if all {
+            t(
+                "cleared current conversation history and all memory",
+                "已清空当前会话历史与全部记忆",
+            )
+        } else {
+            t("cleared current conversation history", "已清空当前会话历史")
+        }
     );
     Ok(())
 }
@@ -2521,5 +2692,6 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
             renderer.write_tool_result(&name, ok, &output)
         }
         AgentEvent::ToolProgress { name, message } => renderer.write_tool_progress(&name, &message),
+        AgentEvent::ExternalOutput => renderer.prepare_for_external_output(),
     }
 }

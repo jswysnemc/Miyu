@@ -3,57 +3,61 @@ use crate::config::{AppConfig, DiagnosticsPluginConfig};
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::Duration;
 use tokio::process::Command;
-use tokio::time::timeout;
+use tokio::time::{timeout, Duration};
 
 pub fn register(registry: &mut ToolRegistry, config: AppConfig) {
     registry.register(ToolSpec::new(
-        "inspect_issue",
-        "Collect read-only local facts for a reported computer issue. Covers app startup, input method, display or screen sharing, audio, package updates, GPU or driver, network, storage, and general system context. This only gathers evidence; it does not diagnose or produce final advice. After using it, combine the result with knowledge base, memory, and web search/fetch when needed. It does not modify the system.",
+        "check_issue",
+        "Collect read-only diagnostic evidence for a concrete local issue. This tool gathers facts only; it does not diagnose, rank root causes, or recommend fixes.",
         json!({
             "type": "object",
             "properties": {
-                "query": { "type": "string", "description": "Optional original user request. Used only as fallback when mode is auto or omitted." },
-                "mode": { "type": "string", "enum": ["auto", "system", "app", "input_method", "display", "audio", "package_update", "gpu", "network", "storage"], "description": "Probe mode. Use auto only when passing query and no structured mode is obvious." },
-                "target": { "type": "string", "description": "Optional target app, process, command, or subsystem, for example qq or opencode." },
-                "symptom": { "type": "string", "description": "Optional symptom such as cannot_start, app_cannot_input_chinese, no_audio, screen_share_failed." },
-                "depth": { "type": "string", "enum": ["quick", "normal", "full"], "description": "Probe depth. Start with quick or normal; full may run slower probes." },
+                "query": { "type": "string", "description": "Original user issue. Used for auto area/target inference." },
+                "area": { "type": "string", "enum": ["auto", "system", "app", "input_method", "display", "audio", "package", "gpu", "network", "storage"], "description": "Evidence collection area." },
+                "target": { "type": "string", "description": "Optional app, process, command, package, or subsystem target." },
+                "symptom": { "type": "string", "description": "Optional symptom label." },
+                "depth": { "type": "string", "enum": ["quick", "normal", "full"], "description": "Probe depth." },
                 "recent_minutes": { "type": "integer", "description": "Recent log window in minutes, clamped to 1..1440." },
-                "platform": { "type": "string", "enum": ["auto", "linux", "macos"], "description": "Platform override. Prefer auto." }
+                "platform": { "type": "string", "enum": ["auto", "linux", "macos"], "description": "Platform override. Prefer auto." },
+                "allow_launch_probe": { "type": "boolean", "description": "For app/input_method evidence only: explicitly allow launching target to sample runtime facts. Defaults to false." },
+                "launch_timeout_seconds": { "type": "integer", "description": "Seconds to wait after launch probe before sampling pids. Defaults to 3, max 15." }
             },
             "required": [],
             "additionalProperties": false
         }),
         move |args| {
             let config = config.clone();
-            async move { inspect_issue(args, config.plugins.diagnostics.clone()).await }
+            async move { check_issue(args, config.plugins.diagnostics.clone()).await }
         },
     ));
 }
 
 #[derive(Debug, Clone)]
-struct DiagnoseArgs {
+struct CheckIssueArgs {
     query: Option<String>,
-    mode: Mode,
+    area: Area,
     target: Option<String>,
     symptom: Option<String>,
     depth: Depth,
     recent_minutes: u64,
     platform: PlatformArg,
+    allow_launch_probe: bool,
+    launch_timeout_seconds: u64,
 }
 
 #[derive(Debug, Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
-enum Mode {
+enum Area {
     System,
     App,
     InputMethod,
     Display,
     Audio,
-    PackageUpdate,
+    Package,
     Gpu,
     Network,
     Storage,
@@ -74,7 +78,7 @@ enum PlatformArg {
     Macos,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum Platform {
     Linux,
@@ -83,21 +87,21 @@ enum Platform {
 }
 
 #[derive(Debug, Serialize)]
-struct DiagnosticReport {
+struct EvidenceReport {
     ok: bool,
+    kind: &'static str,
     platform: Platform,
     query: Option<String>,
-    mode: Mode,
+    area: Area,
     target: Option<String>,
     symptom: Option<String>,
     depth: Depth,
-    summary: String,
     facts: BTreeMap<String, Value>,
     checks: Vec<Check>,
     logs: Vec<LogExcerpt>,
-    findings: Vec<Finding>,
-    next_questions: Vec<String>,
-    output_instruction: String,
+    missing_evidence: Vec<String>,
+    safety_notes: Vec<String>,
+    recommended_next_probes: Vec<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -123,18 +127,79 @@ struct LogExcerpt {
     message: String,
 }
 
-#[derive(Debug, Serialize)]
-struct Finding {
-    severity: Severity,
-    title: String,
-    evidence: String,
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum InputToolkit {
+    ElectronChromium,
+    ElectronX11,
+    ElectronWayland,
+    Gtk,
+    Qt,
+    Sdl,
+    Java,
+    X11Legacy,
+    Unknown,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum DisplayMode {
+    X11,
+    XWayland,
+    WaylandNative,
+    Unknown,
 }
 
 #[derive(Debug, Serialize)]
-#[serde(rename_all = "snake_case")]
-enum Severity {
-    Medium,
-    High,
+struct InputMethodProfile {
+    toolkit: InputToolkit,
+    display_mode: DisplayMode,
+    runtime_observed: bool,
+    command_line: Option<String>,
+    desktop_exec: Option<String>,
+    target_env: Option<BTreeMap<String, String>>,
+    loaded_input_modules: Vec<String>,
+    available_input_modules: Vec<String>,
+    immodule_cache: Vec<ImmoduleCacheEntry>,
+    wayland_protocol: WaylandProtocolInfo,
+    locale_info: LocaleInfo,
+    path_status: InputMethodPathStatus,
+}
+
+#[derive(Debug, Clone, Serialize)]
+struct ImmoduleCacheEntry {
+    so_path: String,
+    module_name: String,
+    locales: String,
+}
+
+#[derive(Debug, Serialize)]
+struct WaylandProtocolInfo {
+    compositor_supports_text_input_v3: bool,
+    fcitx5_wayland_frontend_loaded: bool,
+    wayland_info_available: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct LocaleInfo {
+    target_lang: Option<String>,
+    target_lc_ctype: Option<String>,
+    available_locales: Vec<String>,
+    locale_valid: bool,
+}
+
+#[derive(Debug, Serialize)]
+struct InputMethodPathStatus {
+    paths: Vec<NamedPathCheck>,
+    overall: String,
+}
+
+#[derive(Debug, Serialize)]
+struct NamedPathCheck {
+    name: String,
+    status: String,
+    evidence: Vec<String>,
+    missing: Vec<String>,
 }
 
 #[derive(Debug)]
@@ -142,97 +207,99 @@ struct ProbeOutput {
     status: Option<i32>,
     stdout: String,
     stderr: String,
-    error: Option<String>,
     timed_out: bool,
 }
 
-async fn inspect_issue(args: Value, config: DiagnosticsPluginConfig) -> Result<String> {
+async fn check_issue(args: Value, config: DiagnosticsPluginConfig) -> Result<String> {
     if !config.enabled {
         bail!("diagnostics plugin is disabled");
     }
     let args = parse_args(args)?;
     let platform = detect_platform(args.platform);
-    let mut report = DiagnosticReport {
+    let mut report = EvidenceReport {
         ok: true,
+        kind: "diagnostic_evidence",
         platform,
         query: args.query.clone(),
-        mode: args.mode,
+        area: args.area,
         target: args.target.clone(),
         symptom: args.symptom.clone(),
         depth: args.depth,
-        summary: String::new(),
         facts: BTreeMap::new(),
         checks: Vec::new(),
         logs: Vec::new(),
-        findings: Vec::new(),
-        next_questions: Vec::new(),
-        output_instruction: "Treat this as local issue context only, not a diagnosis. Before the final answer, combine it with relevant knowledge_base or memory results when available; use web_search/web_fetch only for current or external facts. Final answer should explain root cause, evidence, and next steps in user-facing language instead of dumping raw JSON.".to_string(),
+        missing_evidence: Vec::new(),
+        safety_notes: vec![
+            "check_issue uses fixed read-only probes and does not diagnose or apply fixes"
+                .to_string(),
+        ],
+        recommended_next_probes: Vec::new(),
     };
+
     match platform {
-        Platform::Linux => run_linux_plan(&args, &config, &mut report).await,
-        Platform::Macos => run_macos_plan(&args, &config, &mut report).await,
+        Platform::Linux => collect_linux_evidence(&args, &config, &mut report).await,
+        Platform::Macos => collect_macos_evidence(&args, &config, &mut report).await,
         Platform::Unsupported => {
             report.ok = false;
-            report.summary = "unsupported platform".to_string();
             report.checks.push(Check {
                 id: "platform.supported".to_string(),
                 status: CheckStatus::Error,
-                detail: "only linux and macos are supported by diagnostics".to_string(),
+                detail: "only linux and macos are supported by check_issue".to_string(),
                 evidence: vec![std::env::consts::OS.to_string()],
             });
         }
     }
-    finalize_summary(&mut report);
     Ok(serde_json::to_string_pretty(&report)?)
 }
 
-fn parse_args(args: Value) -> Result<DiagnoseArgs> {
+fn parse_args(args: Value) -> Result<CheckIssueArgs> {
     let query = optional_string(&args, "query", 500);
-    let mode_raw = args
-        .get("mode")
+    let mut target = optional_string(&args, "target", 160);
+    let symptom = optional_string(&args, "symptom", 200);
+    let area_raw = args
+        .get("area")
+        .or_else(|| args.get("mode"))
         .and_then(Value::as_str)
         .unwrap_or("auto")
         .trim();
-    let mut target = optional_string(&args, "target", 160);
-    let mut symptom = optional_string(&args, "symptom", 200);
-    let mode = if mode_raw == "auto" {
-        let inferred =
-            infer_probe_request(query.as_deref(), target.as_deref(), symptom.as_deref())?;
+    let area = if area_raw == "auto" {
+        let inferred = infer_area(query.as_deref(), target.as_deref())?;
         if target.is_none() {
-            target = inferred.target;
+            target = infer_target(query.as_deref().unwrap_or_default());
         }
-        if symptom.is_none() {
-            symptom = inferred.symptom;
-        }
-        inferred.mode
+        inferred
     } else {
-        parse_mode(mode_raw)?
+        parse_area(area_raw)?
     };
-    let depth = parse_depth(
-        args.get("depth")
-            .and_then(Value::as_str)
-            .unwrap_or("normal")
-            .trim(),
-    )?;
-    let recent_minutes = args
-        .get("recent_minutes")
-        .and_then(Value::as_u64)
-        .unwrap_or(30)
-        .clamp(1, 1440);
-    let platform = parse_platform_arg(
-        args.get("platform")
-            .and_then(Value::as_str)
-            .unwrap_or("auto")
-            .trim(),
-    )?;
-    Ok(DiagnoseArgs {
+    Ok(CheckIssueArgs {
         query,
-        mode,
+        area,
         target,
         symptom,
-        depth,
-        recent_minutes,
-        platform,
+        depth: parse_depth(
+            args.get("depth")
+                .and_then(Value::as_str)
+                .unwrap_or("normal"),
+        )?,
+        recent_minutes: args
+            .get("recent_minutes")
+            .and_then(Value::as_u64)
+            .unwrap_or(30)
+            .clamp(1, 1440),
+        platform: parse_platform_arg(
+            args.get("platform")
+                .and_then(Value::as_str)
+                .unwrap_or("auto"),
+        )?,
+        allow_launch_probe: args
+            .get("allow_launch_probe")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        launch_timeout_seconds: args
+            .get("launch_timeout_seconds")
+            .and_then(Value::as_u64)
+            .unwrap_or(3)
+            .clamp(1, 15),
     })
 }
 
@@ -244,99 +311,61 @@ fn optional_string(args: &Value, name: &str, max_chars: usize) -> Option<String>
         .map(|value| value.chars().take(max_chars).collect())
 }
 
-struct InferredProbeRequest {
-    mode: Mode,
-    target: Option<String>,
-    symptom: Option<String>,
-}
-
-fn infer_probe_request(
-    query: Option<&str>,
-    target: Option<&str>,
-    symptom: Option<&str>,
-) -> Result<InferredProbeRequest> {
-    let text = query.unwrap_or_default().trim();
+fn infer_area(query: Option<&str>, target: Option<&str>) -> Result<Area> {
+    let text = query.unwrap_or_default();
     let lower = text.to_ascii_lowercase();
-    let mode = if contains_any(
+    if contains_any(
         text,
-        &[
-            "输入法",
-            "打不了中文",
-            "候选框",
-            "fcitx",
-            "fcitx5",
-            "ibus",
-            "拼音",
-        ],
-    ) || contains_any(&lower, &["ime", "input method"])
+        &["输入法", "打不了中文", "候选框", "拼音", "fcitx", "ibus"],
+    ) || contains_any(&lower, &["ime", "input method", "fcitx", "ibus"])
     {
-        Mode::InputMethod
-    } else if contains_any(text, &["没声音", "声音", "麦克风", "耳机", "音频"])
+        Ok(Area::InputMethod)
+    } else if contains_any(text, &["没声音", "声音", "麦克风", "耳机"])
+        || contains_any(&lower, &["audio", "sound", "pipewire", "wireplumber"])
+    {
+        Ok(Area::Audio)
+    } else if contains_any(text, &["屏幕分享", "黑屏", "截图", "录屏", "显示器"])
         || contains_any(
             &lower,
-            &["audio", "sound", "microphone", "pipewire", "wireplumber"],
+            &["display", "screen", "wayland", "xwayland", "portal"],
         )
     {
-        Mode::Audio
-    } else if contains_any(
-        text,
-        &["屏幕分享", "黑屏", "截图", "录屏", "显示器", "窗口", "闪屏"],
-    ) || contains_any(
-        &lower,
-        &["display", "screen", "wayland", "xwayland", "portal"],
-    ) {
-        Mode::Display
-    } else if contains_any(text, &["更新", "安装包", "依赖", "滚挂", "包管理"])
+        Ok(Area::Display)
+    } else if contains_any(text, &["更新", "安装包", "依赖", "包管理"])
         || contains_any(
             &lower,
-            &["pacman", "yay", "paru", "aur", "dnf", "apt", "brew"],
+            &["pacman", "yay", "paru", "aur", "apt", "dnf", "brew"],
         )
     {
-        Mode::PackageUpdate
+        Ok(Area::Package)
     } else if contains_any(text, &["显卡", "驱动", "独显", "核显"])
         || contains_any(&lower, &["gpu", "nvidia", "amd", "mesa", "vulkan"])
     {
-        Mode::Gpu
-    } else if contains_any(
-        text,
-        &["网络", "联网", "断网", "dns", "网卡", "wifi", "wi-fi"],
-    ) || contains_any(&lower, &["network", "internet", "wifi", "wi-fi", "dns"])
+        Ok(Area::Gpu)
+    } else if contains_any(text, &["网络", "联网", "断网", "网卡", "wifi"])
+        || contains_any(&lower, &["network", "internet", "wifi", "dns"])
     {
-        Mode::Network
-    } else if contains_any(text, &["磁盘", "硬盘", "空间", "挂载", "btrfs", "快照"])
-        || contains_any(&lower, &["disk", "storage", "mount", "btrfs", "filesystem"])
+        Ok(Area::Network)
+    } else if contains_any(text, &["磁盘", "硬盘", "空间", "挂载", "btrfs"])
+        || contains_any(&lower, &["disk", "storage", "mount", "filesystem"])
     {
-        Mode::Storage
+        Ok(Area::Storage)
     } else if target.is_some()
         || contains_any(text, &["打不开", "启动不了", "闪退", "崩溃", "报错"])
         || contains_any(&lower, &["crash", "cannot start", "won't open", "not open"])
     {
-        Mode::App
-    } else if text.is_empty() {
-        bail!("mode is auto but query is empty; provide query or a structured mode")
+        Ok(Area::App)
+    } else if text.trim().is_empty() {
+        bail!("area is auto but query is empty; provide query or structured area")
     } else {
-        Mode::System
-    };
-    Ok(InferredProbeRequest {
-        mode,
-        target: target
-            .map(ToString::to_string)
-            .or_else(|| infer_target(text)),
-        symptom: symptom
-            .map(ToString::to_string)
-            .or_else(|| infer_symptom(text, mode)),
-    })
-}
-
-fn contains_any(text: &str, needles: &[&str]) -> bool {
-    needles.iter().any(|needle| text.contains(needle))
+        Ok(Area::System)
+    }
 }
 
 fn infer_target(text: &str) -> Option<String> {
     let lower = text.to_ascii_lowercase();
     for (needle, target) in [
         ("opencode", "opencode"),
-        ("open code", "opencode"),
         ("linuxqq", "qq"),
         ("qq", "qq"),
         ("微信", "wechat"),
@@ -345,7 +374,6 @@ fn infer_target(text: &str) -> Option<String> {
         ("firefox", "firefox"),
         ("chrome", "chrome"),
         ("chromium", "chromium"),
-        ("wps", "wps"),
         ("vscode", "code"),
         ("code", "code"),
     ] {
@@ -356,43 +384,23 @@ fn infer_target(text: &str) -> Option<String> {
     None
 }
 
-fn infer_symptom(text: &str, mode: Mode) -> Option<String> {
-    let lower = text.to_ascii_lowercase();
-    match mode {
-        Mode::InputMethod => Some("app_cannot_input_chinese".to_string()),
-        Mode::App
-            if contains_any(text, &["打不开", "启动不了", "闪退", "崩溃"])
-                || contains_any(&lower, &["crash", "cannot start", "won't open", "not open"]) =>
-        {
-            Some("cannot_start".to_string())
-        }
-        Mode::Audio => Some("audio_problem".to_string()),
-        Mode::Display => Some("display_problem".to_string()),
-        Mode::Network => Some("network_problem".to_string()),
-        Mode::PackageUpdate => Some("package_update_problem".to_string()),
-        Mode::Storage => Some("storage_problem".to_string()),
-        Mode::Gpu => Some("gpu_problem".to_string()),
-        _ => None,
-    }
-}
-
-fn parse_mode(value: &str) -> Result<Mode> {
-    match value {
-        "system" => Ok(Mode::System),
-        "app" => Ok(Mode::App),
-        "input_method" => Ok(Mode::InputMethod),
-        "display" => Ok(Mode::Display),
-        "audio" => Ok(Mode::Audio),
-        "package_update" => Ok(Mode::PackageUpdate),
-        "gpu" => Ok(Mode::Gpu),
-        "network" => Ok(Mode::Network),
-        "storage" => Ok(Mode::Storage),
-        _ => bail!("unsupported diagnostic mode: {value}"),
+fn parse_area(value: &str) -> Result<Area> {
+    match value.trim() {
+        "system" => Ok(Area::System),
+        "app" => Ok(Area::App),
+        "input_method" => Ok(Area::InputMethod),
+        "display" => Ok(Area::Display),
+        "audio" => Ok(Area::Audio),
+        "package" | "package_update" => Ok(Area::Package),
+        "gpu" => Ok(Area::Gpu),
+        "network" => Ok(Area::Network),
+        "storage" => Ok(Area::Storage),
+        _ => bail!("unsupported diagnostic area: {value}"),
     }
 }
 
 fn parse_depth(value: &str) -> Result<Depth> {
-    match value {
+    match value.trim() {
         "quick" => Ok(Depth::Quick),
         "normal" => Ok(Depth::Normal),
         "full" => Ok(Depth::Full),
@@ -401,7 +409,7 @@ fn parse_depth(value: &str) -> Result<Depth> {
 }
 
 fn parse_platform_arg(value: &str) -> Result<PlatformArg> {
-    match value {
+    match value.trim() {
         "auto" => Ok(PlatformArg::Auto),
         "linux" => Ok(PlatformArg::Linux),
         "macos" => Ok(PlatformArg::Macos),
@@ -421,49 +429,52 @@ fn detect_platform(arg: PlatformArg) -> Platform {
     }
 }
 
-async fn run_linux_plan(
-    args: &DiagnoseArgs,
+async fn collect_linux_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
     linux_system_facts(config, report).await;
-    match args.mode {
-        Mode::System => linux_system_checks(config, report).await,
-        Mode::App => linux_app_checks(args, config, report).await,
-        Mode::InputMethod => linux_input_method_checks(args, config, report).await,
-        Mode::Display => linux_display_checks(args, config, report).await,
-        Mode::Audio => linux_audio_checks(args, config, report).await,
-        Mode::PackageUpdate => linux_package_checks(args, config, report).await,
-        Mode::Gpu => linux_gpu_checks(config, report).await,
-        Mode::Network => linux_network_checks(config, report).await,
-        Mode::Storage => linux_storage_checks(config, report).await,
+    match args.area {
+        Area::System => linux_basic_checks(config, report).await,
+        Area::App => linux_app_evidence(args, config, report).await,
+        Area::InputMethod => linux_input_method_evidence(args, config, report).await,
+        Area::Display => linux_display_evidence(args, config, report).await,
+        Area::Audio => linux_audio_evidence(args, config, report).await,
+        Area::Package => linux_package_evidence(args, config, report).await,
+        Area::Gpu => linux_gpu_evidence(config, report).await,
+        Area::Network => linux_network_evidence(config, report).await,
+        Area::Storage => linux_storage_evidence(config, report).await,
     }
 }
 
-async fn run_macos_plan(
-    args: &DiagnoseArgs,
+async fn collect_macos_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
-    macos_system_facts(config, report).await;
-    match args.mode {
-        Mode::System => macos_system_checks(config, report).await,
-        Mode::App => macos_app_checks(args, config, report).await,
-        Mode::InputMethod => macos_input_method_checks(args, config, report).await,
-        Mode::Display => macos_display_checks(config, report).await,
-        Mode::Audio => macos_audio_checks(config, report).await,
-        Mode::PackageUpdate => macos_package_checks(config, report).await,
-        Mode::Network => macos_network_checks(config, report).await,
-        Mode::Storage => macos_storage_checks(config, report).await,
-        Mode::Gpu => macos_display_checks(config, report).await,
-    }
-}
-
-async fn linux_system_facts(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
     fact_env(report, "env.shell", "SHELL");
     fact_env(report, "env.term", "TERM");
     fact_env(report, "env.lang", "LANG");
+    let sw_vers = run_command(config, "sw_vers", &[], 2).await;
+    push_log_if_stdout(report, "sw_vers", &sw_vers);
+    if matches!(args.area, Area::App | Area::InputMethod) {
+        if let Some(target) = args.target.as_deref() {
+            command_exists_check(config, report, target).await;
+            process_check(config, report, target).await;
+        } else {
+            report
+                .missing_evidence
+                .push("target app was not provided".to_string());
+        }
+    }
+}
+
+async fn linux_system_facts(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport) {
     for key in [
+        "SHELL",
+        "TERM",
+        "LANG",
         "XDG_SESSION_TYPE",
         "XDG_CURRENT_DESKTOP",
         "DESKTOP_SESSION",
@@ -471,7 +482,9 @@ async fn linux_system_facts(config: &DiagnosticsPluginConfig, report: &mut Diagn
         "DISPLAY",
         "GTK_IM_MODULE",
         "QT_IM_MODULE",
+        "QT_IM_MODULES",
         "XMODIFIERS",
+        "SDL_IM_MODULE",
     ] {
         fact_env(report, &format!("env.{key}"), key);
     }
@@ -490,60 +503,39 @@ async fn linux_system_facts(config: &DiagnosticsPluginConfig, report: &mut Diagn
     }
 }
 
-async fn linux_system_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
+async fn linux_basic_checks(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport) {
     for command in ["systemctl", "journalctl", "loginctl", "ip", "df"] {
         command_exists_check(config, report, command).await;
     }
 }
 
-async fn linux_app_checks(
-    args: &DiagnoseArgs,
+async fn linux_app_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
     let Some(target) = args.target.as_deref() else {
         report
-            .next_questions
-            .push("which app should I probe?".to_string());
+            .missing_evidence
+            .push("target app was not provided".to_string());
         return;
     };
-    match command_path(config, target).await {
-        Some(path) => {
-            report
-                .facts
-                .insert("app.command_path".to_string(), json!(path.clone()));
-            report.checks.push(Check {
-                id: "app.command_exists".to_string(),
-                status: CheckStatus::Ok,
-                detail: format!("{target} exists in PATH"),
-                evidence: vec![path.clone()],
-            });
-            app_probe_version(config, report, target).await;
-            app_probe_help(config, report, target).await;
-            linux_package_owner(config, report, &path).await;
-            node_runtime_if_relevant(config, report, target, &path).await;
-        }
-        None => {
-            report.checks.push(Check {
-                id: "app.command_exists".to_string(),
-                status: CheckStatus::Error,
-                detail: format!("{target} was not found in PATH"),
-                evidence: Vec::new(),
-            });
-            report.findings.push(Finding {
-                severity: Severity::High,
-                title: format!("{target} is not available in the current PATH"),
-                evidence: "command -v returned no path".to_string(),
-            });
-        }
+    command_exists_check(config, report, target).await;
+    process_check(config, report, target).await;
+    if let Some(path) = command_path(config, target).await {
+        report
+            .facts
+            .insert("app.command_path".to_string(), json!(path.clone()));
+        package_owner(config, report, &path).await;
+        app_probe_version(config, report, target).await;
     }
-    linux_recent_logs(args, config, report, &[target, "node", "error", "failed"]).await;
+    recent_logs(args, config, report, &[target, "error", "failed"]).await;
 }
 
-async fn linux_input_method_checks(
-    args: &DiagnoseArgs,
+async fn linux_input_method_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
     for name in ["fcitx5", "ibus-daemon"] {
         process_check(config, report, name).await;
@@ -562,31 +554,678 @@ async fn linux_input_method_checks(
             evidence: compact_evidence(&output),
         });
     }
-    if let Some(target) = args.target.as_deref() {
-        let pids = process_check(config, report, target).await;
-        linux_app_input_env(report, target, &pids);
-        linux_fcitx_package_checks(config, report).await;
-        linux_recent_logs(
-            args,
-            config,
-            report,
-            &[target, "fcitx", "ibus", "qt", "gtk", "xwayland"],
-        )
-        .await;
+
+    let wayland_protocol = probe_wayland_protocol(config, report).await;
+
+    let available_modules = scan_available_input_modules();
+    report.facts.insert(
+        "input_method.available_modules".to_string(),
+        json!(available_modules.clone()),
+    );
+
+    let immodule_cache = read_gtk_immodule_cache();
+    report.facts.insert(
+        "input_method.immodule_cache".to_string(),
+        json!(immodule_cache.clone()),
+    );
+
+    let Some(target) = args.target.as_deref() else {
+        report.missing_evidence.push("target app was not provided; cannot check app toolkit, target environment, loaded .so modules, or path status".to_string());
+        return;
+    };
+    let mut pids = process_check(config, report, target).await;
+    if pids.is_empty() && args.allow_launch_probe {
+        pids = launch_probe_target(args, config, report, target).await;
     }
-    if std::env::var("QT_IM_MODULE").ok().as_deref() != Some("fcitx") {
-        report.findings.push(Finding {
-            severity: Severity::Medium,
-            title: "QT_IM_MODULE is not set to fcitx in current environment".to_string(),
-            evidence: "Qt apps may not load fcitx without this variable or equivalent desktop environment setup".to_string(),
-        });
+    if pids.is_empty() {
+        report.missing_evidence.push(format!(
+            "target app {target} is not running; runtime environment and loaded .so modules are unavailable"
+        ));
+        report.recommended_next_probes.push(format!(
+            "start {target}, then rerun check_issue with area=input_method and target={target}"
+        ));
+    }
+    let target_env = pids.first().and_then(|pid| read_process_input_env(*pid));
+    let loaded_modules = read_loaded_input_modules(&pids);
+
+    let locale_info = probe_locale_info(config, report, &target_env).await;
+
+    let socket_display_mode = probe_display_mode_via_sockets(config, report, &pids).await;
+
+    let profile = build_input_method_profile(
+        config,
+        report,
+        target,
+        &pids,
+        target_env,
+        loaded_modules,
+        available_modules,
+        immodule_cache,
+        wayland_protocol,
+        locale_info,
+        socket_display_mode,
+    )
+    .await;
+    report
+        .facts
+        .insert("input_method.profile".to_string(), json!(profile));
+    recent_logs(
+        args,
+        config,
+        report,
+        &[target, "fcitx", "ibus", "qt", "gtk", "xwayland"],
+    )
+    .await;
+}
+
+async fn probe_wayland_protocol(
+    config: &DiagnosticsPluginConfig,
+    report: &mut EvidenceReport,
+) -> WaylandProtocolInfo {
+    let wayland_info_output = run_command(config, "wayland-info", &[], 3).await;
+    let wayland_info_available = wayland_info_output.status.is_some();
+    let compositor_supports_text_input_v3 = wayland_info_output
+        .stdout
+        .contains("zwp_text_input_manager_v3");
+    report.checks.push(Check {
+        id: "input_method.wayland_text_input_v3".to_string(),
+        status: if compositor_supports_text_input_v3 {
+            CheckStatus::Ok
+        } else {
+            CheckStatus::Unknown
+        },
+        detail: "wayland-info: compositor text-input-v3 protocol support".to_string(),
+        evidence: compact_evidence(&wayland_info_output),
+    });
+
+    let fcitx5_pids = process_ids(config, "fcitx5").await;
+    let fcitx5_maps = fcitx5_pids
+        .first()
+        .and_then(|pid| std::fs::read_to_string(format!("/proc/{pid}/maps")).ok())
+        .unwrap_or_default();
+    let fcitx5_wayland_frontend_loaded = fcitx5_maps
+        .lines()
+        .any(|line| line.contains("libwaylandim.so") || line.contains("libwayland.so"));
+
+    WaylandProtocolInfo {
+        compositor_supports_text_input_v3,
+        fcitx5_wayland_frontend_loaded,
+        wayland_info_available,
     }
 }
 
-async fn linux_display_checks(
-    args: &DiagnoseArgs,
+async fn probe_locale_info(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
+    target_env: &Option<BTreeMap<String, String>>,
+) -> LocaleInfo {
+    let target_lang = target_env.as_ref().and_then(|env| env.get("LANG").cloned());
+    let target_lc_ctype = target_env
+        .as_ref()
+        .and_then(|env| env.get("LC_CTYPE").or_else(|| env.get("LC_ALL")).cloned());
+
+    let locale_a_output = run_command(config, "locale", &["-a"], 2).await;
+    let available_locales: Vec<String> = locale_a_output
+        .stdout
+        .lines()
+        .map(|line| line.trim().to_string())
+        .filter(|line| !line.is_empty())
+        .collect();
+    report.facts.insert(
+        "input_method.available_locales".to_string(),
+        json!(available_locales.clone()),
+    );
+
+    let check_locale = target_lc_ctype
+        .as_deref()
+        .or(target_lang.as_deref())
+        .unwrap_or("C");
+    let locale_valid = check_locale != "C"
+        && check_locale != "POSIX"
+        && available_locales.iter().any(|loc| {
+            loc == check_locale
+                || loc.eq_ignore_ascii_case(check_locale)
+                || check_locale
+                    .split('.')
+                    .next()
+                    .is_some_and(|prefix| loc.split('.').next() == Some(prefix))
+        });
+
+    LocaleInfo {
+        target_lang,
+        target_lc_ctype,
+        available_locales,
+        locale_valid,
+    }
+}
+
+async fn probe_display_mode_via_sockets(
+    config: &DiagnosticsPluginConfig,
+    report: &mut EvidenceReport,
+    pids: &[u32],
+) -> DisplayMode {
+    if pids.is_empty() {
+        return DisplayMode::Unknown;
+    }
+    let ss_output = run_command(config, "ss", &["-xp"], 3).await;
+    let unix_text = std::fs::read_to_string("/proc/net/unix").unwrap_or_default();
+
+    let x11_inodes: BTreeSet<String> = unix_text
+        .lines()
+        .filter(|line| line.contains("X11-unix"))
+        .filter_map(|line| line.split_whitespace().nth(7).map(|s| s.to_string()))
+        .collect();
+    let wayland_inodes: BTreeSet<String> = unix_text
+        .lines()
+        .filter(|line| line.contains("wayland"))
+        .filter_map(|line| line.split_whitespace().nth(7).map(|s| s.to_string()))
+        .collect();
+
+    let mut has_x11 = false;
+    let mut has_wayland = false;
+    for pid in pids.iter().take(8) {
+        let pid_str = format!("pid={pid}");
+        for line in ss_output.stdout.lines() {
+            if !line.contains(&pid_str) {
+                continue;
+            }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            for part in &parts {
+                if part.chars().all(|c| c.is_ascii_digit()) && !part.is_empty() {
+                    if x11_inodes.contains(*part) {
+                        has_x11 = true;
+                    }
+                    if wayland_inodes.contains(*part) {
+                        has_wayland = true;
+                    }
+                }
+            }
+        }
+    }
+
+    report.facts.insert(
+        "input_method.socket_display_mode".to_string(),
+        json!({
+            "has_x11_socket": has_x11,
+            "has_wayland_socket": has_wayland,
+        }),
+    );
+
+    match (has_x11, has_wayland) {
+        (true, _) => DisplayMode::XWayland,
+        (false, true) => DisplayMode::WaylandNative,
+        (false, false) => DisplayMode::Unknown,
+    }
+}
+
+fn read_gtk_immodule_cache() -> Vec<ImmoduleCacheEntry> {
+    let mut entries = Vec::new();
+    for cache_path in [
+        "/usr/lib/gtk-3.0/3.0.0/immodules.cache",
+        "/usr/lib/gtk-4.0/4.0.0/immodules.cache",
+    ] {
+        let Ok(text) = std::fs::read_to_string(cache_path) else {
+            continue;
+        };
+        for line in text.lines() {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() < 5 {
+                continue;
+            }
+            let so_path = parts[0].trim_matches('"').to_string();
+            let module_name = parts[1].trim_matches('"').to_string();
+            let locales = parts
+                .get(4)
+                .map(|s| s.trim_matches('"').to_string())
+                .unwrap_or_default();
+            entries.push(ImmoduleCacheEntry {
+                so_path,
+                module_name,
+                locales,
+            });
+        }
+    }
+    entries
+}
+
+async fn build_input_method_profile(
+    config: &DiagnosticsPluginConfig,
+    report: &mut EvidenceReport,
+    target: &str,
+    pids: &[u32],
+    target_env: Option<BTreeMap<String, String>>,
+    loaded_modules: Vec<String>,
+    available_modules: Vec<String>,
+    immodule_cache: Vec<ImmoduleCacheEntry>,
+    wayland_protocol: WaylandProtocolInfo,
+    locale_info: LocaleInfo,
+    socket_display_mode: DisplayMode,
+) -> InputMethodProfile {
+    let command_line = pids.first().and_then(|pid| read_proc_cmdline(*pid));
+    let desktop_exec = linux_desktop_exec_for_target(target);
+    let command_path = command_path(config, target).await;
+    let package_probe = command_path
+        .as_deref()
+        .and_then(|path| package_probe_for_command(config, path, target));
+    if let Some(probe) = &package_probe {
+        report
+            .facts
+            .insert("input_method.package_probe".to_string(), json!(probe));
+    }
+    let evidence_text = [
+        target.to_string(),
+        command_line.clone().unwrap_or_default(),
+        desktop_exec.clone().unwrap_or_default(),
+        command_path.unwrap_or_default(),
+        package_probe.unwrap_or_default(),
+    ]
+    .join(" ");
+    let raw_toolkit = infer_input_toolkit(&evidence_text);
+    let display_mode = infer_display_mode(
+        &evidence_text,
+        target_env.as_ref(),
+        socket_display_mode,
+        &loaded_modules,
+    );
+    let toolkit = refine_electron_toolkit(raw_toolkit, display_mode);
+    let path_status = input_method_path_status(
+        toolkit,
+        display_mode,
+        !pids.is_empty() && command_line.is_some(),
+        target_env.as_ref(),
+        &loaded_modules,
+        &available_modules,
+        &immodule_cache,
+        &wayland_protocol,
+        &locale_info,
+    );
+    InputMethodProfile {
+        toolkit,
+        display_mode,
+        runtime_observed: !pids.is_empty() && command_line.is_some(),
+        command_line,
+        desktop_exec,
+        target_env,
+        loaded_input_modules: loaded_modules,
+        available_input_modules: available_modules,
+        immodule_cache,
+        wayland_protocol,
+        locale_info,
+        path_status,
+    }
+}
+
+fn refine_electron_toolkit(toolkit: InputToolkit, display_mode: DisplayMode) -> InputToolkit {
+    match toolkit {
+        InputToolkit::ElectronChromium => match display_mode {
+            DisplayMode::WaylandNative => InputToolkit::ElectronWayland,
+            DisplayMode::X11 | DisplayMode::XWayland => InputToolkit::ElectronX11,
+            DisplayMode::Unknown => InputToolkit::ElectronX11,
+        },
+        other => other,
+    }
+}
+
+fn input_method_path_status(
+    toolkit: InputToolkit,
+    display_mode: DisplayMode,
+    runtime_observed: bool,
+    env: Option<&BTreeMap<String, String>>,
+    loaded_modules: &[String],
+    available_modules: &[String],
+    immodule_cache: &[ImmoduleCacheEntry],
+    wayland_protocol: &WaylandProtocolInfo,
+    locale_info: &LocaleInfo,
+) -> InputMethodPathStatus {
+    let mut paths = Vec::new();
+    let mut evidence = Vec::new();
+    let mut missing = Vec::new();
+
+    evidence.push(format!("toolkit={toolkit:?}"));
+    evidence.push(format!("display_mode={display_mode:?}"));
+    if !runtime_observed {
+        missing.push("runtime process evidence".to_string());
+    }
+    if toolkit == InputToolkit::Unknown {
+        missing.push("app toolkit/framework evidence".to_string());
+    }
+    paths.push(NamedPathCheck {
+        name: "app_adapter".to_string(),
+        status: if missing.is_empty() {
+            "confirmed"
+        } else {
+            "unknown"
+        }
+        .to_string(),
+        evidence,
+        missing,
+    });
+
+    let relevant_paths = relevant_input_paths(toolkit);
+    for path_name in &relevant_paths {
+        let check = check_single_path(
+            path_name,
+            env,
+            loaded_modules,
+            available_modules,
+            immodule_cache,
+            wayland_protocol,
+            locale_info,
+        );
+        paths.push(check);
+    }
+
+    let any_confirmed = paths.iter().skip(1).any(|p| p.status == "confirmed");
+    let all_incomplete = paths
+        .iter()
+        .skip(1)
+        .all(|p| p.status == "missing" || p.status == "unknown");
+    let overall = if any_confirmed {
+        "path_evidence_complete".to_string()
+    } else if all_incomplete {
+        "path_evidence_incomplete".to_string()
+    } else {
+        "path_evidence_partial".to_string()
+    };
+
+    InputMethodPathStatus { paths, overall }
+}
+
+fn relevant_input_paths(toolkit: InputToolkit) -> Vec<&'static str> {
+    match toolkit {
+        InputToolkit::Gtk | InputToolkit::Qt | InputToolkit::Sdl | InputToolkit::X11Legacy => {
+            vec!["wayland_protocol", "toolkit_module", "xim"]
+        }
+        InputToolkit::ElectronX11 => vec!["gtk_module", "xim"],
+        InputToolkit::ElectronWayland => vec!["wayland_protocol", "gtk_module"],
+        InputToolkit::ElectronChromium => vec!["wayland_protocol", "gtk_module", "xim"],
+        InputToolkit::Java => vec!["xim"],
+        InputToolkit::Unknown => vec![
+            "wayland_protocol",
+            "gtk_module",
+            "qt_module",
+            "sdl_module",
+            "xim",
+        ],
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn check_single_path(
+    path_name: &str,
+    env: Option<&BTreeMap<String, String>>,
+    loaded_modules: &[String],
+    available_modules: &[String],
+    immodule_cache: &[ImmoduleCacheEntry],
+    wayland_protocol: &WaylandProtocolInfo,
+    locale_info: &LocaleInfo,
+) -> NamedPathCheck {
+    let loaded = |needles: &[&str]| loaded_module_evidence(loaded_modules, needles);
+    let available = |needles: &[&str]| available_module_evidence(available_modules, needles);
+
+    match path_name {
+        "wayland_protocol" => {
+            let mut ev = Vec::new();
+            let mut miss = Vec::new();
+            if wayland_protocol.compositor_supports_text_input_v3 {
+                ev.push("compositor supports zwp_text_input_manager_v3".to_string());
+            } else {
+                miss.push("compositor text-input-v3 protocol support".to_string());
+            }
+            if wayland_protocol.fcitx5_wayland_frontend_loaded {
+                ev.push("fcitx5 loaded libwaylandim.so (wayland frontend)".to_string());
+            } else {
+                miss.push("fcitx5 wayland frontend (libwaylandim.so)".to_string());
+            }
+            let status = if wayland_protocol.compositor_supports_text_input_v3
+                && wayland_protocol.fcitx5_wayland_frontend_loaded
+            {
+                "confirmed"
+            } else if wayland_protocol.compositor_supports_text_input_v3
+                || wayland_protocol.fcitx5_wayland_frontend_loaded
+            {
+                "configured"
+            } else {
+                "missing"
+            };
+            NamedPathCheck {
+                name: "wayland_protocol".to_string(),
+                status: status.to_string(),
+                evidence: ev,
+                missing: miss,
+            }
+        }
+        "gtk_module" | "toolkit_module" => {
+            let mut ev = Vec::new();
+            let mut miss = Vec::new();
+
+            if let Some(env) = env {
+                if path_name == "gtk_module" {
+                    if let Some(value) = env.get("GTK_IM_MODULE").filter(|v| !v.trim().is_empty()) {
+                        ev.push(format!("GTK_IM_MODULE={value}"));
+                    }
+                }
+            }
+
+            if let Some(item) = loaded(&["im-fcitx", "im-wayland", "im-xim", "im-ibus"]) {
+                ev.push(item);
+                NamedPathCheck {
+                    name: path_name.to_string(),
+                    status: "confirmed".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else if let Some(item) = available(&["im-fcitx", "im-wayland", "im-xim", "im-ibus"]) {
+                ev.push(format!("available_on_disk={item}"));
+                let locale_match =
+                    check_immodule_locale(path_name, "fcitx", immodule_cache, locale_info);
+                if !locale_match.is_empty() {
+                    ev.push(locale_match);
+                }
+                NamedPathCheck {
+                    name: path_name.to_string(),
+                    status: "configured".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else {
+                miss.push("GTK input module .so (neither loaded nor on disk)".to_string());
+                NamedPathCheck {
+                    name: path_name.to_string(),
+                    status: "missing".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            }
+        }
+        "qt_module" => {
+            let mut ev = Vec::new();
+            let mut miss = Vec::new();
+            if let Some(env) = env {
+                if let Some(value) = env.get("QT_IM_MODULE").filter(|v| !v.trim().is_empty()) {
+                    ev.push(format!("QT_IM_MODULE={value}"));
+                }
+                if let Some(value) = env.get("QT_IM_MODULES").filter(|v| !v.trim().is_empty()) {
+                    ev.push(format!("QT_IM_MODULES={value}"));
+                }
+            }
+            if let Some(item) = loaded(&["platforminputcontext", "libfcitx", "libibus"]) {
+                ev.push(item);
+                NamedPathCheck {
+                    name: "qt_module".to_string(),
+                    status: "confirmed".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else if let Some(item) = available(&["platforminputcontext", "fcitx"]) {
+                ev.push(format!("available_on_disk={item}"));
+                NamedPathCheck {
+                    name: "qt_module".to_string(),
+                    status: "configured".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else {
+                miss.push("Qt platforminputcontext .so evidence".to_string());
+                NamedPathCheck {
+                    name: "qt_module".to_string(),
+                    status: "missing".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            }
+        }
+        "sdl_module" => {
+            let mut ev = Vec::new();
+            let mut miss = Vec::new();
+            if let Some(env) = env {
+                if let Some(value) = env.get("SDL_IM_MODULE").filter(|v| !v.trim().is_empty()) {
+                    ev.push(format!("SDL_IM_MODULE={value}"));
+                }
+            }
+            if let Some(item) = loaded(&["libfcitx", "libibus", "sdl"]) {
+                ev.push(item);
+                NamedPathCheck {
+                    name: "sdl_module".to_string(),
+                    status: "confirmed".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else {
+                miss.push("SDL input bridge .so evidence".to_string());
+                NamedPathCheck {
+                    name: "sdl_module".to_string(),
+                    status: "missing".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            }
+        }
+        "xim" => {
+            let mut ev = Vec::new();
+            let mut miss = Vec::new();
+            if let Some(env) = env {
+                if let Some(value) = env.get("XMODIFIERS").filter(|v| !v.trim().is_empty()) {
+                    ev.push(format!("XMODIFIERS={value}"));
+                }
+            }
+            let xim_env_ok = env_has(env.unwrap_or(&BTreeMap::new()), "XMODIFIERS", "@im=fcitx");
+            if !xim_env_ok {
+                miss.push("XMODIFIERS=@im=fcitx not set in target env".to_string());
+            }
+            if !locale_info.locale_valid {
+                let loc = locale_info
+                    .target_lc_ctype
+                    .as_deref()
+                    .or(locale_info.target_lang.as_deref())
+                    .unwrap_or("C");
+                miss.push(format!(
+                    "locale '{loc}' is C/POSIX or not in locale -a; XIM may not activate"
+                ));
+            }
+            if let Some(item) = loaded(&["im-xim", "libx11", "libxim"]) {
+                ev.push(item);
+                NamedPathCheck {
+                    name: "xim".to_string(),
+                    status: if xim_env_ok && locale_info.locale_valid {
+                        "confirmed"
+                    } else {
+                        "configured"
+                    }
+                    .to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else if let Some(item) = available(&["im-xim"]) {
+                ev.push(format!("available_on_disk={item}"));
+                let locale_match =
+                    check_immodule_locale("gtk_module", "xim", immodule_cache, locale_info);
+                if !locale_match.is_empty() {
+                    ev.push(locale_match);
+                }
+                NamedPathCheck {
+                    name: "xim".to_string(),
+                    status: if xim_env_ok && locale_info.locale_valid {
+                        "configured"
+                    } else {
+                        "missing"
+                    }
+                    .to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            } else {
+                miss.push("im-xim.so not found on disk".to_string());
+                NamedPathCheck {
+                    name: "xim".to_string(),
+                    status: "missing".to_string(),
+                    evidence: ev,
+                    missing: miss,
+                }
+            }
+        }
+        _ => NamedPathCheck {
+            name: path_name.to_string(),
+            status: "unknown".to_string(),
+            evidence: vec![],
+            missing: vec!["unknown path name".to_string()],
+        },
+    }
+}
+
+fn check_immodule_locale(
+    _path_name: &str,
+    module_name: &str,
+    immodule_cache: &[ImmoduleCacheEntry],
+    locale_info: &LocaleInfo,
+) -> String {
+    let target_locale = locale_info
+        .target_lc_ctype
+        .as_deref()
+        .or(locale_info.target_lang.as_deref())
+        .unwrap_or("C");
+    let locale_prefix = target_locale
+        .split(|c: char| c == '.' || c == '_')
+        .next()
+        .unwrap_or("");
+    let locale_lang = locale_prefix.split('_').next().unwrap_or("");
+
+    for entry in immodule_cache {
+        if !entry.module_name.contains(module_name) {
+            continue;
+        }
+        let locales = &entry.locales;
+        if locales.contains('*') {
+            return format!(
+                "immodule_cache: {} matches any locale (*)",
+                entry.module_name
+            );
+        }
+        let matches = locales.split(':').any(|loc| {
+            loc == locale_prefix
+                || loc == target_locale
+                || loc == locale_lang
+                || (loc.len() == 2 && locale_lang == loc)
+        });
+        return if matches {
+            format!(
+                "immodule_cache: {} locale '{}' matches target '{}'",
+                entry.module_name, locales, target_locale
+            )
+        } else {
+            format!(
+                "immodule_cache: {} locale '{}' does NOT match target '{}'",
+                entry.module_name, locales, target_locale
+            )
+        };
+    }
+    String::new()
+}
+
+async fn linux_display_evidence(
+    args: &CheckIssueArgs,
+    config: &DiagnosticsPluginConfig,
+    report: &mut EvidenceReport,
 ) {
     for service in [
         "xdg-desktop-portal.service",
@@ -596,8 +1235,8 @@ async fn linux_display_checks(
         systemd_user_active_check(config, report, service).await;
     }
     process_check(config, report, "Xwayland").await;
-    linux_gpu_checks(config, report).await;
-    linux_recent_logs(
+    linux_gpu_evidence(config, report).await;
+    recent_logs(
         args,
         config,
         report,
@@ -606,10 +1245,10 @@ async fn linux_display_checks(
     .await;
 }
 
-async fn linux_audio_checks(
-    args: &DiagnoseArgs,
+async fn linux_audio_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
     for service in [
         "pipewire.service",
@@ -621,14 +1260,9 @@ async fn linux_audio_checks(
     command_exists_check(config, report, "wpctl").await;
     if command_path(config, "wpctl").await.is_some() {
         let output = run_command(config, "wpctl", &["status"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "wpctl status".to_string(),
-                message: clip(&output.stdout, 2_000),
-            });
-        }
+        push_log_if_stdout(report, "wpctl status", &output);
     }
-    linux_recent_logs(
+    recent_logs(
         args,
         config,
         report,
@@ -637,29 +1271,19 @@ async fn linux_audio_checks(
     .await;
 }
 
-async fn linux_package_checks(
-    args: &DiagnoseArgs,
+async fn linux_package_evidence(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
 ) {
-    command_exists_check(config, report, "pacman").await;
-    if std::path::Path::new("/var/lib/pacman/db.lck").exists() {
-        report.findings.push(Finding {
-            severity: Severity::High,
-            title: "pacman database lock exists".to_string(),
-            evidence: "/var/lib/pacman/db.lck exists".to_string(),
-        });
+    for command in ["pacman", "yay", "paru"] {
+        command_exists_check(config, report, command).await;
     }
-    if command_path(config, "pacman").await.is_some() {
-        let output = run_command(config, "pacman", &["-Q", "archlinux-keyring"], 3).await;
-        if output.status == Some(0) && !output.stdout.trim().is_empty() {
-            report.facts.insert(
-                "package.archlinux_keyring".to_string(),
-                json!(output.stdout.trim()),
-            );
-        }
-    }
-    linux_recent_logs(
+    report.facts.insert(
+        "package.pacman_db_lock_exists".to_string(),
+        json!(Path::new("/var/lib/pacman/db.lck").exists()),
+    );
+    recent_logs(
         args,
         config,
         report,
@@ -668,197 +1292,48 @@ async fn linux_package_checks(
     .await;
 }
 
-async fn linux_gpu_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
+async fn linux_gpu_evidence(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport) {
     command_exists_check(config, report, "lspci").await;
     if command_path(config, "lspci").await.is_some() {
         let output = run_command(config, "lspci", &["-nnk"], 4).await;
-        let gpu_lines = extract_lspci_gpu_blocks(&output.stdout);
-        if !gpu_lines.is_empty() {
-            report
-                .facts
-                .insert("gpu.lspci".to_string(), json!(gpu_lines));
+        let gpu = extract_lspci_gpu_blocks(&output.stdout);
+        if !gpu.is_empty() {
+            report.facts.insert("gpu.lspci".to_string(), json!(gpu));
         }
     }
     command_exists_check(config, report, "nvidia-smi").await;
 }
 
-async fn linux_network_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
+async fn linux_network_evidence(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport) {
     for command in ["ip", "resolvectl", "ping"] {
         command_exists_check(config, report, command).await;
     }
     if command_path(config, "ip").await.is_some() {
         let output = run_command(config, "ip", &["-brief", "addr"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "ip -brief addr".to_string(),
-                message: clip(&mask_network_addresses(&output.stdout), 2_000),
-            });
-        }
+        push_log(
+            report,
+            "ip -brief addr",
+            &mask_network_addresses(&output.stdout),
+        );
     }
     if command_path(config, "resolvectl").await.is_some() {
         let output = run_command(config, "resolvectl", &["status"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "resolvectl status".to_string(),
-                message: clip(&output.stdout, 2_000),
-            });
-        }
+        push_log_if_stdout(report, "resolvectl status", &output);
     }
 }
 
-async fn linux_storage_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
+async fn linux_storage_evidence(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport) {
     command_exists_check(config, report, "df").await;
     if command_path(config, "df").await.is_some() {
         let output = run_command(config, "df", &["-hT"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "df -hT".to_string(),
-                message: clip(&output.stdout, 2_000),
-            });
-        }
+        push_log_if_stdout(report, "df -hT", &output);
     }
     command_exists_check(config, report, "btrfs").await;
 }
 
-async fn macos_system_facts(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    fact_env(report, "env.shell", "SHELL");
-    fact_env(report, "env.term", "TERM");
-    fact_env(report, "env.lang", "LANG");
-    let sw_vers = run_command(config, "sw_vers", &[], 2).await;
-    if !sw_vers.stdout.trim().is_empty() {
-        report
-            .facts
-            .insert("os.sw_vers".to_string(), json!(sw_vers.stdout.trim()));
-    }
-    let arch = run_command(config, "uname", &["-m"], 2).await;
-    if !arch.stdout.trim().is_empty() {
-        report
-            .facts
-            .insert("hardware.arch".to_string(), json!(arch.stdout.trim()));
-    }
-}
-
-async fn macos_system_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    for command in ["sw_vers", "launchctl", "log", "system_profiler", "df"] {
-        command_exists_check(config, report, command).await;
-    }
-}
-
-async fn macos_app_checks(
-    args: &DiagnoseArgs,
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-) {
-    let Some(target) = args.target.as_deref() else {
-        report
-            .next_questions
-            .push("which app should I probe?".to_string());
-        return;
-    };
-    match command_path(config, target).await {
-        Some(path) => {
-            report
-                .facts
-                .insert("app.command_path".to_string(), json!(path.clone()));
-            report.checks.push(Check {
-                id: "app.command_exists".to_string(),
-                status: CheckStatus::Ok,
-                detail: format!("{target} exists in PATH"),
-                evidence: vec![path.clone()],
-            });
-            app_probe_version(config, report, target).await;
-            app_probe_help(config, report, target).await;
-            macos_quarantine_check(config, report, &path).await;
-            macos_codesign_check(config, report, &path).await;
-            node_runtime_if_relevant(config, report, target, &path).await;
-        }
-        None => {
-            report.checks.push(Check {
-                id: "app.command_exists".to_string(),
-                status: CheckStatus::Error,
-                detail: format!("{target} was not found in PATH"),
-                evidence: Vec::new(),
-            });
-        }
-    }
-    macos_recent_logs(args, config, report, &[target, "error", "failed"]).await;
-}
-
-async fn macos_input_method_checks(
-    args: &DiagnoseArgs,
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-) {
-    let output = run_command(
-        config,
-        "defaults",
-        &["read", "com.apple.HIToolbox", "AppleSelectedInputSources"],
-        3,
-    )
-    .await;
-    if !output.stdout.trim().is_empty() {
-        report.logs.push(LogExcerpt {
-            source: "AppleSelectedInputSources".to_string(),
-            message: clip(&output.stdout, 2_000),
-        });
-    }
-    if let Some(target) = args.target.as_deref() {
-        process_check(config, report, target).await;
-        macos_recent_logs(args, config, report, &[target, "InputMethodKit", "TIS"]).await;
-    }
-}
-
-async fn macos_display_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    system_profiler_check(
-        config,
-        report,
-        "SPDisplaysDataType",
-        "display.system_profiler",
-    )
-    .await;
-}
-
-async fn macos_audio_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    system_profiler_check(config, report, "SPAudioDataType", "audio.system_profiler").await;
-}
-
-async fn macos_package_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    for command in ["brew", "port", "nix"] {
-        command_exists_check(config, report, command).await;
-    }
-}
-
-async fn macos_network_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    for command in ["ifconfig", "scutil", "networksetup"] {
-        command_exists_check(config, report, command).await;
-    }
-    if command_path(config, "scutil").await.is_some() {
-        let output = run_command(config, "scutil", &["--dns"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "scutil --dns".to_string(),
-                message: clip(&output.stdout, 2_000),
-            });
-        }
-    }
-}
-
-async fn macos_storage_checks(config: &DiagnosticsPluginConfig, report: &mut DiagnosticReport) {
-    command_exists_check(config, report, "df").await;
-    if command_path(config, "df").await.is_some() {
-        let output = run_command(config, "df", &["-h"], 3).await;
-        if !output.stdout.trim().is_empty() {
-            report.logs.push(LogExcerpt {
-                source: "df -h".to_string(),
-                message: clip(&output.stdout, 2_000),
-            });
-        }
-    }
-}
-
 async fn command_exists_check(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
     name: &str,
 ) {
     let path = command_path(config, name).await;
@@ -880,28 +1355,27 @@ async fn command_exists_check(
 
 async fn process_check(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
     name: &str,
 ) -> Vec<u32> {
     let output = run_command(config, "pgrep", &["-af", name], 2).await;
     let matches = filtered_process_matches(&output.stdout, name);
-    let found = output.status == Some(0) && !matches.is_empty();
     report.checks.push(Check {
         id: format!("process.{name}.running"),
-        status: if found {
-            CheckStatus::Ok
-        } else {
+        status: if matches.is_empty() {
             CheckStatus::Unknown
-        },
-        detail: if found {
-            format!("process matching {name} is running")
         } else {
+            CheckStatus::Ok
+        },
+        detail: if matches.is_empty() {
             format!("no process matching {name} was found")
-        },
-        evidence: if found {
-            vec![clip(&matches.join("\n"), 1_000)]
         } else {
+            format!("process matching {name} is running")
+        },
+        evidence: if matches.is_empty() {
             Vec::new()
+        } else {
+            vec![clip(&matches.join("\n"), 1_000)]
         },
     });
     matches
@@ -910,18 +1384,71 @@ async fn process_check(
         .collect()
 }
 
+async fn launch_probe_target(
+    args: &CheckIssueArgs,
+    config: &DiagnosticsPluginConfig,
+    report: &mut EvidenceReport,
+    target: &str,
+) -> Vec<u32> {
+    if !safe_command_name(target) {
+        report
+            .missing_evidence
+            .push("launch probe skipped because target command name is not safe".to_string());
+        return Vec::new();
+    }
+    let before = process_ids(config, target).await;
+    let spawn = Command::new(target)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn();
+    let Ok(child) = spawn else {
+        report
+            .missing_evidence
+            .push(format!("failed to launch {target} for runtime sampling"));
+        return Vec::new();
+    };
+    tokio::time::sleep(Duration::from_secs(args.launch_timeout_seconds)).await;
+    let after = process_ids(config, target).await;
+    let new_pids = after
+        .iter()
+        .copied()
+        .filter(|pid| !before.contains(pid))
+        .collect::<Vec<_>>();
+    report.facts.insert(
+        "launch_probe".to_string(),
+        json!({"target": target, "launched_pid": child.id(), "pids_before": before, "pids_after": after, "new_pids": new_pids}),
+    );
+    if new_pids.is_empty() {
+        after
+    } else {
+        new_pids
+    }
+}
+
+async fn process_ids(config: &DiagnosticsPluginConfig, name: &str) -> Vec<u32> {
+    let output = run_command(config, "pgrep", &["-af", name], 2).await;
+    filtered_process_matches(&output.stdout, name)
+        .iter()
+        .filter_map(|line| line.split_whitespace().next()?.parse::<u32>().ok())
+        .collect()
+}
+
 fn filtered_process_matches(output: &str, name: &str) -> Vec<String> {
+    let name_lower = name.to_ascii_lowercase();
     let mut matches = output
         .lines()
         .filter(|line| {
             let lower = line.to_ascii_lowercase();
-            lower.contains(&name.to_ascii_lowercase())
+            lower.contains(&name_lower)
                 && !lower.contains("pgrep -af")
+                && !lower.contains("/usr/bin/bash -c")
+                && !lower.contains("/bin/sh -c")
                 && !line_starts_with_pid(line, std::process::id())
         })
         .map(ToString::to_string)
         .collect::<Vec<_>>();
-    matches.sort_by_key(|line| std::cmp::Reverse(process_match_score(line, name)));
+    matches.sort();
     matches
 }
 
@@ -932,42 +1459,8 @@ fn line_starts_with_pid(line: &str, pid: u32) -> bool {
         == Some(pid)
 }
 
-fn process_match_score(line: &str, name: &str) -> usize {
-    let lower = line.to_ascii_lowercase();
-    let name = name.to_ascii_lowercase();
-    let mut score = 0usize;
-    if lower.contains(&format!("/{name} ")) || lower.ends_with(&format!("/{name}")) {
-        score += 100;
-    }
-    if lower.contains(&format!(" {name} ")) || lower.ends_with(&format!(" {name}")) {
-        score += 50;
-    }
-    if lower.contains("--type=zygote") || lower.contains("--type=renderer") {
-        score = score.saturating_sub(30);
-    }
-    if lower.contains("clipsync") || lower.contains("helper") {
-        score = score.saturating_sub(20);
-    }
-    if lower.contains("/tmp/.mount_") {
-        score = score.saturating_sub(10);
-    }
-    score
-}
-
-fn linux_app_input_env(report: &mut DiagnosticReport, target: &str, pids: &[u32]) {
-    let Some(pid) = pids.first() else {
-        return;
-    };
-    let path = format!("/proc/{pid}/environ");
-    let Ok(raw) = std::fs::read(&path) else {
-        report.checks.push(Check {
-            id: "input_method.app_env".to_string(),
-            status: CheckStatus::Unknown,
-            detail: format!("could not read environment for {target} pid {pid}"),
-            evidence: Vec::new(),
-        });
-        return;
-    };
+fn read_process_input_env(pid: u32) -> Option<BTreeMap<String, String>> {
+    let raw = std::fs::read(format!("/proc/{pid}/environ")).ok()?;
     let mut picked = BTreeMap::new();
     for item in raw.split(|byte| *byte == 0) {
         let entry = String::from_utf8_lossy(item);
@@ -978,173 +1471,336 @@ fn linux_app_input_env(report: &mut DiagnosticReport, target: &str, pids: &[u32]
             key,
             "GTK_IM_MODULE"
                 | "QT_IM_MODULE"
+                | "QT_IM_MODULES"
                 | "XMODIFIERS"
                 | "SDL_IM_MODULE"
                 | "GLFW_IM_MODULE"
                 | "XDG_SESSION_TYPE"
                 | "WAYLAND_DISPLAY"
                 | "DISPLAY"
+                | "LANG"
+                | "LC_ALL"
+                | "LC_CTYPE"
         ) {
             picked.insert(key.to_string(), redact(value));
         }
     }
-    let qt_ok = picked.get("QT_IM_MODULE").map(String::as_str) == Some("fcitx");
-    report
-        .facts
-        .insert("input_method.app_env".to_string(), json!(picked));
-    report.checks.push(Check {
-        id: "input_method.app_env_qt_im_module".to_string(),
-        status: if qt_ok {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        detail: format!("checked input method environment for {target} pid {pid}"),
-        evidence: vec![format!(
-            "QT_IM_MODULE={}",
-            if qt_ok {
-                "fcitx"
-            } else {
-                "missing-or-different"
-            }
-        )],
-    });
+    Some(picked)
 }
 
-async fn linux_fcitx_package_checks(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-) {
-    if command_path(config, "pacman").await.is_none() {
+fn read_proc_cmdline(pid: u32) -> Option<String> {
+    let raw = std::fs::read(format!("/proc/{pid}/cmdline")).ok()?;
+    let parts = raw
+        .split(|byte| *byte == 0)
+        .filter(|part| !part.is_empty())
+        .map(|part| redact(String::from_utf8_lossy(part)))
+        .collect::<Vec<_>>();
+    (!parts.is_empty()).then(|| parts.join(" "))
+}
+
+fn read_loaded_input_modules(pids: &[u32]) -> Vec<String> {
+    let mut modules = BTreeSet::new();
+    for pid in pids.iter().take(8) {
+        let Ok(text) = std::fs::read_to_string(format!("/proc/{pid}/maps")) else {
+            continue;
+        };
+        for line in text.lines() {
+            if let Some(path) = input_module_path_from_maps_line(line) {
+                modules.insert(format!("pid {pid}: {path}"));
+            }
+        }
+    }
+    modules.into_iter().take(80).collect()
+}
+
+fn input_module_path_from_maps_line(line: &str) -> Option<String> {
+    let path = line.split_whitespace().last()?;
+    let lower = path.to_ascii_lowercase();
+    let is_input_module = lower.contains("/immodules/")
+        || lower.contains("im-fcitx")
+        || lower.contains("im-xim")
+        || lower.contains("im-ibus")
+        || lower.contains("im-wayland")
+        || lower.contains("platforminputcontext")
+        || lower.contains("libibus")
+        || lower.contains("libfcitx");
+    (is_input_module && (lower.ends_with(".so") || lower.contains(".so."))).then(|| redact(path))
+}
+
+fn scan_available_input_modules() -> Vec<String> {
+    let mut modules = BTreeSet::new();
+    for root in ["/usr/lib", "/usr/lib64", "/app/lib"] {
+        scan_available_input_modules_under(Path::new(root), 0, &mut modules);
+    }
+    modules.into_iter().take(120).collect()
+}
+
+fn scan_available_input_modules_under(dir: &Path, depth: usize, modules: &mut BTreeSet<String>) {
+    if depth > 5 || modules.len() >= 120 {
         return;
     }
-    for package in ["fcitx5", "fcitx5-qt", "fcitx5-gtk"] {
-        let output = run_command(config, "pacman", &["-Q", package], 2).await;
-        report.checks.push(Check {
-            id: format!("input_method.package.{package}"),
-            status: if output.status == Some(0) {
-                CheckStatus::Ok
-            } else {
-                CheckStatus::Warn
-            },
-            detail: if output.status == Some(0) {
-                format!("{package} is installed")
-            } else {
-                format!("{package} is not confirmed installed")
-            },
-            evidence: compact_evidence(&output),
-        });
+    let Ok(entries) = std::fs::read_dir(dir) else {
+        return;
+    };
+    for entry in entries.flatten().take(300) {
+        let path = entry.path();
+        let text = path.display().to_string();
+        let lower = text.to_ascii_lowercase();
+        if path.is_dir() {
+            if lower.contains("gtk")
+                || lower.contains("immodules")
+                || lower.contains("qt")
+                || lower.contains("fcitx")
+                || lower.contains("ibus")
+            {
+                scan_available_input_modules_under(&path, depth + 1, modules);
+            }
+        } else if input_module_file_name(&lower) {
+            modules.insert(redact(&text));
+        }
     }
+}
+
+fn input_module_file_name(lower_path: &str) -> bool {
+    (lower_path.contains("/immodules/")
+        || lower_path.contains("im-fcitx")
+        || lower_path.contains("im-xim")
+        || lower_path.contains("im-ibus")
+        || lower_path.contains("im-wayland")
+        || lower_path.contains("platforminputcontext"))
+        && (lower_path.ends_with(".so") || lower_path.contains(".so."))
+}
+
+fn linux_desktop_exec_for_target(target: &str) -> Option<String> {
+    let mut dirs = Vec::new();
+    if let Ok(home) = std::env::var("HOME") {
+        dirs.push(PathBuf::from(home).join(".local/share/applications"));
+    }
+    dirs.push(PathBuf::from("/usr/share/applications"));
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("desktop") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&path) else {
+                continue;
+            };
+            let exec = text.lines().find_map(|line| line.strip_prefix("Exec="));
+            if path
+                .file_stem()
+                .and_then(|value| value.to_str())
+                .is_some_and(|value| value.eq_ignore_ascii_case(target))
+                || exec.is_some_and(|line| command_mentions_target(line, target))
+            {
+                return exec.map(redact);
+            }
+        }
+    }
+    None
+}
+
+fn command_mentions_target(line: &str, target: &str) -> bool {
+    line.split(|ch: char| ch.is_whitespace() || ch == '/' || ch == '=')
+        .any(|part| part == target)
+}
+
+fn infer_input_toolkit(text: &str) -> InputToolkit {
+    let lower = text.to_ascii_lowercase();
+    if lower.contains("qt_im_module")
+        || lower.contains("platforminputcontext")
+        || lower.contains("libqt")
+    {
+        InputToolkit::Qt
+    } else if lower.contains("electron")
+        || lower.contains("chromium")
+        || lower.contains("chrome-sandbox")
+        || lower.contains("steamwebhelper")
+        || lower.contains("--ozone-platform")
+        || lower.contains("linuxqq")
+    {
+        InputToolkit::ElectronChromium
+    } else if lower.contains("gtk") || lower.contains("gdk") || lower.contains("immodules") {
+        InputToolkit::Gtk
+    } else if lower.contains("sdl") {
+        InputToolkit::Sdl
+    } else if lower.contains("java") {
+        InputToolkit::Java
+    } else if lower.contains("x11") || lower.contains("xlib") {
+        InputToolkit::X11Legacy
+    } else {
+        InputToolkit::Unknown
+    }
+}
+
+fn infer_display_mode(
+    text: &str,
+    env: Option<&BTreeMap<String, String>>,
+    socket_mode: DisplayMode,
+    loaded_modules: &[String],
+) -> DisplayMode {
+    let lower = text.to_ascii_lowercase();
+    let has_ozone_wayland = lower.contains("--ozone-platform=wayland");
+
+    if has_ozone_wayland {
+        return DisplayMode::WaylandNative;
+    }
+
+    if socket_mode == DisplayMode::XWayland || socket_mode == DisplayMode::X11 {
+        return DisplayMode::XWayland;
+    }
+    if socket_mode == DisplayMode::WaylandNative {
+        return DisplayMode::WaylandNative;
+    }
+
+    let has_im_wayland = loaded_modules
+        .iter()
+        .any(|m| m.to_ascii_lowercase().contains("im-wayland"));
+    if has_im_wayland {
+        return DisplayMode::WaylandNative;
+    }
+
+    if let Some(env) = env {
+        let has_wayland = env.get("WAYLAND_DISPLAY").is_some();
+        let has_display = env.get("DISPLAY").is_some();
+        return match (has_wayland, has_display) {
+            (true, false) => DisplayMode::WaylandNative,
+            (false, true) => DisplayMode::X11,
+            (true, true) => DisplayMode::XWayland,
+            _ => DisplayMode::Unknown,
+        };
+    }
+
+    DisplayMode::Unknown
+}
+
+fn env_has(env: &BTreeMap<String, String>, key: &str, expected: &str) -> bool {
+    env.get(key)
+        .map(|value| value == expected || value.split(';').any(|item| item.trim() == expected))
+        .unwrap_or(false)
+}
+
+fn loaded_module_evidence(loaded_modules: &[String], needles: &[&str]) -> Option<String> {
+    loaded_modules.iter().find_map(|module| {
+        let lower = module.to_ascii_lowercase();
+        needles
+            .iter()
+            .any(|needle| lower.contains(&needle.to_ascii_lowercase()))
+            .then(|| format!("runtime_loaded_module={module}"))
+    })
+}
+
+fn available_module_evidence(available_modules: &[String], needles: &[&str]) -> Option<String> {
+    available_modules.iter().find_map(|module| {
+        let lower = module.to_ascii_lowercase();
+        needles
+            .iter()
+            .any(|needle| lower.contains(&needle.to_ascii_lowercase()))
+            .then(|| module.to_string())
+    })
 }
 
 async fn systemd_user_active_check(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    report: &mut EvidenceReport,
     service: &str,
 ) {
-    if command_path(config, "systemctl").await.is_none() {
-        return;
-    }
     let output = run_command(config, "systemctl", &["--user", "is-active", service], 2).await;
-    let active = output.stdout.trim() == "active";
     report.checks.push(Check {
         id: format!("systemd_user.{service}.active"),
-        status: if active {
+        status: if output.status == Some(0) {
             CheckStatus::Ok
         } else {
             CheckStatus::Warn
         },
-        detail: format!("{service} is {}", output.stdout.trim()),
+        detail: format!("systemctl --user is-active {service}"),
         evidence: compact_evidence(&output),
     });
 }
 
 async fn app_probe_version(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    target: &str,
+    report: &mut EvidenceReport,
+    command: &str,
 ) {
-    let output = run_command(config, target, &["--version"], 3).await;
-    report.checks.push(Check {
-        id: "app.version_probe".to_string(),
-        status: if output.status == Some(0) {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        detail: format!("ran {target} --version"),
-        evidence: compact_evidence(&output),
-    });
-}
-
-async fn app_probe_help(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    target: &str,
-) {
-    let output = run_command(config, target, &["--help"], 3).await;
-    report.checks.push(Check {
-        id: "app.help_probe".to_string(),
-        status: if output.status == Some(0) {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        detail: format!("ran {target} --help"),
-        evidence: compact_evidence(&output),
-    });
-    if output.status != Some(0) && !output.stderr.trim().is_empty() {
-        report.findings.push(Finding {
-            severity: Severity::High,
-            title: format!("{target} returned an error during startup probe"),
-            evidence: clip(&output.stderr, 1_000),
-        });
+    if !safe_command_name(command) {
+        return;
     }
+    let output = run_command(config, command, &["--version"], 2).await;
+    push_log_if_stdout(report, &format!("{command} --version"), &output);
 }
 
-async fn linux_package_owner(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    path: &str,
-) {
+async fn package_owner(config: &DiagnosticsPluginConfig, report: &mut EvidenceReport, path: &str) {
     if command_path(config, "pacman").await.is_none() {
         return;
     }
     let output = run_command(config, "pacman", &["-Qo", path], 3).await;
-    if output.status == Some(0) {
-        report
-            .facts
-            .insert("app.package_owner".to_string(), json!(output.stdout.trim()));
-    }
+    push_log_if_stdout(report, "pacman -Qo", &output);
 }
 
-async fn node_runtime_if_relevant(
+fn package_probe_for_command(
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
+    command_path: &str,
     target: &str,
-    path: &str,
-) {
-    let lower = format!("{} {}", target, path).to_ascii_lowercase();
-    if !(lower.contains("node") || lower.contains("npm") || lower.contains("opencode")) {
-        return;
+) -> Option<String> {
+    let owner = std::process::Command::new("pacman")
+        .args(["-Qo", command_path])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let owner_text = String::from_utf8_lossy(&owner.stdout);
+    let package = package_name_from_pacman_owner(&owner_text)?;
+    if !safe_command_name(&package) {
+        return None;
     }
-    for command in ["node", "npm", "pnpm", "bun"] {
-        command_exists_check(config, report, command).await;
-        if command_path(config, command).await.is_some() {
-            let output = run_command(config, command, &["--version"], 3).await;
-            report.facts.insert(
-                format!("runtime.{command}.version"),
-                json!(clip(output.stdout.trim(), 200)),
-            );
-        }
-    }
+    let output = std::process::Command::new("pacman")
+        .args(["-Ql", &package])
+        .output()
+        .ok()
+        .filter(|output| output.status.success())?;
+    let mut lines = vec![format!("package={package}"), format!("target={target}")];
+    lines.extend(
+        String::from_utf8_lossy(&output.stdout)
+            .lines()
+            .filter(|line| package_probe_line(line))
+            .take(80)
+            .map(ToString::to_string),
+    );
+    Some(redact(&clip(
+        &lines.join("\n"),
+        config.max_stdout_chars.min(4_000),
+    )))
 }
 
-async fn linux_recent_logs(
-    args: &DiagnoseArgs,
+fn package_name_from_pacman_owner(text: &str) -> Option<String> {
+    let parts = text.split_whitespace().collect::<Vec<_>>();
+    if let Some(index) = parts.iter().position(|part| *part == "by" || *part == "由") {
+        return parts.get(index + 1).map(|value| value.to_string());
+    }
+    None
+}
+
+fn package_probe_line(line: &str) -> bool {
+    let lower = line.to_ascii_lowercase();
+    lower.contains("libgtk")
+        || lower.contains("libgdk")
+        || lower.contains("libqt")
+        || lower.contains("platforminputcontext")
+        || lower.contains("immodules")
+        || lower.contains("electron")
+        || lower.contains("chrome")
+        || lower.ends_with(".desktop")
+        || lower.contains("/bin/")
+}
+
+async fn recent_logs(
+    args: &CheckIssueArgs,
     config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    keywords: &[&str],
+    report: &mut EvidenceReport,
+    needles: &[&str],
 ) {
     if args.depth == Depth::Quick || command_path(config, "journalctl").await.is_none() {
         return;
@@ -1153,367 +1809,236 @@ async fn linux_recent_logs(
     let output = run_command(
         config,
         "journalctl",
-        &["--user", "--since", &since, "--no-pager", "-n", "300"],
+        &["--user", "--since", &since, "--no-pager", "-n", "200"],
         5,
     )
     .await;
-    push_filtered_log(report, "journalctl --user", &output.stdout, keywords);
-}
-
-async fn macos_recent_logs(
-    args: &DiagnoseArgs,
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    keywords: &[&str],
-) {
-    if args.depth == Depth::Quick || command_path(config, "log").await.is_none() {
-        return;
-    }
-    let last = format!("{}m", args.recent_minutes);
-    let predicate = keywords
-        .iter()
-        .map(|keyword| format!("eventMessage CONTAINS[c] '{}'", keyword.replace('\'', "")))
+    let text = output
+        .stdout
+        .lines()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            needles
+                .iter()
+                .any(|needle| lower.contains(&needle.to_ascii_lowercase()))
+        })
+        .take(80)
         .collect::<Vec<_>>()
-        .join(" OR ");
-    let output = run_command(
-        config,
-        "log",
-        &[
-            "show",
-            "--last",
-            &last,
-            "--style",
-            "compact",
-            "--predicate",
-            &predicate,
-        ],
-        6,
-    )
-    .await;
-    push_filtered_log(report, "log show", &output.stdout, keywords);
-}
-
-fn push_filtered_log(report: &mut DiagnosticReport, source: &str, text: &str, keywords: &[&str]) {
-    let mut lines = Vec::new();
-    for line in text.lines() {
-        let lower = line.to_ascii_lowercase();
-        if keywords
-            .iter()
-            .any(|keyword| lower.contains(&keyword.to_ascii_lowercase()))
-        {
-            lines.push(line);
-        }
-        if lines.len() >= 20 {
-            break;
-        }
-    }
-    if !lines.is_empty() {
-        report.logs.push(LogExcerpt {
-            source: source.to_string(),
-            message: clip(&lines.join("\n"), 4_000),
-        });
-    }
-}
-
-async fn macos_quarantine_check(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    path: &str,
-) {
-    if command_path(config, "xattr").await.is_none() {
-        return;
-    }
-    let output = run_command(config, "xattr", &["-p", "com.apple.quarantine", path], 2).await;
-    if output.status == Some(0) && !output.stdout.trim().is_empty() {
-        report.findings.push(Finding {
-            severity: Severity::Medium,
-            title: "target has macOS quarantine attribute".to_string(),
-            evidence: output.stdout.trim().to_string(),
-        });
-    }
-}
-
-async fn macos_codesign_check(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    path: &str,
-) {
-    if command_path(config, "codesign").await.is_none() {
-        return;
-    }
-    let output = run_command(config, "codesign", &["--verify", "--verbose", path], 4).await;
-    report.checks.push(Check {
-        id: "macos.codesign.verify".to_string(),
-        status: if output.status == Some(0) {
-            CheckStatus::Ok
-        } else {
-            CheckStatus::Warn
-        },
-        detail: "codesign verification probe".to_string(),
-        evidence: compact_evidence(&output),
-    });
-}
-
-async fn system_profiler_check(
-    config: &DiagnosticsPluginConfig,
-    report: &mut DiagnosticReport,
-    data_type: &str,
-    source: &str,
-) {
-    if command_path(config, "system_profiler").await.is_none() {
-        return;
-    }
-    let output = run_command(config, "system_profiler", &[data_type], 8).await;
-    if !output.stdout.trim().is_empty() {
-        report.logs.push(LogExcerpt {
-            source: source.to_string(),
-            message: clip(&output.stdout, 4_000),
-        });
-    }
+        .join("\n");
+    push_log(report, "journalctl --user recent filtered", &text);
 }
 
 async fn command_path(config: &DiagnosticsPluginConfig, command: &str) -> Option<String> {
     if !safe_command_name(command) {
         return None;
     }
-    let script = format!("command -v {}", shell_escape(command));
-    let output = run_command(config, "sh", &["-c", &script], 2).await;
-    if output.status == Some(0) && !output.stdout.trim().is_empty() {
-        return Some(output.stdout.trim().to_string());
-    }
     let output = run_command(config, "which", &[command], 2).await;
-    (output.status == Some(0) && !output.stdout.trim().is_empty())
-        .then(|| output.stdout.trim().to_string())
+    (output.status == Some(0))
+        .then(|| {
+            output
+                .stdout
+                .lines()
+                .next()
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        })
+        .filter(|value| !value.is_empty())
 }
 
 async fn run_command(
     config: &DiagnosticsPluginConfig,
-    program: &str,
+    command: &str,
     args: &[&str],
     timeout_seconds: u64,
 ) -> ProbeOutput {
-    let seconds = timeout_seconds
-        .max(1)
-        .min(config.command_timeout_seconds.max(1));
-    let mut command = Command::new(program);
-    command
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true);
-    let child = match command.spawn() {
-        Ok(child) => child,
-        Err(error) => {
-            return ProbeOutput {
-                status: None,
-                stdout: String::new(),
-                stderr: String::new(),
-                error: Some(error.to_string()),
-                timed_out: false,
-            };
-        }
-    };
-    match timeout(Duration::from_secs(seconds), child.wait_with_output()).await {
-        Ok(Ok(output)) => ProbeOutput {
-            status: output.status.code(),
-            stdout: redact(&clip(
-                &String::from_utf8_lossy(&output.stdout),
-                config.max_stdout_chars,
-            )),
-            stderr: redact(&clip(
-                &String::from_utf8_lossy(&output.stderr),
-                config.max_stderr_chars,
-            )),
-            error: None,
-            timed_out: false,
-        },
-        Ok(Err(error)) => ProbeOutput {
+    if !safe_command_name(command) {
+        return ProbeOutput {
             status: None,
             stdout: String::new(),
             stderr: String::new(),
-            error: Some(error.to_string()),
+            timed_out: false,
+        };
+    }
+    let result = timeout(
+        Duration::from_secs(timeout_seconds.min(config.command_timeout_seconds).max(1)),
+        Command::new(command)
+            .args(args)
+            .stdin(Stdio::null())
+            .output(),
+    )
+    .await;
+    match result {
+        Ok(Ok(output)) => ProbeOutput {
+            status: output.status.code(),
+            stdout: clip(
+                &String::from_utf8_lossy(&output.stdout),
+                config.max_stdout_chars,
+            ),
+            stderr: clip(
+                &String::from_utf8_lossy(&output.stderr),
+                config.max_stderr_chars,
+            ),
+            timed_out: false,
+        },
+        Ok(Err(err)) => ProbeOutput {
+            status: None,
+            stdout: String::new(),
+            stderr: err.to_string(),
             timed_out: false,
         },
         Err(_) => ProbeOutput {
             status: None,
             stdout: String::new(),
             stderr: String::new(),
-            error: Some(format!("command timed out after {seconds}s")),
             timed_out: true,
         },
     }
 }
 
+fn fact_env(report: &mut EvidenceReport, key: &str, env: &str) {
+    if let Ok(value) = std::env::var(env) {
+        if !value.trim().is_empty() {
+            report.facts.insert(key.to_string(), json!(redact(&value)));
+        }
+    }
+}
+
+fn push_log_if_stdout(report: &mut EvidenceReport, source: &str, output: &ProbeOutput) {
+    if !output.stdout.trim().is_empty() {
+        push_log(report, source, &output.stdout);
+    }
+}
+
+fn push_log(report: &mut EvidenceReport, source: &str, message: &str) {
+    if !message.trim().is_empty() {
+        report.logs.push(LogExcerpt {
+            source: source.to_string(),
+            message: clip(message, 2_000),
+        });
+    }
+}
+
 fn compact_evidence(output: &ProbeOutput) -> Vec<String> {
     let mut evidence = Vec::new();
+    if let Some(status) = output.status {
+        evidence.push(format!("exit={status}"));
+    }
     if !output.stdout.trim().is_empty() {
-        evidence.push(clip(output.stdout.trim(), 1_000));
+        evidence.push(format!("stdout={}", clip(&output.stdout, 800)));
     }
     if !output.stderr.trim().is_empty() {
-        evidence.push(clip(output.stderr.trim(), 1_000));
+        evidence.push(format!("stderr={}", clip(&output.stderr, 800)));
     }
-    if let Some(error) = &output.error {
-        evidence.push(error.clone());
-    }
-    if output.timed_out && output.error.is_none() {
-        evidence.push("command timed out".to_string());
+    if output.timed_out {
+        evidence.push("timed_out=true".to_string());
     }
     evidence
 }
 
-fn fact_env(report: &mut DiagnosticReport, fact: &str, key: &str) {
-    if let Ok(value) = std::env::var(key) {
-        if !value.trim().is_empty() {
-            report.facts.insert(fact.to_string(), json!(redact(&value)));
-        }
-    }
+fn extract_lspci_gpu_blocks(text: &str) -> Vec<String> {
+    text.lines()
+        .filter(|line| {
+            let lower = line.to_ascii_lowercase();
+            lower.contains("vga")
+                || lower.contains("3d controller")
+                || lower.contains("display controller")
+                || lower.contains("kernel driver in use")
+        })
+        .take(80)
+        .map(redact)
+        .collect()
 }
 
 fn os_release_value(text: &str, key: &str) -> Option<String> {
-    for line in text.lines() {
-        let Some((name, value)) = line.split_once('=') else {
-            continue;
-        };
-        if name == key {
-            return Some(value.trim_matches('"').to_string());
-        }
-    }
-    None
-}
-
-fn extract_lspci_gpu_blocks(text: &str) -> String {
-    let mut blocks = Vec::new();
-    let mut current = Vec::new();
-    for line in text.lines() {
-        let starts_device = line
-            .chars()
-            .next()
-            .map(|ch| ch.is_ascii_hexdigit())
-            .unwrap_or(false);
-        if starts_device && !current.is_empty() {
-            maybe_push_gpu_block(&mut blocks, &current);
-            current.clear();
-        }
-        current.push(line.to_string());
-    }
-    if !current.is_empty() {
-        maybe_push_gpu_block(&mut blocks, &current);
-    }
-    blocks.join("\n\n")
-}
-
-fn maybe_push_gpu_block(blocks: &mut Vec<String>, block: &[String]) {
-    let header = block.first().map(String::as_str).unwrap_or_default();
-    let lower = header.to_ascii_lowercase();
-    if lower.contains("vga compatible controller")
-        || lower.contains("3d controller")
-        || lower.contains("display controller")
-    {
-        blocks.push(block.join("\n"));
-    }
-}
-
-fn finalize_summary(report: &mut DiagnosticReport) {
-    if !report.summary.is_empty() {
-        return;
-    }
-    let errors = report
-        .checks
-        .iter()
-        .filter(|check| matches!(check.status, CheckStatus::Error))
-        .count();
-    let warnings = report
-        .checks
-        .iter()
-        .filter(|check| matches!(check.status, CheckStatus::Warn))
-        .count();
-    report.summary = if errors > 0 {
-        format!(
-            "context collection completed with {errors} error check(s) and {warnings} warning check(s)"
-        )
-    } else if warnings > 0 {
-        format!("context collection completed with {warnings} warning check(s)")
-    } else {
-        "context collection completed without obvious errors in the selected probes".to_string()
-    };
-}
-
-fn safe_command_name(value: &str) -> bool {
-    !value.is_empty()
-        && value.len() <= 160
-        && value
-            .chars()
-            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '+' | '/'))
-}
-
-fn shell_escape(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
-}
-
-fn clip(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        text.to_string()
-    } else {
-        format!(
-            "{}\n...[truncated]",
-            text.chars().take(max_chars).collect::<String>()
-        )
-    }
-}
-
-fn redact(text: &str) -> String {
-    let home = std::env::var("HOME").unwrap_or_default();
-    let user = std::env::var("USER").unwrap_or_default();
-    let mut output = text.to_string();
-    if !home.is_empty() {
-        output = output.replace(&home, "$HOME");
-    }
-    if !user.is_empty() {
-        output = output.replace(&format!("/{user}/"), "/$USER/");
-        output = output.replace(&format!("{user}@"), "$USER@");
-    }
-    for marker in [
-        "TOKEN=",
-        "API_KEY=",
-        "PASSWORD=",
-        "SECRET=",
-        "ACCESS_TOKEN=",
-        "AUTH=",
-    ] {
-        output = redact_after_marker(&output, marker);
-    }
-    output
-}
-
-fn redact_after_marker(input: &str, marker: &str) -> String {
-    let mut output = String::new();
-    for line in input.lines() {
-        if let Some(pos) = line.find(marker) {
-            output.push_str(&line[..pos + marker.len()]);
-            output.push_str("[REDACTED]\n");
-        } else {
-            output.push_str(line);
-            output.push('\n');
-        }
-    }
-    output.trim_end_matches('\n').to_string()
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once('=')?;
+        (name == key).then(|| value.trim_matches('"').to_string())
+    })
 }
 
 fn mask_network_addresses(text: &str) -> String {
-    text.lines()
-        .map(|line| {
-            line.split_whitespace()
-                .map(|token| {
-                    if token.contains('/') && (token.contains('.') || token.contains(':')) {
-                        "[ip/prefix]"
-                    } else {
-                        token
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ")
+    text.split_whitespace()
+        .map(|part| {
+            if part.contains('.') && part.chars().any(|ch| ch.is_ascii_digit()) {
+                "<ipv4>".to_string()
+            } else if part.contains(':') && part.chars().any(|ch| ch.is_ascii_hexdigit()) {
+                "<ipv6-or-mac>".to_string()
+            } else {
+                part.to_string()
+            }
         })
         .collect::<Vec<_>>()
-        .join("\n")
+        .join(" ")
+}
+
+fn redact(value: impl AsRef<str>) -> String {
+    let home = std::env::var("HOME").unwrap_or_default();
+    if home.is_empty() {
+        value.as_ref().to_string()
+    } else {
+        value.as_ref().replace(&home, "$HOME")
+    }
+}
+
+fn clip(value: &str, max_chars: usize) -> String {
+    let value = value.trim();
+    if value.chars().count() <= max_chars {
+        value.to_string()
+    } else {
+        format!(
+            "{}...",
+            value
+                .chars()
+                .take(max_chars.saturating_sub(3))
+                .collect::<String>()
+        )
+    }
+}
+
+fn contains_any(text: &str, needles: &[&str]) -> bool {
+    needles.iter().any(|needle| text.contains(needle))
+}
+
+fn safe_command_name(value: &str) -> bool {
+    !value.trim().is_empty()
+        && value
+            .chars()
+            .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.' | '+'))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn check_issue_infers_input_method_area() {
+        let args = parse_args(json!({"query": "QQ 打不了中文", "target": "qq"})).unwrap();
+        assert!(matches!(args.area, Area::InputMethod));
+    }
+
+    #[test]
+    fn input_method_path_needs_runtime_evidence() {
+        let status = input_method_path_status(
+            InputToolkit::Unknown,
+            DisplayMode::Unknown,
+            false,
+            None,
+            &[],
+            &[],
+            &[],
+            &WaylandProtocolInfo {
+                compositor_supports_text_input_v3: false,
+                fcitx5_wayland_frontend_loaded: false,
+                wayland_info_available: false,
+            },
+            &LocaleInfo {
+                target_lang: None,
+                target_lc_ctype: None,
+                available_locales: vec![],
+                locale_valid: false,
+            },
+        );
+        assert_eq!(status.overall, "path_evidence_incomplete");
+    }
 }

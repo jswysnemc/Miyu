@@ -5,11 +5,12 @@ use crate::render::command_output::{
 };
 use crate::render::markdown::MarkdownStreamRenderer;
 use crate::render::stream_summary::StreamSummary;
-use crate::render::wait_spinner::WaitSpinner;
+use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
+use serde_json::Value;
 use std::io::{self, Write};
 
 #[cfg(test)]
@@ -114,7 +115,10 @@ impl StreamRenderer {
             return Ok(());
         }
         self.hide_cursor()?;
-        self.wait_spinner = Some(WaitSpinner::start(t("thinking", "思考").to_string()));
+        self.wait_spinner = Some(WaitSpinner::start(
+            t("thinking", "思考").to_string(),
+            SpinnerStyle::Scanner,
+        ));
         Ok(())
     }
 
@@ -199,7 +203,20 @@ impl StreamRenderer {
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_call(name);
-            self.summary.render_tools_live()?;
+            if WaitSpinner::supported() {
+                self.summary.clear_live_lines()?;
+                let phase = format!(
+                    "{}: {}",
+                    t("tools", "工具"),
+                    self.summary.display_tool_name(name)
+                );
+                self.wait_spinner = Some(WaitSpinner::start(phase, SpinnerStyle::Braille));
+                if let Some(spinner) = &self.wait_spinner {
+                    spinner.set_sub_phase(Some(t("running", "运行中").to_string()));
+                }
+            } else {
+                self.summary.render_tools_live()?;
+            }
         }
         Ok(())
     }
@@ -268,6 +285,15 @@ impl StreamRenderer {
             self.prepare_for_external_output()?;
             return Ok(());
         }
+        if let Some(text) = message.strip_prefix("__subagent_reasoning__") {
+            return self.write_subagent_reasoning(name, text);
+        }
+        if let Some(payload) = message.strip_prefix("__subtool_call__") {
+            return self.write_subtool_call(name, payload);
+        }
+        if let Some(payload) = message.strip_prefix("__subtool_result__") {
+            return self.write_subtool_result(name, payload);
+        }
         self.stop_waiting()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
@@ -281,6 +307,131 @@ impl StreamRenderer {
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_progress(name, message);
+            self.summary.render_tools_live()?;
+        }
+        Ok(())
+    }
+
+    /// 写入子代理推理进度。
+    ///
+    /// 参数:
+    /// - `name`: 父工具名称
+    /// - `text`: 子代理推理文本
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_subagent_reasoning(&mut self, name: &str, text: &str) -> Result<()> {
+        let text = normalize_stream_text(text);
+        if self.tool_call_mode == ToolCallDisplayMode::Hidden || text.trim().is_empty() {
+            return Ok(());
+        }
+        if self.tool_call_mode == ToolCallDisplayMode::Full {
+            self.stop_waiting()?;
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+            let mut stdout = io::stdout();
+            execute!(stdout, SetForegroundColor(Color::Green))?;
+            write!(stdout, "{text}")?;
+            execute!(stdout, ResetColor)?;
+            stdout.flush()?;
+            return Ok(());
+        }
+        let line_count = text.matches('\n').count().max(1);
+        self.summary.note_tool_progress(
+            name,
+            &format!(
+                "{} · {} {}",
+                t("subagent reasoning", "子代理推理"),
+                line_count,
+                t("lines", "行")
+            ),
+        );
+        self.summary.render_tools_live()
+    }
+
+    /// 写入子工具调用进度。
+    ///
+    /// 参数:
+    /// - `parent_name`: 父工具名称
+    /// - `payload`: 子工具调用 JSON
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_subtool_call(&mut self, parent_name: &str, payload: &str) -> Result<()> {
+        let value = serde_json::from_str::<Value>(payload).unwrap_or(Value::Null);
+        let tool_name = value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let args = value.get("args").and_then(Value::as_str).unwrap_or("");
+        if self.tool_call_mode == ToolCallDisplayMode::Full {
+            self.stop_waiting()?;
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+            let mut stdout = io::stdout();
+            if tool_name == "run_command" {
+                write_command_block(&mut stdout, args)?;
+            } else {
+                writeln!(stdout, "tool {}", self.summary.display_tool_name(tool_name))?;
+                write_tool_payload(&mut stdout, t("args", "参数"), args)?;
+            }
+            stdout.flush()?;
+        } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
+            self.summary.note_tool_progress(
+                parent_name,
+                &format!(
+                    "{}: {}",
+                    t("subtool running", "子工具运行中"),
+                    self.summary.display_tool_name(tool_name)
+                ),
+            );
+            self.summary.render_tools_live()?;
+        }
+        Ok(())
+    }
+
+    /// 写入子工具结果进度。
+    ///
+    /// 参数:
+    /// - `parent_name`: 父工具名称
+    /// - `payload`: 子工具结果 JSON
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_subtool_result(&mut self, parent_name: &str, payload: &str) -> Result<()> {
+        let value = serde_json::from_str::<Value>(payload).unwrap_or(Value::Null);
+        let tool_name = value
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
+        let output = value.get("output").and_then(Value::as_str).unwrap_or("");
+        let status = if ok { "ok" } else { "err" };
+        if self.tool_call_mode == ToolCallDisplayMode::Full {
+            self.stop_waiting()?;
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+            let mut stdout = io::stdout();
+            if tool_name == "run_command" {
+                write_command_result_blocks(&mut stdout, output)?;
+            } else {
+                writeln!(
+                    stdout,
+                    "result {} {status}",
+                    self.summary.display_tool_name(tool_name)
+                )?;
+                write_tool_payload(&mut stdout, t("output", "输出"), output)?;
+            }
+            stdout.flush()?;
+        } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
+            self.summary.note_tool_progress(
+                parent_name,
+                &format!(
+                    "{}: {} {status}",
+                    t("subtool finished", "子工具结束"),
+                    self.summary.display_tool_name(tool_name)
+                ),
+            );
             self.summary.render_tools_live()?;
         }
         Ok(())
