@@ -8,6 +8,7 @@ mod default_tools;
 mod diagnostics;
 mod exchange_rate;
 mod fcitx_wiki;
+pub(crate) mod groups;
 mod hash_codec;
 mod image_generation;
 pub mod knowledge_base;
@@ -17,6 +18,7 @@ pub(crate) mod memes;
 mod memory;
 mod moegirl;
 mod package_advisor;
+pub(crate) mod progressive;
 mod protondb_query;
 mod registry;
 mod skills;
@@ -29,9 +31,10 @@ mod xuanxue;
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 
+pub(crate) use progressive::{register_loader as register_progressive_loader, LOAD_TOOLS_NAME};
 #[allow(unused_imports)]
 pub use registry::{empty_parameters, ToolPermission, ToolProgress, ToolRegistry, ToolSpec};
-pub use skills::{register_skills, skills_prompt};
+pub use skills::{register_skills, skills_catalog_prompt, skills_prompt};
 
 pub fn readable_tool_name(name: &str) -> &str {
     match name {

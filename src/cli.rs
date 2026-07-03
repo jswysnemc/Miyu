@@ -36,6 +36,9 @@ pub struct Cli {
     #[arg(short = 'c', long = "clipb")]
     pub clipb: bool,
 
+    #[arg(long, value_name = "LEVEL")]
+    pub thinking: Option<String>,
+
     #[arg(long, hide = true)]
     pub shell_intercept: bool,
 
@@ -147,6 +150,12 @@ fn localize_top_args(command: clap::Command) -> clap::Command {
                 "将剪贴板文本注入提示词，或将剪贴板图片附加到提示词",
             ))
         })
+        .mut_arg("thinking", |arg| {
+            arg.help(t(
+                "Temporarily override model thinking level: auto, none, low, medium, high, xhigh, or max",
+                "临时覆盖模型思考等级：auto、none、low、medium、high、xhigh 或 max",
+            ))
+        })
         .mut_arg("message", |arg| {
             arg.help(t(
                 "Message to send; omitted to enter REPL",
@@ -243,6 +252,12 @@ fn localize_ask_command(command: clap::Command) -> clap::Command {
             arg.help(t(
                 "Inject clipboard text or attach clipboard image to the prompt",
                 "将剪贴板文本注入提示词，或将剪贴板图片附加到提示词",
+            ))
+        })
+        .mut_arg("thinking", |arg| {
+            arg.help(t(
+                "Temporarily override model thinking level: auto, none, low, medium, high, xhigh, or max",
+                "临时覆盖模型思考等级：auto、none、low、medium、high、xhigh 或 max",
             ))
         })
         .mut_arg("message", |arg| {
@@ -431,6 +446,9 @@ pub enum Command {
 pub struct MessageArgs {
     #[arg(short = 'c', long = "clipb")]
     pub clipb: bool,
+
+    #[arg(long, value_name = "LEVEL")]
+    pub thinking: Option<String>,
 
     #[arg(trailing_var_arg = true, allow_hyphen_values = true)]
     pub message: Vec<String>,
@@ -627,6 +645,7 @@ pub enum ConfigCommand {
 
 pub async fn run(cli: Cli) -> Result<()> {
     let paths = MiyuPaths::new()?;
+    let thinking_override = cli.thinking.clone();
     let mode = if cli.plan {
         AgentMode::Plan
     } else {
@@ -651,7 +670,16 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Tool(args)) => run_tool(&paths, mode, args).await,
         Some(Command::Ask(args)) => {
             let input = clipboard::chat_input_from_parts(args.message, args.clipb);
-            run_chat_with_options(&paths, input.message, None, false, mode, input.clipb).await
+            run_chat_with_options(
+                &paths,
+                input.message,
+                None,
+                false,
+                mode,
+                input.clipb,
+                args.thinking.or_else(|| thinking_override.clone()),
+            )
+            .await
         }
         Some(Command::Init) => run_init(&paths, InitKind::Explicit),
         Some(Command::Paths) => {
@@ -674,9 +702,18 @@ pub async fn run(cli: Cli) -> Result<()> {
         None => {
             let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
             if input.message.is_empty() && !input.clipb {
-                run_repl(&paths, mode).await
+                run_repl(&paths, mode, thinking_override.clone()).await
             } else {
-                run_chat_with_options(&paths, input.message, None, false, mode, input.clipb).await
+                run_chat_with_options(
+                    &paths,
+                    input.message,
+                    None,
+                    false,
+                    mode,
+                    input.clipb,
+                    thinking_override.clone(),
+                )
+                .await
             }
         }
     }
@@ -1304,7 +1341,8 @@ async fn run_shell_intercept(
             t("not a natural language command", "不是自然语言命令")
         );
     }
-    let result = run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb).await;
+    let result =
+        run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb, None).await;
     drain_stdin();
     result
 }
@@ -1346,12 +1384,14 @@ async fn run_chat_with_options(
     plain: bool,
     mode: AgentMode,
     clipb: bool,
+    thinking_override: Option<String>,
 ) -> Result<()> {
     if message.is_empty() && !clipb {
-        return run_repl(paths, mode).await;
+        return run_repl(paths, mode, thinking_override).await;
     }
     AppConfig::init_files(paths)?;
-    let config = AppConfig::load_or_default(paths)?;
+    let mut config = AppConfig::load_or_default(paths)?;
+    apply_thinking_override(&mut config, thinking_override.as_deref())?;
     let chat_input = prepare_clipboard_chat_input(message, clipb)?;
     let state = StateStore::new(paths)?;
     state.init_files()?;
@@ -1382,9 +1422,14 @@ async fn run_chat_with_options(
     Ok(())
 }
 
-async fn run_repl(paths: &MiyuPaths, initial_mode: AgentMode) -> Result<()> {
+async fn run_repl(
+    paths: &MiyuPaths,
+    initial_mode: AgentMode,
+    thinking_override: Option<String>,
+) -> Result<()> {
     AppConfig::init_files(paths)?;
     let mut config = AppConfig::load_or_default(paths)?;
+    apply_thinking_override(&mut config, thinking_override.as_deref())?;
     let state = StateStore::new(paths)?;
     state.init_files()?;
     let mut client = OpenAiCompatibleClient::from_config(&config, paths)?;
@@ -1434,13 +1479,23 @@ async fn run_repl(paths: &MiyuPaths, initial_mode: AgentMode) -> Result<()> {
         }
         if input.eq_ignore_ascii_case("/providers") {
             run_providers(paths, ProvidersArgs { index: None })?;
-            reload_repl_config(paths, &mut config, &mut client)?;
+            reload_repl_config(
+                paths,
+                &mut config,
+                &mut client,
+                thinking_override.as_deref(),
+            )?;
             println!("{}", t("configuration reloaded", "配置已重新加载"));
             continue;
         }
         if input.eq_ignore_ascii_case("/config") {
             crate::config_tui::run(paths)?;
-            reload_repl_config(paths, &mut config, &mut client)?;
+            reload_repl_config(
+                paths,
+                &mut config,
+                &mut client,
+                thinking_override.as_deref(),
+            )?;
             println!("{}", t("configuration reloaded", "配置已重新加载"));
             continue;
         }
@@ -1503,9 +1558,37 @@ fn reload_repl_config(
     paths: &MiyuPaths,
     config: &mut AppConfig,
     client: &mut OpenAiCompatibleClient,
+    thinking_override: Option<&str>,
 ) -> Result<()> {
     *config = AppConfig::load(paths)?;
+    apply_thinking_override(config, thinking_override)?;
     *client = OpenAiCompatibleClient::from_config(config, paths)?;
+    Ok(())
+}
+
+/// 对当前激活 provider 应用命令行临时思考等级覆盖。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+/// - `level`: 命令行传入的思考等级
+///
+/// 返回:
+/// - 等级非法或 provider 不存在时返回错误
+fn apply_thinking_override(config: &mut AppConfig, level: Option<&str>) -> Result<()> {
+    let Some(level) = level.map(str::trim).filter(|value| !value.is_empty()) else {
+        return Ok(());
+    };
+    match level {
+        "auto" | "none" | "low" | "medium" | "high" | "xhigh" | "max" => {}
+        value => bail!("invalid thinking level: {value}"),
+    }
+    let active = config.active_provider.clone();
+    let provider = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == active)
+        .ok_or_else(|| anyhow::anyhow!("provider not found: {active}"))?;
+    provider.thinking_level = level.to_string();
     Ok(())
 }
 
@@ -1563,10 +1646,7 @@ fn print_repl_help() {
     );
     println!("  Enter       {}", t("send message", "发送消息"));
     println!("  Ctrl+J      {}", t("insert newline", "插入换行"));
-    println!(
-        "  Ctrl+L      {}",
-        t("clear screen", "清屏")
-    );
+    println!("  Ctrl+L      {}", t("clear screen", "清屏"));
     println!(
         "  Up/Down     {}",
         t("browse input history", "切换输入历史")
@@ -1887,8 +1967,12 @@ fn render_repl_input(
     let lines = repl_input_lines(input);
     let prompt_prefix = format!("{} > ", colored_mode_label(mode));
     let plain_prefix = format!("[{}] > ", mode.label());
-    let display_lines =
-        repl_visible_input_lines(&plain_prefix, &lines, REPL_MAX_VISIBLE_INPUT_ROWS, is_pasted);
+    let display_lines = repl_visible_input_lines(
+        &plain_prefix,
+        &lines,
+        REPL_MAX_VISIBLE_INPUT_ROWS,
+        is_pasted,
+    );
     let current_rows = repl_render_rows(&plain_prefix, &display_lines, !suggestions.is_empty());
     let rows_to_clear = (*rendered_rows).max(current_rows).max(1);
     ensure_repl_space(stdout, input_row, rows_to_clear)?;

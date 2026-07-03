@@ -1,6 +1,7 @@
 use crate::llm::{FunctionDefinition, ToolDefinition};
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
+use std::collections::BTreeSet;
 use std::collections::HashMap;
 use std::future::Future;
 use std::pin::Pin;
@@ -42,6 +43,13 @@ pub struct ToolSpec {
 pub enum ToolPermission {
     ReadOnly,
     Writes,
+}
+
+#[derive(Clone, Debug)]
+pub struct ToolInfo {
+    pub name: String,
+    pub description: String,
+    pub permission: ToolPermission,
 }
 
 impl ToolSpec {
@@ -122,12 +130,38 @@ impl ToolRegistry {
         self.tools.values().map(ToolSpec::definition).collect()
     }
 
+    pub fn definitions_for_names(&self, names: &BTreeSet<String>) -> Vec<ToolDefinition> {
+        names
+            .iter()
+            .filter_map(|name| self.tools.get(name))
+            .map(ToolSpec::definition)
+            .collect()
+    }
+
     pub fn definitions_except(&self, excluded: &[&str]) -> Vec<ToolDefinition> {
         self.tools
             .values()
             .filter(|tool| !excluded.iter().any(|name| *name == tool.name))
             .map(ToolSpec::definition)
             .collect()
+    }
+
+    pub fn contains(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
+    pub fn tool_infos(&self) -> Vec<ToolInfo> {
+        let mut infos = self
+            .tools
+            .values()
+            .map(|tool| ToolInfo {
+                name: tool.name.clone(),
+                description: tool.description.clone(),
+                permission: tool.permission,
+            })
+            .collect::<Vec<_>>();
+        infos.sort_by(|left, right| left.name.cmp(&right.name));
+        infos
     }
 
     pub fn permission(&self, name: &str) -> Result<ToolPermission> {

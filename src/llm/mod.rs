@@ -1,4 +1,5 @@
 mod openai_compatible;
+mod thinking;
 
 pub use openai_compatible::OpenAiCompatibleClient;
 

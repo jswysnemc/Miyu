@@ -10,39 +10,36 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 pub fn skills_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
-    let mut entries = Vec::new();
-    let mut seen = BTreeSet::new();
-    for skills_dir in skill_search_dirs(config, paths) {
-        if !skills_dir.exists() {
-            continue;
-        }
-        for entry in std::fs::read_dir(&skills_dir)? {
-            let entry = entry?;
-            if !entry.file_type()?.is_dir() || entry.path().join(".disabled").exists() {
-                continue;
-            }
-            let skill_file = entry.path().join("SKILL.md");
-            if !skill_file.is_file() {
-                continue;
-            }
-            let raw = std::fs::read_to_string(&skill_file)?;
-            let name = skill_name(&raw, &entry.file_name().to_string_lossy());
-            if !seen.insert(name.clone()) {
-                continue;
-            }
-            let description = frontmatter_value(&raw, "description").unwrap_or_default();
-            let body = strip_frontmatter(&raw);
-            entries.push(format!(
-                "- {name}: {description}\n  {}",
-                compact_skill_body(&body)
-            ));
-        }
-    }
+    let entries = skill_entries(config, paths)?
+        .into_iter()
+        .map(|entry| {
+            format!(
+                "- {}: {}\n  {}",
+                entry.name,
+                entry.description,
+                compact_skill_body(&entry.body)
+            )
+        })
+        .collect::<Vec<_>>();
     if entries.is_empty() {
         return Ok(String::new());
     }
     Ok(format!(
         "<available-skills>\n这些是已安装的 skills。遇到匹配任务时主动参考。当前不支持创建、保存或自动生成新的 skill；不要把 skill 内容保存到知识库。\n{}\n</available-skills>",
+        entries.join("\n")
+    ))
+}
+
+pub fn skills_catalog_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
+    let entries = skill_entries(config, paths)?
+        .into_iter()
+        .map(|entry| format!("- {} [{}]: {}", entry.name, entry.source, entry.description))
+        .collect::<Vec<_>>();
+    if entries.is_empty() {
+        return Ok(String::new());
+    }
+    Ok(format!(
+        "<available-skills>\n这些是已安装的 skills 目录。默认只提供名称和简介；需要使用某个 skill 的完整流程时，先调用 load_skill 读取完整 SKILL.md。\n{}\n</available-skills>",
         entries.join("\n")
     ))
 }
@@ -54,6 +51,7 @@ pub fn register_skills(
     allow_command_execution: bool,
 ) -> Result<()> {
     let mut seen = BTreeSet::new();
+    register_load_skill(registry, config.clone(), paths.clone());
     for skills_dir in skill_search_dirs(config, paths) {
         if !skills_dir.exists() {
             continue;
@@ -84,6 +82,38 @@ pub fn register_skills(
     Ok(())
 }
 
+/// 注册按名称加载完整 skill 文档的工具。
+///
+/// 参数:
+/// - `registry`: 工具注册表
+/// - `config`: 当前应用配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 无
+fn register_load_skill(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths) {
+    registry.register(ToolSpec::new(
+        "load_skill",
+        "Load the full SKILL.md content for an installed skill by name. Use this after reading the available-skills catalog and before following a skill-specific workflow.",
+        json!({
+            "type": "object",
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Skill name to load, for example yce or smart-search-cli."
+                }
+            },
+            "required": ["name"],
+            "additionalProperties": false
+        }),
+        move |args| {
+            let config = config.clone();
+            let paths = paths.clone();
+            async move { load_skill(args, &config, &paths) }
+        },
+    ));
+}
+
 fn skill_search_dirs(config: &AppConfig, paths: &MiyuPaths) -> Vec<PathBuf> {
     let mut dirs = vec![paths.skills_dir.clone()];
     let active = config.active_persona_skills_dir(paths);
@@ -93,8 +123,102 @@ fn skill_search_dirs(config: &AppConfig, paths: &MiyuPaths) -> Vec<PathBuf> {
     dirs
 }
 
+struct SkillEntry {
+    name: String,
+    description: String,
+    body: String,
+    raw: String,
+    source: &'static str,
+    dir: PathBuf,
+    file: PathBuf,
+}
+
+/// 读取所有启用的 skill 条目。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 按搜索目录优先级去重后的 skill 条目
+fn skill_entries(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillEntry>> {
+    let mut entries = Vec::new();
+    let mut seen = BTreeSet::new();
+    let search_dirs = skill_search_dirs(config, paths);
+    for skills_dir in search_dirs {
+        if !skills_dir.exists() {
+            continue;
+        }
+        let source = if skills_dir == paths.skills_dir {
+            "global"
+        } else {
+            "persona"
+        };
+        for entry in std::fs::read_dir(&skills_dir)? {
+            let entry = entry?;
+            if !entry.file_type()?.is_dir() || entry.path().join(".disabled").exists() {
+                continue;
+            }
+            let skill_file = entry.path().join("SKILL.md");
+            if !skill_file.is_file() {
+                continue;
+            }
+            let raw = std::fs::read_to_string(&skill_file)?;
+            let name = skill_name(&raw, &entry.file_name().to_string_lossy());
+            if !seen.insert(name.clone()) {
+                continue;
+            }
+            let description = frontmatter_value(&raw, "description").unwrap_or_default();
+            let body = strip_frontmatter(&raw);
+            entries.push(SkillEntry {
+                name,
+                description,
+                body,
+                raw,
+                source,
+                dir: entry.path(),
+                file: skill_file,
+            });
+        }
+    }
+    Ok(entries)
+}
+
 fn skill_name(raw: &str, fallback: &str) -> String {
     frontmatter_value(raw, "name").unwrap_or_else(|| fallback.to_string())
+}
+
+/// 按名称读取完整 skill 文档。
+///
+/// 参数:
+/// - `args`: 工具调用参数
+/// - `config`: 当前应用配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 完整 `SKILL.md` 文本
+fn load_skill(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
+    let name = args
+        .get("name")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("load_skill requires a non-empty name"))?;
+    for entry in skill_entries(config, paths)? {
+        if entry.name == name {
+            return Ok(format!(
+                "<loaded-skill name=\"{}\" source=\"{}\" dir=\"{}\" file=\"{}\">\n<skill-location>\nSkill directory: {}\nSkill file: {}\nResolve relative paths in this skill against the skill directory.\n</skill-location>\n{}\n</loaded-skill>",
+                entry.name,
+                entry.source,
+                entry.dir.display(),
+                entry.file.display(),
+                entry.dir.display(),
+                entry.file.display(),
+                entry.raw.trim()
+            ));
+        }
+    }
+    bail!("skill not found: {name}");
 }
 
 fn register_web_search(
@@ -301,6 +425,49 @@ mod tests {
         let prompt = skills_prompt(&config, &paths).unwrap();
         assert!(prompt.contains("gpu-passthrough"));
         assert!(prompt.contains("GPU switching"));
+    }
+
+    #[test]
+    fn skills_catalog_omits_full_body() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let skill_dir = paths.skills_dir.join("gpu-passthrough");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: gpu-passthrough\ndescription: GPU switching\n---\n\nUse `gpustoggle --status`.",
+        )
+        .unwrap();
+        let config = AppConfig::default();
+        let prompt = skills_catalog_prompt(&config, &paths).unwrap();
+
+        assert!(prompt.contains("gpu-passthrough"));
+        assert!(prompt.contains("GPU switching"));
+        assert!(!prompt.contains("gpustoggle --status"));
+    }
+
+    #[test]
+    fn load_skill_returns_full_skill_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let skill_dir = paths.skills_dir.join("gpu-passthrough");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: gpu-passthrough\ndescription: GPU switching\n---\n\nUse `gpustoggle --status`.",
+        )
+        .unwrap();
+        let config = AppConfig::default();
+        let output = load_skill(json!({"name":"gpu-passthrough"}), &config, &paths).unwrap();
+
+        assert!(output.contains("<loaded-skill"));
+        assert!(output.contains("Skill directory:"));
+        assert!(output.contains("Skill file:"));
+        assert!(
+            output.contains("Resolve relative paths in this skill against the skill directory.")
+        );
+        assert!(output.contains(&skill_dir.display().to_string()));
+        assert!(output.contains("gpustoggle --status"));
     }
 
     #[test]

@@ -6,6 +6,7 @@ use crossterm::queue;
 use crossterm::style::Print;
 use crossterm::terminal::{self, Clear, ClearType};
 use serde::Deserialize;
+use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
@@ -587,6 +588,19 @@ fn edit_provider_form(
         Field::new("模型上下文字符数", current_context_chars.to_string()),
         Field::new("超时秒数", provider.timeout_seconds.to_string()),
         Field::new("Temperature", provider.temperature.to_string()),
+        Field::new("思考等级", provider.thinking_level.clone())
+            .choices(&["auto", "none", "low", "medium", "high", "xhigh", "max"]),
+        Field::new("思考格式", provider.thinking_format.clone()).choices(&[
+            "auto",
+            "string",
+            "object",
+            "deepseek-thinking",
+            "openai-chat-reasoning-effort",
+            "reasoning",
+            "anthropic-thinking",
+            "disabled",
+        ]),
+        Field::textarea("自定义 Body JSON", provider.extra_body.clone()),
     ];
     if !run_form(stdout, " EDIT PROVIDER ", &mut fields)? {
         return Ok(None);
@@ -605,6 +619,7 @@ fn edit_provider_form(
     if !default_model.trim().is_empty() && !models.iter().any(|item| item == &default_model) {
         models.push(default_model.clone());
     }
+    let extra_body = normalize_extra_body(&fields[11].value)?;
     Ok(Some(ProviderConfig {
         id: fields[0].value.trim().to_string(),
         display_name: fields[1].value.trim().to_string(),
@@ -616,7 +631,29 @@ fn edit_provider_form(
         default_model,
         timeout_seconds: fields[7].value.trim().parse().unwrap_or(60),
         temperature: fields[8].value.trim().parse().unwrap_or(0.7),
+        thinking_level: fields[9].value.trim().to_string(),
+        thinking_format: fields[10].value.trim().to_string(),
+        extra_body,
     }))
+}
+
+/// 规范化并校验自定义 Body JSON。
+///
+/// 参数:
+/// - `value`: 表单中输入的 JSON 文本
+///
+/// 返回:
+/// - 为空时返回空字符串，否则返回格式化后的 JSON 对象字符串
+fn normalize_extra_body(value: &str) -> Result<String> {
+    let value = value.trim();
+    if value.is_empty() {
+        return Ok(String::new());
+    }
+    let parsed = serde_json::from_str::<Value>(value)?;
+    if !parsed.is_object() {
+        bail!("自定义 Body JSON 必须是 JSON 对象");
+    }
+    Ok(serde_json::to_string_pretty(&parsed)?)
 }
 
 fn edit_model_form(

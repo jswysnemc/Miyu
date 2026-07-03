@@ -4,6 +4,7 @@ use super::{
 };
 use crate::config::{AppConfig, ProviderConfig};
 use crate::i18n::text as t;
+use crate::llm::thinking::{apply_provider_body_options, ThinkingProtocol};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use futures_util::StreamExt;
@@ -103,6 +104,11 @@ impl OpenAiCompatibleClient {
             tools: (!tools.is_empty()).then_some(tools),
             chat_template_kwargs: taotoken_glm_chat_template_kwargs(&self.provider),
         };
+        let request = apply_provider_body_options(
+            serde_json::to_value(request)?,
+            &self.provider,
+            ThinkingProtocol::OpenAiChat,
+        )?;
         let url = format!(
             "{}/chat/completions",
             self.provider.base_url.trim_end_matches('/')
@@ -191,6 +197,11 @@ impl OpenAiCompatibleClient {
             max_tokens: 4096,
             temperature: Some(self.provider.temperature),
         };
+        let request = apply_provider_body_options(
+            serde_json::to_value(request)?,
+            &self.provider,
+            ThinkingProtocol::Anthropic,
+        )?;
         let url = format!("{}/messages", self.provider.base_url.trim_end_matches('/'));
         let response = self
             .client
@@ -260,6 +271,11 @@ impl OpenAiCompatibleClient {
             }),
             temperature: Some(self.provider.temperature),
         };
+        let request = apply_provider_body_options(
+            serde_json::to_value(request)?,
+            &self.provider,
+            ThinkingProtocol::OpenAiResponses,
+        )?;
         let url = format!("{}/responses", self.provider.base_url.trim_end_matches('/'));
         let response = self
             .client
@@ -2237,6 +2253,9 @@ mod tests {
             default_model: String::new(),
             timeout_seconds: 60,
             temperature: 0.7,
+            thinking_level: "auto".to_string(),
+            thinking_format: "auto".to_string(),
+            extra_body: String::new(),
         }
     }
 }

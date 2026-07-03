@@ -1,7 +1,10 @@
 use crate::i18n::text as t;
+use crate::render::code_block::{highlight_code_line, render_code_footer, render_code_header};
+use crate::render::style::TOOL_BULLET;
 use anyhow::Result;
 use serde_json::Value;
 use std::io::{self, Write};
+use std::path::Path;
 
 /// 写入普通工具参数或输出块。
 ///
@@ -18,7 +21,7 @@ pub(crate) fn write_tool_payload(
     payload: &str,
 ) -> Result<()> {
     let formatted = format_tool_payload(payload);
-    writeln!(stdout, "\x1b[2m{label}:\x1b[0m")?;
+    writeln!(stdout, "\x1b[2m{TOOL_BULLET} {label}:\x1b[0m")?;
     for line in formatted.lines() {
         writeln!(stdout, "\x1b[2m  {line}\x1b[0m")?;
     }
@@ -34,6 +37,34 @@ pub(crate) fn write_tool_payload(
 /// 返回:
 /// - 写入是否成功
 pub(crate) fn write_command_block(stdout: &mut io::Stdout, arguments: &str) -> Result<()> {
+    write!(stdout, "{}", render_command_block(arguments))?;
+    Ok(())
+}
+
+/// 写入编辑文件 diff 视图。
+///
+/// 参数:
+/// - `stdout`: 标准输出句柄
+/// - `arguments`: `edit_file` 工具参数
+///
+/// 返回:
+/// - 是否成功渲染 diff 视图
+pub(crate) fn write_edit_file_diff_block(stdout: &mut io::Stdout, arguments: &str) -> Result<bool> {
+    let Some(diff) = render_edit_file_diff(arguments) else {
+        return Ok(false);
+    };
+    write!(stdout, "{diff}")?;
+    Ok(true)
+}
+
+/// 渲染命令调用块。
+///
+/// 参数:
+/// - `arguments`: 工具调用参数
+///
+/// 返回:
+/// - 代码块风格的命令文本
+fn render_command_block(arguments: &str) -> String {
     let parsed = serde_json::from_str::<Value>(arguments).ok();
     let command = parsed
         .as_ref()
@@ -41,10 +72,117 @@ pub(crate) fn write_command_block(stdout: &mut io::Stdout, arguments: &str) -> R
         .and_then(Value::as_str)
         .unwrap_or(arguments)
         .trim();
-    writeln!(stdout, "\x1b[2m,-- {}\x1b[0m", t("command", "命令"))?;
-    writeln!(stdout, "\x1b[33m$ {command}\x1b[0m")?;
-    writeln!(stdout, "\x1b[2m`--\x1b[0m")?;
-    Ok(())
+    let lines = shell_command_lines(command);
+    let mut output = render_code_header(&format!("{TOOL_BULLET} command"));
+    for line in &lines {
+        output.push_str(&highlight_code_line("sh", line));
+        output.push('\n');
+    }
+    output.push_str(&render_code_footer(&lines));
+    output
+}
+
+/// 渲染编辑文件 diff 视图。
+///
+/// 参数:
+/// - `arguments`: `edit_file` 工具参数
+///
+/// 返回:
+/// - 代码块风格 diff 文本
+fn render_edit_file_diff(arguments: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(arguments).ok()?;
+    let path = value.get("path").and_then(Value::as_str)?;
+    let start_line = value.get("start_line").and_then(Value::as_u64)? as usize;
+    let end_line = value.get("end_line").and_then(Value::as_u64)? as usize;
+    let replacement = value.get("replacement").and_then(Value::as_str)?;
+    if start_line == 0 || end_line == 0 || start_line > end_line {
+        return None;
+    }
+    let original = std::fs::read_to_string(Path::new(path)).ok()?;
+    let old_lines = original.lines().map(str::to_string).collect::<Vec<_>>();
+    if start_line > old_lines.len() || end_line > old_lines.len() {
+        return None;
+    }
+    let replacement = replacement.replace("\r\n", "\n").replace('\r', "\n");
+    let new_lines = if replacement.is_empty() {
+        Vec::new()
+    } else {
+        replacement.lines().map(str::to_string).collect::<Vec<_>>()
+    };
+    let removed = old_lines[start_line - 1..end_line].to_vec();
+    Some(render_unified_diff(path, start_line, &removed, &new_lines))
+}
+
+/// 渲染 unified diff 文本。
+///
+/// 参数:
+/// - `path`: 文件路径
+/// - `start_line`: 变更起始行号
+/// - `removed`: 被替换的旧行
+/// - `added`: 新行
+///
+/// 返回:
+/// - 代码块风格 diff 文本
+fn render_unified_diff(
+    path: &str,
+    start_line: usize,
+    removed: &[String],
+    added: &[String],
+) -> String {
+    let mut lines = Vec::new();
+    lines.push(format!("--- {path}"));
+    lines.push(format!("+++ {path}"));
+    lines.push(format!(
+        "@@ -{},{} +{},{} @@",
+        start_line,
+        removed.len(),
+        start_line,
+        added.len()
+    ));
+    lines.extend(removed.iter().map(|line| format!("-{line}")));
+    lines.extend(added.iter().map(|line| format!("+{line}")));
+
+    let mut output = render_code_header(&format!("{TOOL_BULLET} diff"));
+    for line in &lines {
+        output.push_str(&style_diff_line(line));
+        output.push('\n');
+    }
+    output.push_str(&render_code_footer(&lines));
+    output
+}
+
+/// 给 diff 单行添加颜色。
+///
+/// 参数:
+/// - `line`: diff 行
+///
+/// 返回:
+/// - 带 ANSI 样式的 diff 行
+fn style_diff_line(line: &str) -> String {
+    if line.starts_with('+') && !line.starts_with("+++") {
+        format!("\x1b[32m{line}\x1b[0m")
+    } else if line.starts_with('-') && !line.starts_with("---") {
+        format!("\x1b[31m{line}\x1b[0m")
+    } else if line.starts_with("@@") {
+        format!("\x1b[36m{line}\x1b[0m")
+    } else {
+        format!("\x1b[2m{line}\x1b[0m")
+    }
+}
+
+/// 生成命令代码块行。
+///
+/// 参数:
+/// - `command`: 原始命令文本
+///
+/// 返回:
+/// - 命令行列表
+fn shell_command_lines(command: &str) -> Vec<String> {
+    let mut lines = command.lines().map(str::to_string).collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 /// 按命令执行结果写入 stdout 和 stderr 块。
@@ -60,20 +198,20 @@ pub(crate) fn write_command_result_blocks(stdout: &mut io::Stdout, output: &str)
         return write_tool_payload(stdout, t("output", "输出"), output);
     };
     if !result.stdout.trim().is_empty() {
-        write_fenced_block(stdout, t("output", "输出"), &result.stdout)?;
+        write_output_block(stdout, t("output", "输出"), &result.stdout)?;
     }
     if !result.stderr.trim().is_empty() {
         let label = result
             .exit_code
             .map(|code| format!("err exit {code}"))
             .unwrap_or_else(|| "err".to_string());
-        write_fenced_block(stdout, &label, &result.stderr)?;
+        write_output_block(stdout, &label, &result.stderr)?;
     } else if !result.success {
         let label = result
             .exit_code
             .map(|code| format!("err exit {code}"))
             .unwrap_or_else(|| "err".to_string());
-        write_fenced_block(
+        write_output_block(
             stdout,
             &label,
             t(
@@ -95,7 +233,7 @@ pub(crate) fn write_command_result_blocks(stdout: &mut io::Stdout, output: &str)
 /// - 写入是否成功
 pub(crate) fn write_command_error_block(stdout: &mut io::Stdout, output: &str) -> Result<()> {
     let Some(result) = parse_command_result(output) else {
-        return write_fenced_block(stdout, "err", output);
+        return write_output_block(stdout, "err", output);
     };
     if result.success {
         return Ok(());
@@ -109,10 +247,10 @@ pub(crate) fn write_command_error_block(stdout: &mut io::Stdout, output: &str) -
     } else {
         result.stderr.as_str()
     };
-    write_fenced_block(stdout, &label, message)
+    write_output_block(stdout, &label, message)
 }
 
-/// 写入带边界的文本块。
+/// 写入命令输出文本块。
 ///
 /// 参数:
 /// - `stdout`: 标准输出句柄
@@ -121,13 +259,44 @@ pub(crate) fn write_command_error_block(stdout: &mut io::Stdout, output: &str) -
 ///
 /// 返回:
 /// - 写入是否成功
-fn write_fenced_block(stdout: &mut io::Stdout, label: &str, text: &str) -> Result<()> {
-    writeln!(stdout, "\x1b[2m,-- {label}\x1b[0m")?;
-    for line in truncate_chars(text.trim(), 2400).lines() {
-        writeln!(stdout, "\x1b[33m{line}\x1b[0m")?;
-    }
-    writeln!(stdout, "\x1b[2m`--\x1b[0m")?;
+fn write_output_block(stdout: &mut io::Stdout, label: &str, text: &str) -> Result<()> {
+    write!(stdout, "{}", render_output_block(label, text))?;
     Ok(())
+}
+
+/// 渲染命令输出文本块。
+///
+/// 参数:
+/// - `label`: 文本块标签
+/// - `text`: 文本内容
+///
+/// 返回:
+/// - 代码块风格的输出文本
+fn render_output_block(label: &str, text: &str) -> String {
+    let content = truncate_chars(text.trim(), 2400);
+    let lines = output_block_lines(&content);
+    let mut output = render_code_header(&format!("{TOOL_BULLET} {label}"));
+    for line in &lines {
+        output.push_str(line);
+        output.push('\n');
+    }
+    output.push_str(&render_code_footer(&lines));
+    output
+}
+
+/// 生成输出代码块行。
+///
+/// 参数:
+/// - `content`: 已截断的输出文本
+///
+/// 返回:
+/// - 输出行列表
+fn output_block_lines(content: &str) -> Vec<String> {
+    let mut lines = content.lines().map(str::to_string).collect::<Vec<_>>();
+    if lines.is_empty() {
+        lines.push(String::new());
+    }
+    lines
 }
 
 struct CommandResult {
@@ -203,6 +372,7 @@ fn truncate_chars(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
 
     #[test]
     fn parses_command_result_json() {
@@ -214,5 +384,98 @@ mod tests {
         assert_eq!(result.exit_code, Some(1));
         assert_eq!(result.stdout, "unused");
         assert_eq!(result.stderr, "not found");
+    }
+
+    #[test]
+    fn renders_multiline_command_as_code_block() {
+        let output = render_command_block(
+            r#"{"command":"python3 - <<'PY'\nfrom pathlib import Path\nprint(Path('x').resolve())\nPY"}"#,
+        );
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • command "));
+        assert!(plain.contains("python3 - <<'PY'"));
+        assert!(!plain.contains("$ python3"));
+        assert!(plain.contains("from pathlib import Path"));
+        assert!(plain.contains("print(Path('x').resolve())"));
+        assert!(plain.contains("\nPY\n"));
+        assert!(!plain.contains(",-- command"));
+        assert!(!plain.contains("`--"));
+    }
+
+    #[test]
+    fn renders_edit_file_arguments_as_diff_block() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), "one\nold line\nthree\n").unwrap();
+        let args = json!({
+            "path": temp.path().to_string_lossy(),
+            "start_line": 2,
+            "end_line": 2,
+            "replacement": "new line"
+        })
+        .to_string();
+
+        let output = render_edit_file_diff(&args).unwrap();
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • diff "));
+        assert!(plain.contains("--- "));
+        assert!(plain.contains("@@ -2,1 +2,1 @@"));
+        assert!(output.contains("\x1b[31m-old line\x1b[0m"));
+        assert!(output.contains("\x1b[32m+new line\x1b[0m"));
+    }
+
+    #[test]
+    fn renders_command_output_as_code_block() {
+        let output = render_output_block("output", "sent to snemc@qq.com\n");
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • output "));
+        assert!(plain.contains("sent to snemc@qq.com"));
+        assert!(!plain.contains(",-- output"));
+        assert!(!plain.contains("`--"));
+    }
+
+    #[test]
+    fn renders_command_error_output_as_code_block() {
+        let output = render_output_block("err exit 1", "not found\n");
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • err exit 1 "));
+        assert!(plain.contains("not found"));
+        assert!(!plain.contains(",-- err"));
+        assert!(!plain.contains("`--"));
+    }
+
+    /// 去除 ANSI 转义序列，方便断言可见文本。
+    ///
+    /// 参数:
+    /// - `text`: 原始终端文本
+    ///
+    /// 返回:
+    /// - 去除样式后的文本
+    fn strip_ansi_for_test(text: &str) -> String {
+        let mut output = String::new();
+        let mut escape = false;
+        let mut csi = false;
+        for ch in text.chars() {
+            if ch == '\x1b' {
+                escape = true;
+                csi = false;
+            } else if escape {
+                if csi {
+                    if (ch as u32) >= 0x40 && (ch as u32) <= 0x7e {
+                        escape = false;
+                    }
+                } else if ch == '[' {
+                    csi = true;
+                } else if ch == '\\' || ch == 'm' {
+                    escape = false;
+                }
+            } else {
+                output.push(ch);
+            }
+        }
+        output
     }
 }

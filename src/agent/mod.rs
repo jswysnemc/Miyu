@@ -1,4 +1,5 @@
 mod conversation;
+mod tool_visibility;
 
 use crate::config::AppConfig;
 use crate::llm::{
@@ -12,6 +13,7 @@ use anyhow::{bail, Result};
 use chrono::Local;
 use std::io::IsTerminal;
 use tokio::sync::mpsc;
+use tool_visibility::ToolVisibility;
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub enum AgentMode {
@@ -64,6 +66,7 @@ pub struct Agent {
     tools_enabled: bool,
     max_tool_rounds: usize,
     tools: ToolRegistry,
+    tool_visibility: ToolVisibility,
     memory: MemoryStore,
     mode: AgentMode,
     config: AppConfig,
@@ -76,12 +79,16 @@ impl Agent {
         paths: &MiyuPaths,
         state: StateStore,
         client: OpenAiCompatibleClient,
-        tools: ToolRegistry,
+        mut tools: ToolRegistry,
         mode: AgentMode,
     ) -> Result<Self> {
         let mut base_system_prompt = config.system_prompt(paths)?;
         if config.skills.enabled {
-            let prompt = tools::skills_prompt(&config, paths)?;
+            let prompt = if config.tools.progressive_loading_enabled {
+                tools::skills_catalog_prompt(&config, paths)?
+            } else {
+                tools::skills_prompt(&config, paths)?
+            };
             if !prompt.trim().is_empty() {
                 base_system_prompt.push_str("\n\n");
                 base_system_prompt.push_str(&prompt);
@@ -94,6 +101,10 @@ impl Agent {
         let context_chars = config.active_context_chars()?;
         let tools_enabled = config.tools.enabled;
         let max_tool_rounds = config.tools.max_rounds;
+        if tools_enabled && config.tools.progressive_loading_enabled {
+            tools::register_progressive_loader(&mut tools);
+        }
+        let tool_visibility = ToolVisibility::new(config.tools.progressive_loading_enabled);
         let memory = MemoryStore::new(&config, paths);
         memory.init()?;
         Ok(Self {
@@ -106,6 +117,7 @@ impl Agent {
             tools_enabled,
             max_tool_rounds,
             tools,
+            tool_visibility,
             memory,
             mode,
             config,
@@ -202,7 +214,7 @@ impl Agent {
     }
 
     async fn chat_with_tools<F>(
-        &self,
+        &mut self,
         messages: &mut Vec<ChatMessage>,
         used_tools: &mut Vec<String>,
         persisted_tool_reports: &mut Vec<(String, String)>,
@@ -211,11 +223,6 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
-        let definitions = if self.tools_enabled {
-            self.tools.definitions()
-        } else {
-            Vec::new()
-        };
         let mut tool_round = 0usize;
         loop {
             if self.max_tool_rounds > 0 && tool_round >= self.max_tool_rounds {
@@ -235,6 +242,11 @@ impl Agent {
                 });
             }
             tool_round += 1;
+            let definitions = if self.tools_enabled {
+                self.tool_visibility.definitions(&self.tools)
+            } else {
+                Vec::new()
+            };
             let result = self
                 .client
                 .chat_stream(messages.clone(), definitions.clone(), |chunk| {
@@ -261,6 +273,45 @@ impl Agent {
                         "Plan mode blocked non-read-only tool: {}",
                         call.function.name
                     );
+                }
+                if self.tool_visibility.is_loader_call(&call.function.name) {
+                    let output = match self
+                        .tool_visibility
+                        .load_from_arguments(&self.tools, &call.function.arguments)
+                    {
+                        Ok(output) => {
+                            on_event(AgentEvent::ToolResult {
+                                name: call.function.name.clone(),
+                                ok: true,
+                                output: output.clone(),
+                            })?;
+                            output
+                        }
+                        Err(err) => {
+                            let output = format!("tool error: {err}");
+                            on_event(AgentEvent::ToolResult {
+                                name: call.function.name.clone(),
+                                ok: false,
+                                output: output.clone(),
+                            })?;
+                            output
+                        }
+                    };
+                    messages.push(ChatMessage::tool(call.id, output));
+                    continue;
+                }
+                if !self.tool_visibility.is_visible(&call.function.name) {
+                    let output = format!(
+                        "tool error: tool {} is not loaded; call load_tools with tool_name or group_name first",
+                        call.function.name
+                    );
+                    on_event(AgentEvent::ToolResult {
+                        name: call.function.name.clone(),
+                        ok: false,
+                        output: output.clone(),
+                    })?;
+                    messages.push(ChatMessage::tool(call.id, output));
+                    continue;
                 }
                 if call.function.name == "install_aur_package"
                     && used_tools.iter().any(|name| name == "review_aur_package")

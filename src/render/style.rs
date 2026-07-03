@@ -19,3 +19,4 @@ pub(crate) const CODE_NUMBER_STYLE: &str = "\x1b[38;2;246;193;119m";
 pub(crate) const CODE_COMMENT_STYLE: &str = "\x1b[2m\x1b[38;2;110;106;134m";
 pub(crate) const TABLE_BORDER_STYLE: &str = "\x1b[2m";
 pub(crate) const ASSET_ERROR_STYLE: &str = "\x1b[31m";
+pub(crate) const TOOL_BULLET: &str = "•";
