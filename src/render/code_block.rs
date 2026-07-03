@@ -13,6 +13,26 @@ pub(crate) fn frame_min_width() -> usize {
         .clamp(20, 60)
 }
 
+/// 计算代码块边框的最大宽度（基于终端宽度）。
+pub(crate) fn frame_max_width() -> usize {
+    terminal::size()
+        .map(|(w, _)| usize::from(w).max(1))
+        .unwrap_or(120)
+}
+
+/// 按内容宽度、最小宽度和最大宽度计算代码块边框宽度。
+///
+/// 参数:
+/// - `content_width`: 代码块内容的最大可见宽度
+/// - `min_width`: 代码块边框最小宽度
+/// - `max_width`: 代码块边框最大宽度
+///
+/// 返回:
+/// - 不超过最大宽度的代码块边框宽度
+fn frame_width_for_content(content_width: usize, min_width: usize, max_width: usize) -> usize {
+    content_width.max(min_width).min(max_width.max(1))
+}
+
 /// 渲染代码块头部（开标签行）。
 ///
 /// 流式渲染时在遇到开标签 ``` 即输出，宽度基于终端宽度，
@@ -24,14 +44,17 @@ pub(crate) fn frame_min_width() -> usize {
 /// 返回:
 /// - 头部文本（含结尾换行）
 pub(crate) fn render_code_header(lang: &str) -> String {
-    let width = frame_min_width();
+    let width = frame_width_for_content(0, frame_min_width(), frame_max_width());
     if lang.is_empty() {
         format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}\n", "─".repeat(width))
     } else {
         let prefix = format!("── {lang} ");
         let prefix_width = visible_width(&prefix);
         let padding = width.saturating_sub(prefix_width);
-        format!("{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}\n", "─".repeat(padding))
+        format!(
+            "{CODE_BLOCK_FRAME_STYLE}{prefix}{}{RESET}\n",
+            "─".repeat(padding)
+        )
     }
 }
 
@@ -52,7 +75,7 @@ pub(crate) fn render_code_footer(lines: &[String]) -> String {
         .max()
         .unwrap_or(0);
 
-    let width = content_width.max(frame_min_width());
+    let width = frame_width_for_content(content_width, frame_min_width(), frame_max_width());
     format!("{CODE_BLOCK_FRAME_STYLE}{}{RESET}\n", "─".repeat(width))
 }
 
@@ -235,4 +258,19 @@ fn next_non_space_is_open_paren(chars: &[char], mut index: usize) -> bool {
         index += 1;
     }
     chars.get(index) == Some(&'(')
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn frame_width_does_not_exceed_terminal_limit() {
+        assert_eq!(frame_width_for_content(200, 20, 80), 80);
+    }
+
+    #[test]
+    fn frame_width_keeps_minimum_for_short_content() {
+        assert_eq!(frame_width_for_content(8, 20, 80), 20);
+    }
 }
