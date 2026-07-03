@@ -32,6 +32,7 @@ use background_commands::{run_background_commands, BackgroundCommandsArgs};
 use render_options::stream_render_options;
 
 const REPL_MAX_VISIBLE_INPUT_ROWS: u16 = 12;
+const THINKING_LEVELS: &[&str] = &["auto", "none", "low", "medium", "high", "xhigh", "max"];
 
 #[derive(Debug, Parser)]
 #[command(name = "miyu", version, about = "Miyu CLI AI Agent")]
@@ -232,6 +233,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         ),
         ("skills", "Manage assistant skills", "管理助手 skills"),
         ("commands", "Manage background commands", "管理后台命令"),
+        ("set", "Set active configuration values", "设置当前配置项"),
         (
             "reset",
             "Clear current conversation history",
@@ -249,6 +251,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("memory", localize_memory_command)
         .mut_subcommand("skills", localize_skills_command)
         .mut_subcommand("commands", localize_background_commands_command)
+        .mut_subcommand("set", localize_set_command)
         .mut_subcommand("config", localize_config_command)
         .mut_subcommand("reset", localize_reset_command);
     command
@@ -296,6 +299,22 @@ fn localize_background_commands_command(command: clap::Command) -> clap::Command
                 "清理已结束后台命令",
             ))
         })
+}
+
+fn localize_set_command(command: clap::Command) -> clap::Command {
+    command.mut_subcommand("thinking", |subcommand| {
+        subcommand
+            .about(t(
+                "Set active provider thinking level",
+                "设置当前 provider 的思考等级",
+            ))
+            .mut_arg("level", |arg| {
+                arg.help(t(
+                    "Thinking level: auto, none, low, medium, high, xhigh, or max. Omit to select interactively.",
+                    "思考等级：auto、none、low、medium、high、xhigh 或 max。不传则交互选择。",
+                ))
+            })
+    })
 }
 
 fn localize_providers_command(command: clap::Command) -> clap::Command {
@@ -473,6 +492,7 @@ pub enum Command {
     Memory(MemoryArgs),
     Skills(SkillsArgs),
     Commands(BackgroundCommandsArgs),
+    Set(SetArgs),
     Reset(ResetArgs),
 }
 
@@ -491,6 +511,22 @@ pub struct MessageArgs {
 #[derive(Debug, Args)]
 pub struct ResetArgs {
     pub scope: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct SetArgs {
+    #[command(subcommand)]
+    pub command: SetCommand,
+}
+
+#[derive(Debug, Subcommand)]
+pub enum SetCommand {
+    Thinking(SetThinkingArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct SetThinkingArgs {
+    pub level: Option<String>,
 }
 
 #[derive(Debug, Args)]
@@ -733,6 +769,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Memory(args)) => run_memory(&paths, args),
         Some(Command::Skills(args)) => run_skills(&paths, args),
         Some(Command::Commands(args)) => run_background_commands(&paths, args).await,
+        Some(Command::Set(args)) => run_set(&paths, args),
         Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
             let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
@@ -1095,6 +1132,131 @@ fn run_providers(paths: &MiyuPaths, args: ProvidersArgs) -> Result<()> {
         println!("{marker} {}. {}", index + 1, choice.label());
     }
     Ok(())
+}
+
+/// 执行配置设置子命令。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `args`: set 子命令参数
+///
+/// 返回:
+/// - 设置是否成功
+fn run_set(paths: &MiyuPaths, args: SetArgs) -> Result<()> {
+    match args.command {
+        SetCommand::Thinking(args) => run_set_thinking(paths, args),
+    }
+}
+
+/// 设置当前 provider 的思考等级。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `args`: thinking 参数
+///
+/// 返回:
+/// - 设置是否成功
+fn run_set_thinking(paths: &MiyuPaths, args: SetThinkingArgs) -> Result<()> {
+    AppConfig::init_files(paths)?;
+    let mut config = AppConfig::load(paths)?;
+    let active = config.active_provider.clone();
+    let provider = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == active)
+        .ok_or_else(|| anyhow::anyhow!("provider not found: {active}"))?;
+    let current_level = display_thinking_level(&provider.thinking_level);
+    let provider_name = provider.display_name.clone();
+    let level = resolve_thinking_level_arg(args.level.as_deref(), &current_level, &provider_name)?;
+    provider.thinking_level = level.to_string();
+    config.save(paths)?;
+    println!(
+        "{}: {} / {}",
+        t("thinking level", "思考等级"),
+        provider_name,
+        level
+    );
+    Ok(())
+}
+
+/// 解析或交互选择思考等级参数。
+///
+/// 参数:
+/// - `level`: 命令行传入的思考等级
+///
+/// 返回:
+/// - 有效思考等级
+fn resolve_thinking_level_arg(
+    level: Option<&str>,
+    current_level: &str,
+    provider_name: &str,
+) -> Result<&'static str> {
+    if let Some(level) = level.map(str::trim).filter(|value| !value.is_empty()) {
+        return normalize_thinking_level(level);
+    }
+    if !(io::stdout().is_terminal() && io::stdin().is_terminal()) {
+        bail!(
+            "{}",
+            t(
+                "thinking level is required in non-interactive mode",
+                "非交互模式必须提供思考等级",
+            )
+        );
+    }
+    println!(
+        "{}: {} / {}",
+        t("current thinking level", "当前思考等级"),
+        provider_name,
+        current_level
+    );
+    let labels = THINKING_LEVELS
+        .iter()
+        .map(|level| {
+            if *level == current_level {
+                format!("{level} ({})", t("current", "当前"))
+            } else {
+                level.to_string()
+            }
+        })
+        .collect::<Vec<_>>();
+    let Some(index) = inline_fuzzy_select(&labels)? else {
+        bail!(
+            "{}",
+            t("thinking level selection cancelled", "已取消思考等级选择")
+        );
+    };
+    Ok(THINKING_LEVELS[index])
+}
+
+/// 校验并归一化思考等级。
+///
+/// 参数:
+/// - `level`: 原始思考等级
+///
+/// 返回:
+/// - 归一化后的思考等级
+fn normalize_thinking_level(level: &str) -> Result<&'static str> {
+    THINKING_LEVELS
+        .iter()
+        .copied()
+        .find(|item| *item == level)
+        .ok_or_else(|| anyhow::anyhow!("invalid thinking level: {level}"))
+}
+
+/// 返回用于展示的思考等级。
+///
+/// 参数:
+/// - `level`: 配置中的原始思考等级
+///
+/// 返回:
+/// - 非空思考等级，空值显示为 auto
+fn display_thinking_level(level: &str) -> String {
+    let level = level.trim();
+    if level.is_empty() {
+        "auto".to_string()
+    } else {
+        level.to_string()
+    }
 }
 
 fn inline_fuzzy_select(items: &[String]) -> Result<Option<usize>> {
@@ -1619,10 +1781,7 @@ fn apply_thinking_override(config: &mut AppConfig, level: Option<&str>) -> Resul
     let Some(level) = level.map(str::trim).filter(|value| !value.is_empty()) else {
         return Ok(());
     };
-    match level {
-        "auto" | "none" | "low" | "medium" | "high" | "xhigh" | "max" => {}
-        value => bail!("invalid thinking level: {value}"),
-    }
+    let level = normalize_thinking_level(level)?;
     let active = config.active_provider.clone();
     let provider = config
         .providers

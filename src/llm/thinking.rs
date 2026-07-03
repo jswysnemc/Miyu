@@ -143,6 +143,7 @@ fn reasoning_effort(level: &str) -> &'static str {
         "none" => "minimal",
         "low" => "low",
         "medium" => "medium",
+        "xhigh" | "max" => "xhigh",
         _ => "high",
     }
 }
@@ -321,5 +322,28 @@ mod tests {
                 .unwrap();
 
         assert_eq!(body["reasoning"], json!({"effort":"low"}));
+    }
+
+    #[test]
+    fn openai_reasoning_preserves_xhigh_effort() {
+        let mut provider = ProviderConfig::default_openai();
+        provider.thinking_level = "xhigh".to_string();
+        provider.thinking_format = "reasoning".to_string();
+        let body =
+            apply_provider_body_options(json!({}), &provider, ThinkingProtocol::OpenAiResponses)
+                .unwrap();
+
+        assert_eq!(body["reasoning"], json!({"effort":"xhigh"}));
+    }
+
+    #[test]
+    fn openai_reasoning_maps_max_to_xhigh_effort() {
+        let mut provider = ProviderConfig::default_openai();
+        provider.thinking_level = "max".to_string();
+        provider.thinking_format = "openai-chat-reasoning-effort".to_string();
+        let body = apply_provider_body_options(json!({}), &provider, ThinkingProtocol::OpenAiChat)
+            .unwrap();
+
+        assert_eq!(body["reasoning_effort"], json!("xhigh"));
     }
 }
