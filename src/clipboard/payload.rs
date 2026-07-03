@@ -1,7 +1,11 @@
 #[derive(Debug, Clone)]
 pub enum ClipboardPayload {
     Text(String),
-    ImageDataUrl(String),
+    ImageDataUrl {
+        data_url: String,
+        width: usize,
+        height: usize,
+    },
 }
 
 #[derive(Debug, Clone)]

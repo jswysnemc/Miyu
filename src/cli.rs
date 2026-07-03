@@ -14,6 +14,7 @@ use clap::{Arg, ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcomm
 use crossterm::cursor::{self, Hide, MoveTo, Show};
 use crossterm::event::{
     self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
+    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{self, Clear, ClearType};
@@ -23,15 +24,27 @@ use fuzzy_matcher::FuzzyMatcher;
 use std::io::Cursor;
 use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod background_commands;
 mod render_options;
+mod repl_background;
+mod repl_clipboard;
+mod repl_commands;
+mod repl_editor;
+mod repl_input_navigation;
 
 use background_commands::{run_background_commands, BackgroundCommandsArgs};
 use render_options::stream_render_options;
+use repl_background::run_repl_background_manager;
+use repl_clipboard::ReplClipboardState;
+use repl_commands::{complete_repl_command, repl_command_rest, repl_command_suggestions};
+use repl_editor::edit_input_buffer;
+use repl_input_navigation::{move_cursor_down_by_visual_row, move_cursor_up_by_visual_row};
 
 const REPL_MAX_VISIBLE_INPUT_ROWS: u16 = 12;
+const REPL_ESC_CLEAR_WINDOW: Duration = Duration::from_millis(650);
+const REPL_CTRL_C_EXIT_WINDOW: Duration = Duration::from_millis(900);
 const THINKING_LEVELS: &[&str] = &["auto", "none", "low", "medium", "high", "xhigh", "max"];
 
 #[derive(Debug, Parser)]
@@ -1640,8 +1653,8 @@ async fn run_repl(
     println!(
         "\x1b[2m{}\x1b[0m",
         t(
-            "Tab toggles mode; Enter sends; Ctrl+J inserts newline",
-            "Tab 切换模式；Enter 发送；Ctrl+J 换行",
+            "Tab toggles mode; Enter sends; Shift+Enter/Ctrl+J inserts newline; Ctrl+V pastes clipboard",
+            "Tab 切换模式；Enter 发送；Shift+Enter/Ctrl+J 换行；Ctrl+V 粘贴剪贴板",
         )
     );
     crate::default_kb::check_update_if_due(paths).ok();
@@ -1649,14 +1662,15 @@ async fn run_repl(
         println!("\x1b[2m{message}\x1b[0m");
     }
     loop {
-        let input = match read_repl_input(mode, prefill.take(), &input_history)? {
-            Some((new_mode, input)) => {
-                mode = new_mode;
-                input
+        let submission = match read_repl_input(mode, prefill.take(), &input_history)? {
+            Some(submission) => {
+                mode = submission.mode;
+                submission
             }
             None => break,
         };
-        let input = input.trim();
+        let input = submission.raw_input.trim();
+        let submitted_input = input.to_string();
         if input.eq_ignore_ascii_case("exit")
             || input.eq_ignore_ascii_case("quit")
             || input.eq_ignore_ascii_case("/exit")
@@ -1715,10 +1729,39 @@ async fn run_repl(
             input_history.clear();
             continue;
         }
+        if let Some(rest) = repl_command_rest(input, "/thinking") {
+            let level = rest
+                .split_whitespace()
+                .next()
+                .map(std::string::ToString::to_string);
+            if let Err(err) = run_set_thinking(paths, SetThinkingArgs { level }) {
+                eprintln!("{err}");
+                continue;
+            }
+            reload_repl_config(
+                paths,
+                &mut config,
+                &mut client,
+                thinking_override.as_deref(),
+            )?;
+            println!("{}", t("configuration reloaded", "配置已重新加载"));
+            continue;
+        }
+        if input.eq_ignore_ascii_case("/ps") {
+            run_repl_background_manager(paths, &config).await?;
+            continue;
+        }
         if input.is_empty() {
             continue;
         }
-        input_history.push(input.to_string());
+        let chat_input = submission.chat_input;
+        if chat_input.message.trim().is_empty() && chat_input.image_url.is_none() {
+            continue;
+        }
+        if !input.trim().is_empty() {
+            input_history.push(input.to_string());
+        }
+        render_repl_submitted_input(mode, input)?;
         let registry = build_tool_registry(&config, paths, mode)?;
         let mut agent = Agent::new(
             config.clone(),
@@ -1737,21 +1780,64 @@ async fn run_repl(
             stream_render_options(&config),
         );
         renderer.start_waiting()?;
-        let chat_result = {
-            let chat = agent.chat_stream(input, |event| handle_agent_event(&mut renderer, event));
+        let mut interrupted = false;
+        let chat_result = if let Some(image_url) = chat_input.image_url {
+            let chat =
+                agent.chat_stream_with_image(&chat_input.message, Some(image_url), |event| {
+                    handle_agent_event(&mut renderer, event)
+                });
             tokio::pin!(chat);
             tokio::select! {
                 result = &mut chat => result.map(|_| ()),
                 signal = tokio::signal::ctrl_c() => {
                     signal?;
+                    interrupted = true;
+                    Ok(())
+                }
+            }
+        } else {
+            let chat = agent.chat_stream(&chat_input.message, |event| {
+                handle_agent_event(&mut renderer, event)
+            });
+            tokio::pin!(chat);
+            tokio::select! {
+                result = &mut chat => result.map(|_| ()),
+                signal = tokio::signal::ctrl_c() => {
+                    signal?;
+                    interrupted = true;
                     Ok(())
                 }
             }
         };
         renderer.finish()?;
+        if interrupted {
+            prefill = Some(submitted_input);
+            continue;
+        }
         if let Err(err) = chat_result {
             render::write_chat_error(&err, false)?;
             continue;
+        }
+    }
+    Ok(())
+}
+
+/// 渲染 REPL 中已提交的输入行。
+///
+/// 参数:
+/// - `mode`: 当前 Agent 模式
+/// - `input`: 用户提交的输入内容
+///
+/// 返回:
+/// - 渲染是否成功
+fn render_repl_submitted_input(mode: AgentMode, input: &str) -> Result<()> {
+    let lines = repl_input_lines(input);
+    let prompt_prefix = format!("{} > ", colored_mode_label(mode));
+    for (index, line) in lines.iter().enumerate() {
+        if index == 0 {
+            println!("{prompt_prefix}{line}");
+        } else {
+            println!("{line}");
         }
     }
     Ok(())
@@ -1802,6 +1888,12 @@ fn load_repl_input_history(state: &StateStore) -> Result<Vec<String>> {
         .collect())
 }
 
+struct ReplInputSubmission {
+    mode: AgentMode,
+    raw_input: String,
+    chat_input: clipboard::ClipboardChatInput,
+}
+
 fn print_repl_help() {
     println!("{}", t("commands:", "命令:"));
     println!(
@@ -1811,6 +1903,17 @@ fn print_repl_help() {
     println!(
         "  /config     {}",
         t("open configuration UI", "打开配置界面")
+    );
+    println!(
+        "  /thinking [level] {}",
+        t(
+            "choose active provider thinking level",
+            "选择当前 provider 的思考等级"
+        )
+    );
+    println!(
+        "  /ps        {}",
+        t("manage background tasks", "管理后台任务")
     );
     println!(
         "  /plan       {}",
@@ -1845,34 +1948,90 @@ fn print_repl_help() {
         )
     );
     println!("  Enter       {}", t("send message", "发送消息"));
-    println!("  Ctrl+J      {}", t("insert newline", "插入换行"));
+    println!("  Shift+Enter {}", t("insert newline", "插入换行"));
+    println!(
+        "  Ctrl+J      {}",
+        t(
+            "insert newline, same as Shift+Enter",
+            "插入换行，与 Shift+Enter 相同"
+        )
+    );
+    println!(
+        "  Ctrl+V      {}",
+        t("paste clipboard text or image", "粘贴剪贴板文本或图片")
+    );
     println!("  Ctrl+L      {}", t("clear screen", "清屏"));
+    println!(
+        "  Ctrl+G      {}",
+        t(
+            "edit input buffer in $EDITOR",
+            "使用 $EDITOR 编辑输入缓冲区"
+        )
+    );
     println!(
         "  Up/Down     {}",
         t("browse input history", "切换输入历史")
     );
     println!(
         "  Esc Esc     {}",
-        t("interrupt running reply", "中断当前回复")
+        t("clear current message", "清空当前消息")
     );
+    println!("  Ctrl+C Ctrl+C {}", t("exit REPL", "退出 REPL"));
+}
+
+/// 启用 REPL 输入终端模式。
+///
+/// 参数:
+/// - `stdout`: 终端输出
+///
+/// 返回:
+/// - 启用是否成功
+fn enable_repl_terminal_input(stdout: &mut io::Stdout) -> Result<()> {
+    terminal::enable_raw_mode()?;
+    if let Err(err) = execute!(
+        stdout,
+        PushKeyboardEnhancementFlags(KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES),
+        EnableBracketedPaste
+    ) {
+        let _ = terminal::disable_raw_mode();
+        return Err(err.into());
+    }
+    Ok(())
+}
+
+/// 恢复 REPL 输入终端模式。
+///
+/// 参数:
+/// - `stdout`: 终端输出
+///
+/// 返回:
+/// - 恢复是否成功
+fn disable_repl_terminal_input(stdout: &mut io::Stdout) -> Result<()> {
+    let restore_result = execute!(stdout, DisableBracketedPaste, PopKeyboardEnhancementFlags);
+    let raw_result = terminal::disable_raw_mode();
+    restore_result?;
+    raw_result?;
+    Ok(())
 }
 
 fn read_repl_input(
     mut mode: AgentMode,
     prefill: Option<String>,
     history: &[String],
-) -> Result<Option<(AgentMode, String)>> {
+) -> Result<Option<ReplInputSubmission>> {
     let mut stdout = io::stdout();
     let mut input = strip_terminal_control_sequences(&prefill.unwrap_or_default());
     let mut cursor = input.chars().count();
     let mut history_index = history.len();
+    let mut clipboard_state = ReplClipboardState::default();
+    let mut last_escape = None::<Instant>;
+    let mut last_ctrl_c = None::<Instant>;
     let (cursor_col, _) = cursor::position()?;
     if cursor_col != 0 {
         writeln!(stdout)?;
         stdout.flush()?;
     }
-    terminal::enable_raw_mode()?;
-    execute!(stdout, EnableBracketedPaste)?;
+    enable_repl_terminal_input(&mut stdout)?;
     let (_, mut input_row) = cursor::position()?;
     let mut rendered_rows = 0u16;
     let mut is_pasted = false;
@@ -1903,98 +2062,28 @@ fn read_repl_input(
             }
             Event::Key(KeyEvent {
                 code, modifiers, ..
-            }) => match code {
-                KeyCode::Tab => {
-                    if input.starts_with('/') {
-                        if let Some(completed) = complete_repl_command(&input) {
-                            input = completed.to_string();
-                            cursor = input.chars().count();
-                        }
-                    } else {
-                        mode = if mode == AgentMode::Yolo {
-                            AgentMode::Plan
+            }) => {
+                if code != KeyCode::Esc {
+                    last_escape = None;
+                }
+                if !matches!(code, KeyCode::Char('c')) || !modifiers.contains(KeyModifiers::CONTROL)
+                {
+                    last_ctrl_c = None;
+                }
+                match code {
+                    KeyCode::Tab => {
+                        if input.starts_with('/') {
+                            if let Some(completed) = complete_repl_command(&input) {
+                                input = completed.to_string();
+                                cursor = input.chars().count();
+                            }
                         } else {
-                            AgentMode::Yolo
-                        };
-                    }
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Esc => {
-                    input.clear();
-                    cursor = 0;
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Left => {
-                    cursor = cursor.saturating_sub(1);
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Right => {
-                    cursor = (cursor + 1).min(input.chars().count());
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Home => {
-                    cursor = 0;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::End => {
-                    cursor = input.chars().count();
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Up => {
-                    if !history.is_empty() {
-                        history_index = history_index.saturating_sub(1);
-                        input = history.get(history_index).cloned().unwrap_or_default();
-                        cursor = input.chars().count();
+                            mode = if mode == AgentMode::Yolo {
+                                AgentMode::Plan
+                            } else {
+                                AgentMode::Yolo
+                            };
+                        }
                         is_pasted = false;
                         render_repl_input(
                             &mut stdout,
@@ -2006,51 +2095,234 @@ fn read_repl_input(
                             is_pasted,
                         )?;
                     }
-                }
-                KeyCode::Down => {
-                    if history_index + 1 < history.len() {
-                        history_index += 1;
-                        input = history.get(history_index).cloned().unwrap_or_default();
-                    } else {
-                        history_index = history.len();
-                        input.clear();
+                    KeyCode::Esc => {
+                        let now = Instant::now();
+                        if last_escape.is_some_and(|previous| {
+                            now.duration_since(previous) <= REPL_ESC_CLEAR_WINDOW
+                        }) {
+                            input.clear();
+                            cursor = 0;
+                            clipboard_state.clear();
+                            is_pasted = false;
+                            last_escape = None;
+                            render_repl_input(
+                                &mut stdout,
+                                &mut input_row,
+                                &mut rendered_rows,
+                                mode,
+                                &input,
+                                cursor,
+                                is_pasted,
+                            )?;
+                        } else {
+                            last_escape = Some(now);
+                        }
                     }
-                    cursor = input.chars().count();
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Enter => {
-                    input = strip_terminal_control_sequences(&input);
-                    move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
-                    execute!(stdout, DisableBracketedPaste)?;
-                    terminal::disable_raw_mode()?;
-                    return Ok(Some((mode, input)));
-                }
-                KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    insert_newline_at_cursor(&mut input, &mut cursor);
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    if !input.is_empty() {
+                    KeyCode::Left => {
+                        cursor = cursor.saturating_sub(1);
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Right => {
+                        cursor = (cursor + 1).min(input.chars().count());
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Home => {
+                        cursor = 0;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::End => {
+                        cursor = input.chars().count();
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Up => {
+                        let plain_prefix = format!("[{}] > ", mode.label());
+                        if let Some(next_cursor) = move_cursor_up_by_visual_row(
+                            &plain_prefix,
+                            &input,
+                            cursor,
+                            terminal_cols(),
+                        ) {
+                            cursor = next_cursor;
+                            render_repl_input(
+                                &mut stdout,
+                                &mut input_row,
+                                &mut rendered_rows,
+                                mode,
+                                &input,
+                                cursor,
+                                is_pasted,
+                            )?;
+                        } else if !history.is_empty() {
+                            history_index = history_index.saturating_sub(1);
+                            input = history.get(history_index).cloned().unwrap_or_default();
+                            cursor = input.chars().count();
+                            clipboard_state.clear();
+                            is_pasted = false;
+                            render_repl_input(
+                                &mut stdout,
+                                &mut input_row,
+                                &mut rendered_rows,
+                                mode,
+                                &input,
+                                cursor,
+                                is_pasted,
+                            )?;
+                        }
+                    }
+                    KeyCode::Down => {
+                        let plain_prefix = format!("[{}] > ", mode.label());
+                        if let Some(next_cursor) = move_cursor_down_by_visual_row(
+                            &plain_prefix,
+                            &input,
+                            cursor,
+                            terminal_cols(),
+                        ) {
+                            cursor = next_cursor;
+                        } else if history_index + 1 < history.len() {
+                            history_index += 1;
+                            input = history.get(history_index).cloned().unwrap_or_default();
+                            cursor = input.chars().count();
+                            clipboard_state.clear();
+                            is_pasted = false;
+                        } else if history_index < history.len() {
+                            history_index = history.len();
+                            input.clear();
+                            cursor = input.chars().count();
+                            clipboard_state.clear();
+                            is_pasted = false;
+                        }
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
+                        insert_newline_at_cursor(&mut input, &mut cursor);
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Enter => {
+                        input = strip_terminal_control_sequences(&input);
+                        let chat_input = clipboard_state.to_chat_input(&input);
+                        clear_repl_input(&mut stdout, input_row, rendered_rows)?;
+                        disable_repl_terminal_input(&mut stdout)?;
+                        return Ok(Some(ReplInputSubmission {
+                            mode,
+                            raw_input: input,
+                            chat_input,
+                        }));
+                    }
+                    KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        insert_newline_at_cursor(&mut input, &mut cursor);
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        is_pasted = clipboard_state.paste_into_input(&mut input, &mut cursor)?;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Char('g') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
+                        disable_repl_terminal_input(&mut stdout)?;
+                        match edit_input_buffer(&input) {
+                            Ok(edited) => {
+                                input = strip_terminal_control_sequences(&edited);
+                                cursor = input.chars().count();
+                                clipboard_state.clear();
+                            }
+                            Err(err) => {
+                                eprintln!("{err}");
+                            }
+                        }
+                        enable_repl_terminal_input(&mut stdout)?;
+                        let (_, row) = cursor::position()?;
+                        input_row = row;
+                        rendered_rows = 0;
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Char('c') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        let now = Instant::now();
+                        if last_ctrl_c.is_some_and(|previous| {
+                            now.duration_since(previous) <= REPL_CTRL_C_EXIT_WINDOW
+                        }) {
+                            move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
+                            disable_repl_terminal_input(&mut stdout)?;
+                            return Ok(None);
+                        }
+                        last_ctrl_c = Some(now);
                         input.clear();
                         cursor = 0;
+                        clipboard_state.clear();
                         is_pasted = false;
                         render_repl_input(
                             &mut stdout,
@@ -2061,94 +2333,92 @@ fn read_repl_input(
                             cursor,
                             is_pasted,
                         )?;
-                        continue;
                     }
-                    move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
-                    execute!(stdout, DisableBracketedPaste)?;
-                    terminal::disable_raw_mode()?;
-                    return Ok(None);
-                }
-                KeyCode::Char('d')
-                    if modifiers.contains(KeyModifiers::CONTROL) && input.is_empty() =>
-                {
-                    move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
-                    execute!(stdout, DisableBracketedPaste)?;
-                    terminal::disable_raw_mode()?;
-                    return Ok(None);
-                }
-                KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    queue!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
-                    stdout.flush()?;
-                    input_row = 0;
-                    rendered_rows = 0;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
-                    remove_word_before_cursor(&mut input, &mut cursor);
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Backspace => {
-                    if cursor > 0 {
-                        remove_char_before_cursor(&mut input, &mut cursor);
+                    KeyCode::Char('d')
+                        if modifiers.contains(KeyModifiers::CONTROL) && input.is_empty() =>
+                    {
+                        move_after_repl_input(&mut stdout, input_row, rendered_rows)?;
+                        disable_repl_terminal_input(&mut stdout)?;
+                        return Ok(None);
                     }
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Delete => {
-                    remove_char_at_cursor(&mut input, cursor);
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
-                }
-                KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
-                    if !is_disallowed_control_char(ch) {
-                        insert_char_at_cursor(&mut input, &mut cursor, ch);
+                    KeyCode::Char('l') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        queue!(stdout, Clear(ClearType::All), MoveTo(0, 0))?;
+                        stdout.flush()?;
+                        input_row = 0;
+                        rendered_rows = 0;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
                     }
-                    is_pasted = false;
-                    render_repl_input(
-                        &mut stdout,
-                        &mut input_row,
-                        &mut rendered_rows,
-                        mode,
-                        &input,
-                        cursor,
-                        is_pasted,
-                    )?;
+                    KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
+                        remove_word_before_cursor(&mut input, &mut cursor);
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Backspace => {
+                        if clipboard_state.remove_block_before_cursor(&mut input, &mut cursor) {
+                            // 已删除完整剪贴板占位块
+                        } else if cursor > 0 {
+                            remove_char_before_cursor(&mut input, &mut cursor);
+                        }
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Delete => {
+                        if !clipboard_state.remove_block_at_cursor(&mut input, cursor) {
+                            remove_char_at_cursor(&mut input, cursor);
+                        }
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
+                        if !is_disallowed_control_char(ch) {
+                            insert_char_at_cursor(&mut input, &mut cursor, ch);
+                        }
+                        is_pasted = false;
+                        render_repl_input(
+                            &mut stdout,
+                            &mut input_row,
+                            &mut rendered_rows,
+                            mode,
+                            &input,
+                            cursor,
+                            is_pasted,
+                        )?;
+                    }
+                    _ => {}
                 }
-                _ => {}
-            },
+            }
             _ => {}
         }
     }
@@ -2269,6 +2539,28 @@ fn move_after_repl_input(
         stdout,
         MoveTo(0, input_row.saturating_add(rendered_rows.max(1)))
     )?;
+    stdout.flush()?;
+    Ok(())
+}
+
+/// 清除 REPL 可编辑输入区。
+///
+/// 参数:
+/// - `stdout`: 终端输出
+/// - `input_row`: 输入区起始行
+/// - `rendered_rows`: 已渲染行数
+///
+/// 返回:
+/// - 清除是否成功
+fn clear_repl_input(stdout: &mut io::Stdout, input_row: u16, rendered_rows: u16) -> Result<()> {
+    for row_offset in 0..rendered_rows.max(1) {
+        queue!(
+            stdout,
+            MoveTo(0, input_row.saturating_add(row_offset)),
+            Clear(ClearType::CurrentLine)
+        )?;
+    }
+    queue!(stdout, MoveTo(0, input_row))?;
     stdout.flush()?;
     Ok(())
 }
@@ -2471,38 +2763,6 @@ fn colored_mode_label(mode: AgentMode) -> String {
     }
 }
 
-fn repl_commands() -> [&'static str; 8] {
-    [
-        "/providers",
-        "/config",
-        "/plan",
-        "/yolo",
-        "/undo",
-        "/reset",
-        "/help",
-        "/exit",
-    ]
-}
-
-fn repl_command_suggestions(input: &str) -> Vec<&'static str> {
-    if !input.starts_with('/') {
-        return Vec::new();
-    }
-    repl_commands()
-        .into_iter()
-        .filter(|command| command.starts_with(input))
-        .collect()
-}
-
-fn complete_repl_command(input: &str) -> Option<&'static str> {
-    let suggestions = repl_command_suggestions(input);
-    if suggestions.len() == 1 {
-        suggestions.first().copied()
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod repl_input_tests {
     use super::*;
@@ -2526,11 +2786,6 @@ mod repl_input_tests {
         );
         assert_eq!(repl_cursor_position_for_cols("", "123\n456", 7, 10), (3, 1));
         assert_eq!(repl_cursor_position_for_cols("", "1234567", 3, 10), (3, 0));
-    }
-
-    #[test]
-    fn reset_is_a_repl_command() {
-        assert!(repl_commands().contains(&"/reset"));
     }
 
     #[test]

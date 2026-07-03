@@ -10,7 +10,7 @@ use base64::{engine::general_purpose, Engine as _};
 pub fn read_clipboard_payload() -> Result<ClipboardPayload> {
     let mut clipboard = Clipboard::new().context("failed to open clipboard")?;
     if let Ok(image) = clipboard.get_image() {
-        return encode_clipboard_image(image).map(ClipboardPayload::ImageDataUrl);
+        return encode_clipboard_image(image);
     }
     match clipboard.get_text() {
         Ok(text) if !text.trim().is_empty() => Ok(ClipboardPayload::Text(text)),
@@ -26,7 +26,7 @@ pub fn read_clipboard_payload() -> Result<ClipboardPayload> {
 ///
 /// 返回:
 /// - PNG data URL
-fn encode_clipboard_image(image: ImageData<'_>) -> Result<String> {
+fn encode_clipboard_image(image: ImageData<'_>) -> Result<ClipboardPayload> {
     let width = u32::try_from(image.width).context("clipboard image width is too large")?;
     let height = u32::try_from(image.height).context("clipboard image height is too large")?;
     let expected_len = image
@@ -49,7 +49,11 @@ fn encode_clipboard_image(image: ImageData<'_>) -> Result<String> {
         writer.write_image_data(image.bytes.as_ref())?;
     }
     let encoded = general_purpose::STANDARD.encode(png_bytes);
-    Ok(format!("data:image/png;base64,{encoded}"))
+    Ok(ClipboardPayload::ImageDataUrl {
+        data_url: format!("data:image/png;base64,{encoded}"),
+        width: width as usize,
+        height: height as usize,
+    })
 }
 
 #[cfg(test)]
@@ -64,7 +68,18 @@ mod tests {
             height: 1,
             bytes: Cow::Borrowed(&[255, 0, 0, 255]),
         };
-        let data_url = encode_clipboard_image(image).unwrap();
-        assert!(data_url.starts_with("data:image/png;base64,"));
+        let payload = encode_clipboard_image(image).unwrap();
+        match payload {
+            ClipboardPayload::ImageDataUrl {
+                data_url,
+                width,
+                height,
+            } => {
+                assert!(data_url.starts_with("data:image/png;base64,"));
+                assert_eq!(width, 1);
+                assert_eq!(height, 1);
+            }
+            _ => panic!("unexpected clipboard payload"),
+        }
     }
 }

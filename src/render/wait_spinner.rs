@@ -1,5 +1,5 @@
 use anyhow::Result;
-use crossterm::cursor::{MoveToColumn, MoveUp};
+use crossterm::cursor::{self, MoveTo};
 use crossterm::execute;
 use crossterm::terminal::{Clear, ClearType};
 use std::io::{self, IsTerminal, Write};
@@ -53,6 +53,7 @@ struct WaitSpinnerState {
     sub_phase: Option<String>,
     start: Instant,
     seed: u64,
+    anchor_row: u16,
     lines_rendered: u16,
     style: SpinnerStyle,
 }
@@ -79,11 +80,13 @@ impl WaitSpinner {
     /// 返回:
     /// - 等待动画控制器
     pub(crate) fn start(phase: String, style: SpinnerStyle, sub_phase: Option<String>) -> Self {
+        let anchor_row = cursor::position().map(|(_, row)| row).unwrap_or(0);
         let state = Arc::new(Mutex::new(WaitSpinnerState {
             phase,
             sub_phase,
             start: Instant::now(),
             seed: spinner_seed(),
+            anchor_row,
             lines_rendered: 0,
             style,
         }));
@@ -107,12 +110,12 @@ impl WaitSpinner {
         if let Some(handle) = self.handle.take() {
             let _ = handle.join();
         }
-        let lines = self
+        let (anchor_row, lines) = self
             .state
             .lock()
-            .map(|state| state.lines_rendered)
-            .unwrap_or(0);
-        clear_spinner_lines(lines)
+            .map(|state| (state.anchor_row, state.lines_rendered))
+            .unwrap_or((0, 0));
+        clear_spinner_lines(anchor_row, lines)
     }
 }
 
@@ -126,19 +129,19 @@ fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool
     let mut frame = 0usize;
     let mut cycle = 0usize;
     while running.load(Ordering::SeqCst) {
-        let (output, prev_lines, lines, total) = match state.lock() {
+        let (output, anchor_row, prev_lines, lines, total) = match state.lock() {
             Ok(mut guard) => {
                 let prev = guard.lines_rendered;
                 let total = total_frames_for_style(guard.style);
                 let absolute_frame = cycle * total + frame;
                 let (output, lines) = render_frame(absolute_frame, &guard);
                 guard.lines_rendered = lines;
-                (output, prev, lines, total)
+                (output, guard.anchor_row, prev, lines, total)
             }
-            Err(_) => (String::new(), 0, 0, 1),
+            Err(_) => (String::new(), 0, 0, 0, 1),
         };
         if !output.is_empty() {
-            let _ = write_spinner_lines(&output, prev_lines, lines);
+            let _ = write_spinner_lines(&output, anchor_row, prev_lines, lines);
         }
         thread::sleep(INTERVAL);
         frame += 1;
@@ -469,39 +472,35 @@ fn paint_secondary(text: &str) -> String {
     format!("\x1b[2m\x1b[36m{text}\x1b[0m")
 }
 
-fn write_spinner_lines(output: &str, prev_lines: u16, lines: u16) -> Result<()> {
+fn write_spinner_lines(output: &str, anchor_row: u16, prev_lines: u16, lines: u16) -> Result<()> {
     let mut stdout = io::stdout();
-    if prev_lines > 1 {
-        for _ in 1..prev_lines {
-            execute!(stdout, MoveUp(1))?;
-        }
+    let rows_to_clear = prev_lines.max(lines).max(1);
+    for row_offset in 0..rows_to_clear {
+        execute!(
+            stdout,
+            MoveTo(0, anchor_row.saturating_add(row_offset)),
+            Clear(ClearType::CurrentLine)
+        )?;
     }
     let rendered_lines = output.lines().collect::<Vec<_>>();
     for (index, line) in rendered_lines.iter().enumerate() {
-        execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+        execute!(stdout, MoveTo(0, anchor_row.saturating_add(index as u16)))?;
         write!(stdout, "{line}")?;
-        if index + 1 < rendered_lines.len() {
-            write!(stdout, "\n")?;
-        }
-    }
-    if prev_lines > lines {
-        for _ in lines..prev_lines {
-            execute!(stdout, MoveUp(1))?;
-            execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        }
     }
     stdout.flush()?;
     Ok(())
 }
 
-fn clear_spinner_lines(lines: u16) -> Result<()> {
+fn clear_spinner_lines(anchor_row: u16, lines: u16) -> Result<()> {
     let mut stdout = io::stdout();
-    for i in 0..lines {
-        if i > 0 {
-            execute!(stdout, MoveUp(1))?;
-        }
-        execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
+    for row_offset in 0..lines {
+        execute!(
+            stdout,
+            MoveTo(0, anchor_row.saturating_add(row_offset)),
+            Clear(ClearType::CurrentLine)
+        )?;
     }
+    execute!(stdout, MoveTo(0, anchor_row))?;
     stdout.flush()?;
     Ok(())
 }
@@ -516,6 +515,7 @@ mod tests {
             sub_phase: sub_phase.map(str::to_string),
             start: Instant::now(),
             seed: 0,
+            anchor_row: 0,
             lines_rendered: 0,
             style,
         }

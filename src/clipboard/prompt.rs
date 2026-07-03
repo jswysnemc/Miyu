@@ -16,9 +16,9 @@ pub fn apply_clipboard_payload(message: String, payload: ClipboardPayload) -> Cl
             message: inject_clipboard_text(&message, &text),
             image_url: None,
         },
-        ClipboardPayload::ImageDataUrl(image_url) => ClipboardChatInput {
+        ClipboardPayload::ImageDataUrl { data_url, .. } => ClipboardChatInput {
             message: image_prompt(&message),
-            image_url: Some(image_url),
+            image_url: Some(data_url),
         },
     }
 }
@@ -82,7 +82,11 @@ mod tests {
     fn attaches_image_url_without_injecting_text() {
         let input = apply_clipboard_payload(
             "描述图片".to_string(),
-            ClipboardPayload::ImageDataUrl("data:image/png;base64,abc".to_string()),
+            ClipboardPayload::ImageDataUrl {
+                data_url: "data:image/png;base64,abc".to_string(),
+                width: 1,
+                height: 1,
+            },
         );
         assert_eq!(input.message, "描述图片");
         assert_eq!(
