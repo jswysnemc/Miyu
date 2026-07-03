@@ -3,7 +3,8 @@ mod tool_visibility;
 
 use crate::config::AppConfig;
 use crate::llm::{
-    ChatMessage, ChatResult, ChatStreamChunk, ChatStreamKind, OpenAiCompatibleClient,
+    ChatMessage, ChatResult, ChatStreamChunk, ChatStreamEvent, ChatStreamKind,
+    OpenAiCompatibleClient, ToolCallStreamProgress,
 };
 use crate::memory::{EvictedTurn, MemoryStore};
 use crate::paths::MiyuPaths;
@@ -44,6 +45,7 @@ pub enum AgentEvent {
         name: String,
         arguments: String,
     },
+    ToolCallProgress(ToolCallStreamProgress),
     ToolResult {
         name: String,
         ok: bool,
@@ -249,8 +251,11 @@ impl Agent {
             };
             let result = self
                 .client
-                .chat_stream(messages.clone(), definitions.clone(), |chunk| {
-                    on_event(AgentEvent::Chunk(chunk))
+                .chat_stream_events(messages.clone(), definitions.clone(), |event| match event {
+                    ChatStreamEvent::Chunk(chunk) => on_event(AgentEvent::Chunk(chunk)),
+                    ChatStreamEvent::ToolCallProgress(progress) => {
+                        on_event(AgentEvent::ToolCallProgress(progress))
+                    }
                 })
                 .await?;
             if result.tool_calls.is_empty() || !self.tools_enabled {

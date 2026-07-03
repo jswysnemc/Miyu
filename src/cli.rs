@@ -3227,6 +3227,7 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
     match event {
         AgentEvent::Chunk(chunk) => renderer.write_chunk(chunk),
         AgentEvent::ToolCall { name, arguments } => renderer.write_tool_call(&name, &arguments),
+        AgentEvent::ToolCallProgress(progress) => renderer.write_tool_call_progress(&progress),
         AgentEvent::ToolResult { name, ok, output } => {
             renderer.write_tool_result(&name, ok, &output)
         }

@@ -1,6 +1,7 @@
+use super::tool_call_stream::ToolCallProgressTracker;
 use super::{
-    ChatMessage, ChatResult, ChatStreamChunk, ChatStreamKind, ToolCall, ToolCallFunction,
-    ToolDefinition, Usage,
+    ChatMessage, ChatResult, ChatStreamChunk, ChatStreamEvent, ChatStreamKind, ToolCall,
+    ToolCallFunction, ToolCallStreamProgress, ToolDefinition, Usage,
 };
 use crate::config::{AppConfig, ProviderConfig};
 use crate::i18n::text as t;
@@ -77,17 +78,44 @@ impl OpenAiCompatibleClient {
     where
         F: FnMut(ChatStreamChunk) -> Result<()>,
     {
+        self.chat_stream_events(messages, tools, |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                on_chunk(chunk)?;
+            }
+            Ok(())
+        })
+        .await
+    }
+
+    /// 发送流式对话并透出内部流式事件。
+    ///
+    /// 参数:
+    /// - `messages`: 聊天消息列表
+    /// - `tools`: 当前可用工具定义
+    /// - `on_event`: 流式事件回调
+    ///
+    /// 返回:
+    /// - 聊天结果
+    pub async fn chat_stream_events<F>(
+        &self,
+        messages: Vec<ChatMessage>,
+        tools: Vec<ToolDefinition>,
+        mut on_event: F,
+    ) -> Result<ChatResult>
+    where
+        F: FnMut(ChatStreamEvent) -> Result<()>,
+    {
         let protocol = ProviderProtocol::from_provider(&self.provider)?;
         if protocol == ProviderProtocol::Anthropic {
             return self
-                .chat_anthropic_stream(messages, tools, &mut on_chunk)
+                .chat_anthropic_stream(messages, tools, &mut on_event)
                 .await;
         }
         if protocol == ProviderProtocol::OpenAiResponses
             || (protocol == ProviderProtocol::Auto && self.uses_openai_responses())
         {
             if let Some(result) = self
-                .chat_responses_stream(messages.clone(), tools.clone(), &mut on_chunk)
+                .chat_responses_stream(messages.clone(), tools.clone(), &mut on_event)
                 .await?
             {
                 return Ok(result);
@@ -151,7 +179,7 @@ impl OpenAiCompatibleClient {
                     &mut reasoning_emitted,
                     &mut usage,
                     &mut tool_calls,
-                    &mut on_chunk,
+                    &mut on_event,
                 )? {
                     if done {
                         return finalize_stream_result(
@@ -173,7 +201,7 @@ impl OpenAiCompatibleClient {
                 &mut reasoning_emitted,
                 &mut usage,
                 &mut tool_calls,
-                &mut on_chunk,
+                &mut on_event,
             )?;
         }
         finalize_stream_result(content, reasoning, usage, tool_calls.finish())
@@ -183,10 +211,10 @@ impl OpenAiCompatibleClient {
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<ToolDefinition>,
-        on_chunk: &mut F,
+        on_event: &mut F,
     ) -> Result<ChatResult>
     where
-        F: FnMut(ChatStreamChunk) -> Result<()>,
+        F: FnMut(ChatStreamEvent) -> Result<()>,
     {
         let request = AnthropicRequest {
             model: self.provider.default_model.clone(),
@@ -229,7 +257,7 @@ impl OpenAiCompatibleClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             for data in buffer.push(&String::from_utf8_lossy(&chunk))? {
-                if handle_anthropic_sse_data(&data, &mut state, &mut *on_chunk)? {
+                if handle_anthropic_sse_data(&data, &mut state, &mut *on_event)? {
                     return finalize_stream_result(
                         state.content,
                         state.reasoning,
@@ -240,7 +268,7 @@ impl OpenAiCompatibleClient {
             }
         }
         for data in buffer.finish()? {
-            let _ = handle_anthropic_sse_data(&data, &mut state, &mut *on_chunk)?;
+            let _ = handle_anthropic_sse_data(&data, &mut state, &mut *on_event)?;
         }
         finalize_stream_result(
             state.content,
@@ -254,10 +282,10 @@ impl OpenAiCompatibleClient {
         &self,
         messages: Vec<ChatMessage>,
         tools: Vec<ToolDefinition>,
-        on_chunk: &mut F,
+        on_event: &mut F,
     ) -> Result<Option<ChatResult>>
     where
-        F: FnMut(ChatStreamChunk) -> Result<()>,
+        F: FnMut(ChatStreamEvent) -> Result<()>,
     {
         let request = ResponsesRequest {
             model: self.provider.default_model.clone(),
@@ -320,7 +348,7 @@ impl OpenAiCompatibleClient {
                     &mut usage,
                     &mut content_started,
                     &mut tool_calls,
-                    &mut *on_chunk,
+                    &mut *on_event,
                 )? {
                     return finalize_stream_result(content, reasoning, usage, tool_calls.finish())
                         .map(Some);
@@ -951,10 +979,15 @@ struct AnthropicStreamState {
 #[derive(Debug, Default)]
 struct AnthropicToolAccumulator {
     calls: Vec<PartialToolCall>,
+    progress: ToolCallProgressTracker,
 }
 
 impl AnthropicToolAccumulator {
-    fn start(&mut self, index: usize, block: AnthropicStreamBlock) {
+    fn start(
+        &mut self,
+        index: usize,
+        block: AnthropicStreamBlock,
+    ) -> Option<ToolCallStreamProgress> {
         while self.calls.len() <= index {
             self.calls.push(PartialToolCall::default());
         }
@@ -962,13 +995,16 @@ impl AnthropicToolAccumulator {
         call.id = block.id.unwrap_or_else(|| format!("tool-{index}"));
         call.kind = "function".to_string();
         call.name = block.name.unwrap_or_default();
+        self.progress.update(index, &call.name, &call.arguments)
     }
 
-    fn append_arguments(&mut self, index: usize, text: String) {
+    fn append_arguments(&mut self, index: usize, text: String) -> Option<ToolCallStreamProgress> {
         while self.calls.len() <= index {
             self.calls.push(PartialToolCall::default());
         }
-        self.calls[index].arguments.push_str(&text);
+        let call = &mut self.calls[index];
+        call.arguments.push_str(&text);
+        self.progress.update(index, &call.name, &call.arguments)
     }
 
     fn finish(self) -> Vec<ToolCall> {
@@ -994,12 +1030,13 @@ impl AnthropicToolAccumulator {
 #[derive(Debug, Default)]
 struct ResponsesToolAccumulator {
     calls: Vec<PartialToolCall>,
+    progress: ToolCallProgressTracker,
 }
 
 impl ResponsesToolAccumulator {
-    fn start(&mut self, item: ResponsesStreamItem) {
+    fn start(&mut self, item: ResponsesStreamItem) -> Option<ToolCallStreamProgress> {
         if item.kind != "function_call" {
-            return;
+            return None;
         }
         self.calls.push(PartialToolCall {
             id: item.call_id.or(item.id).unwrap_or_default(),
@@ -1007,36 +1044,49 @@ impl ResponsesToolAccumulator {
             name: item.name.unwrap_or_default(),
             arguments: item.arguments.unwrap_or_default(),
         });
+        let index = self.calls.len().saturating_sub(1);
+        let call = &self.calls[index];
+        self.progress.update(index, &call.name, &call.arguments)
     }
 
-    fn append_arguments(&mut self, item_id: Option<String>, delta: String) {
+    fn append_arguments(
+        &mut self,
+        item_id: Option<String>,
+        delta: String,
+    ) -> Option<ToolCallStreamProgress> {
         if let Some(item_id) = item_id {
-            if let Some(call) = self
+            if let Some(index) = self
                 .calls
-                .iter_mut()
-                .find(|call| call.id == item_id || call.id.is_empty())
+                .iter()
+                .position(|call| call.id == item_id || call.id.is_empty())
             {
+                let call = &mut self.calls[index];
                 call.arguments.push_str(&delta);
-                return;
+                return self.progress.update(index, &call.name, &call.arguments);
             }
         }
-        if let Some(call) = self.calls.last_mut() {
+        if let Some(index) = self.calls.len().checked_sub(1) {
+            let call = &mut self.calls[index];
             call.arguments.push_str(&delta);
+            return self.progress.update(index, &call.name, &call.arguments);
         }
+        None
     }
 
-    fn finish_item(&mut self, item: ResponsesStreamItem) {
+    fn finish_item(&mut self, item: ResponsesStreamItem) -> Option<ToolCallStreamProgress> {
         if item.kind != "function_call" {
-            return;
+            return None;
         }
         let id = item.call_id.or(item.id).unwrap_or_default();
-        if let Some(call) = self.calls.iter_mut().find(|call| call.id == id) {
+        if let Some(index) = self.calls.iter().position(|call| call.id == id) {
+            let call = &mut self.calls[index];
             if let Some(name) = item.name {
                 call.name = name;
             }
             if let Some(arguments) = item.arguments {
                 call.arguments = arguments;
             }
+            self.progress.update(index, &call.name, &call.arguments)
         } else {
             self.start(ResponsesStreamItem {
                 kind: "function_call".to_string(),
@@ -1044,7 +1094,7 @@ impl ResponsesToolAccumulator {
                 call_id: Some(id),
                 name: item.name,
                 arguments: item.arguments,
-            });
+            })
         }
     }
 
@@ -1067,6 +1117,7 @@ impl ResponsesToolAccumulator {
 #[derive(Debug, Default)]
 struct ToolCallAccumulator {
     calls: Vec<PartialToolCall>,
+    progress: ToolCallProgressTracker,
 }
 
 #[derive(Debug, Default)]
@@ -1078,7 +1129,7 @@ struct PartialToolCall {
 }
 
 impl ToolCallAccumulator {
-    fn push(&mut self, delta: ToolCallDelta) {
+    fn push(&mut self, delta: ToolCallDelta) -> Option<ToolCallStreamProgress> {
         while self.calls.len() <= delta.index {
             self.calls.push(PartialToolCall::default());
         }
@@ -1095,6 +1146,8 @@ impl ToolCallAccumulator {
         if let Some(arguments) = delta.function.arguments {
             call.arguments.push_str(&arguments);
         }
+        self.progress
+            .update(delta.index, &call.name, &call.arguments)
     }
 
     fn finish(self) -> Vec<ToolCall> {
@@ -1116,7 +1169,6 @@ impl ToolCallAccumulator {
             .collect()
     }
 }
-
 #[derive(Default)]
 struct SseBuffer {
     buffer: String,
@@ -1208,10 +1260,10 @@ fn handle_sse_line<F>(
     reasoning_emitted: &mut usize,
     usage: &mut Option<Usage>,
     tool_calls: &mut ToolCallAccumulator,
-    on_chunk: &mut F,
+    on_event: &mut F,
 ) -> Result<Option<bool>>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     let Some(data) = line.strip_prefix("data:").map(str::trim) else {
         return Ok(None);
@@ -1221,14 +1273,14 @@ where
             content,
             content_emitted,
             ChatStreamKind::Content,
-            on_chunk,
+            on_event,
             true,
         )?;
         flush_buffer(
             reasoning,
             reasoning_emitted,
             ChatStreamKind::Reasoning,
-            on_chunk,
+            on_event,
             true,
         )?;
         return Ok(Some(true));
@@ -1254,7 +1306,7 @@ where
                 reasoning_emitted,
                 ChatStreamKind::Reasoning,
                 text,
-                on_chunk,
+                on_event,
             )?;
         }
         if let Some(text) = delta.content {
@@ -1263,11 +1315,13 @@ where
                 content_emitted,
                 ChatStreamKind::Content,
                 text,
-                on_chunk,
+                on_event,
             )?;
         }
         for tool_call in delta.tool_calls {
-            tool_calls.push(tool_call);
+            if let Some(progress) = tool_calls.push(tool_call) {
+                on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+            }
         }
     }
     Ok(Some(false))
@@ -1282,10 +1336,10 @@ fn handle_responses_sse_line<F>(
     usage: &mut Option<Usage>,
     content_started: &mut bool,
     tool_calls: &mut ResponsesToolAccumulator,
-    on_chunk: &mut F,
+    on_event: &mut F,
 ) -> Result<bool>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     let Some(data) = line.strip_prefix("data:").map(str::trim) else {
         return Ok(false);
@@ -1295,14 +1349,14 @@ where
             content,
             content_emitted,
             ChatStreamKind::Content,
-            on_chunk,
+            on_event,
             true,
         )?;
         flush_buffer(
             reasoning,
             reasoning_emitted,
             ChatStreamKind::Reasoning,
-            on_chunk,
+            on_event,
             true,
         )?;
         return Ok(true);
@@ -1326,7 +1380,7 @@ where
                     content_emitted,
                     ChatStreamKind::Content,
                     text,
-                    on_chunk,
+                    on_event,
                 )?;
             }
         }
@@ -1339,7 +1393,7 @@ where
                     reasoning_emitted,
                     ChatStreamKind::Reasoning,
                     text,
-                    on_chunk,
+                    on_event,
                 )?;
             }
         }
@@ -1351,29 +1405,35 @@ where
                     reasoning,
                     reasoning_emitted,
                     ChatStreamKind::Reasoning,
-                    on_chunk,
+                    on_event,
                     true,
                 )?;
                 *content_started = true;
-                on_chunk(ChatStreamChunk {
+                on_event(ChatStreamEvent::Chunk(ChatStreamChunk {
                     kind: ChatStreamKind::Content,
                     text: String::new(),
-                })?;
+                }))?;
             }
         }
         "response.output_item.added" => {
             if let Some(item) = event.item {
-                tool_calls.start(item);
+                if let Some(progress) = tool_calls.start(item) {
+                    on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+                }
             }
         }
         "response.function_call_arguments.delta" => {
             if let Some(delta) = event.delta {
-                tool_calls.append_arguments(event.item_id, delta);
+                if let Some(progress) = tool_calls.append_arguments(event.item_id, delta) {
+                    on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+                }
             }
         }
         "response.output_item.done" => {
             if let Some(item) = event.item {
-                tool_calls.finish_item(item);
+                if let Some(progress) = tool_calls.finish_item(item) {
+                    on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+                }
             }
         }
         "response.completed" | "response.incomplete" => {
@@ -1388,14 +1448,14 @@ where
                 content,
                 content_emitted,
                 ChatStreamKind::Content,
-                on_chunk,
+                on_event,
                 true,
             )?;
             flush_buffer(
                 reasoning,
                 reasoning_emitted,
                 ChatStreamKind::Reasoning,
-                on_chunk,
+                on_event,
                 true,
             )?;
             return Ok(true);
@@ -1414,13 +1474,13 @@ where
 fn handle_anthropic_sse_data<F>(
     data: &str,
     state: &mut AnthropicStreamState,
-    on_chunk: &mut F,
+    on_event: &mut F,
 ) -> Result<bool>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     if data == "[DONE]" {
-        flush_anthropic_state(state, on_chunk)?;
+        flush_anthropic_state(state, on_event)?;
         return Ok(true);
     }
     let event: AnthropicStreamEvent = serde_json::from_str(data).with_context(|| {
@@ -1444,7 +1504,9 @@ where
                 match block.kind.as_str() {
                     "tool_use" | "server_tool_use" => {
                         if let Some(index) = event.index {
-                            state.tool_calls.start(index, block);
+                            if let Some(progress) = state.tool_calls.start(index, block) {
+                                on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+                            }
                         }
                     }
                     "text" => {
@@ -1454,7 +1516,7 @@ where
                                 &mut state.content_emitted,
                                 ChatStreamKind::Content,
                                 text,
-                                on_chunk,
+                                on_event,
                             )?;
                         }
                     }
@@ -1465,7 +1527,7 @@ where
                                 &mut state.reasoning_emitted,
                                 ChatStreamKind::Reasoning,
                                 text,
-                                on_chunk,
+                                on_event,
                             )?;
                         }
                     }
@@ -1483,7 +1545,7 @@ where
                                 &mut state.content_emitted,
                                 ChatStreamKind::Content,
                                 text,
-                                on_chunk,
+                                on_event,
                             )?;
                         }
                     }
@@ -1494,13 +1556,15 @@ where
                                 &mut state.reasoning_emitted,
                                 ChatStreamKind::Reasoning,
                                 text,
-                                on_chunk,
+                                on_event,
                             )?;
                         }
                     }
                     Some("input_json_delta") => {
                         if let (Some(index), Some(text)) = (event.index, delta.partial_json) {
-                            state.tool_calls.append_arguments(index, text);
+                            if let Some(progress) = state.tool_calls.append_arguments(index, text) {
+                                on_event(ChatStreamEvent::ToolCallProgress(progress))?;
+                            }
                         }
                     }
                     _ => {}
@@ -1511,7 +1575,7 @@ where
             if let Some(usage) = event.usage {
                 state.usage = Some(map_anthropic_usage(usage));
             }
-            flush_anthropic_state(state, on_chunk)?;
+            flush_anthropic_state(state, on_event)?;
             return Ok(true);
         }
         "error" => {
@@ -1531,22 +1595,22 @@ where
     Ok(false)
 }
 
-fn flush_anthropic_state<F>(state: &mut AnthropicStreamState, on_chunk: &mut F) -> Result<()>
+fn flush_anthropic_state<F>(state: &mut AnthropicStreamState, on_event: &mut F) -> Result<()>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     flush_buffer(
         &state.content,
         &mut state.content_emitted,
         ChatStreamKind::Content,
-        on_chunk,
+        on_event,
         true,
     )?;
     flush_buffer(
         &state.reasoning,
         &mut state.reasoning_emitted,
         ChatStreamKind::Reasoning,
-        on_chunk,
+        on_event,
         true,
     )
 }
@@ -1599,27 +1663,27 @@ fn push_buffered_chunk<F>(
     emitted: &mut usize,
     kind: ChatStreamKind,
     text: String,
-    on_chunk: &mut F,
+    on_event: &mut F,
 ) -> Result<()>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     if text.is_empty() {
         return Ok(());
     }
     target.push_str(&text);
-    flush_buffer(target, emitted, kind, on_chunk, false)
+    flush_buffer(target, emitted, kind, on_event, false)
 }
 
 fn flush_buffer<F>(
     target: &str,
     emitted: &mut usize,
     kind: ChatStreamKind,
-    on_chunk: &mut F,
+    on_event: &mut F,
     final_flush: bool,
 ) -> Result<()>
 where
-    F: FnMut(ChatStreamChunk) -> Result<()>,
+    F: FnMut(ChatStreamEvent) -> Result<()>,
 {
     while *emitted < target.len() {
         let remaining = &target[*emitted..];
@@ -1645,7 +1709,7 @@ where
         let text = target[*emitted..safe_end].to_string();
         *emitted = safe_end;
         if !text.is_empty() {
-            on_chunk(ChatStreamChunk { kind, text })?;
+            on_event(ChatStreamEvent::Chunk(ChatStreamChunk { kind, text }))?;
         }
     }
     Ok(())
@@ -1900,8 +1964,10 @@ mod tests {
         let mut usage = None;
         let mut tool_calls = ToolCallAccumulator::default();
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 
@@ -2000,8 +2066,10 @@ mod tests {
         let mut content_started = false;
         let mut tool_calls = ResponsesToolAccumulator::default();
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 
@@ -2047,8 +2115,10 @@ mod tests {
         let mut content_started = false;
         let mut tool_calls = ResponsesToolAccumulator::default();
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 
@@ -2089,8 +2159,10 @@ mod tests {
         let mut content = String::new();
         let mut emitted = 0usize;
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 
@@ -2121,8 +2193,10 @@ mod tests {
         let mut content = String::new();
         let mut emitted = 0usize;
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 
@@ -2193,8 +2267,10 @@ mod tests {
     fn anthropic_stream_emits_reasoning_content_and_usage() {
         let mut state = AnthropicStreamState::default();
         let mut chunks = Vec::new();
-        let mut on_chunk = |chunk| {
-            chunks.push(chunk);
+        let mut on_chunk = |event| {
+            if let ChatStreamEvent::Chunk(chunk) = event {
+                chunks.push(chunk);
+            }
             Ok(())
         };
 

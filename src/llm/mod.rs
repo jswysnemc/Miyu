@@ -1,7 +1,10 @@
 mod openai_compatible;
+mod stream_event;
 mod thinking;
+mod tool_call_stream;
 
 pub use openai_compatible::OpenAiCompatibleClient;
+pub use stream_event::{ChatStreamEvent, ToolCallStreamProgress};
 
 use serde::{Deserialize, Serialize};
 

@@ -11,6 +11,7 @@ mod stream_summary;
 mod style;
 mod table;
 pub(crate) mod terminal_image;
+mod tool_call_preview;
 mod tool_names;
 mod wait_spinner;
 

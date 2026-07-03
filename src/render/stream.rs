@@ -1,5 +1,5 @@
 use crate::i18n::text as t;
-use crate::llm::{ChatStreamChunk, ChatStreamKind};
+use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
 use crate::render::command_output::{
     write_command_block, write_command_error_block, write_command_result_blocks,
     write_edit_file_diff_block, write_tool_payload,
@@ -7,6 +7,7 @@ use crate::render::command_output::{
 use crate::render::markdown::MarkdownStreamRenderer;
 use crate::render::stream_summary::StreamSummary;
 use crate::render::style::TOOL_BULLET;
+use crate::render::tool_call_preview::{tool_call_progress_text, write_tool_call_preview};
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
@@ -217,6 +218,23 @@ impl StreamRenderer {
             }
             return Ok(());
         }
+        if name == "write_file" && self.tool_call_mode != ToolCallDisplayMode::Hidden {
+            self.summary.clear_live_lines()?;
+            let mut stdout = io::stdout();
+            writeln!(
+                stdout,
+                "{TOOL_BULLET} tool {}",
+                self.summary.display_tool_name(name)
+            )?;
+            if !write_tool_call_preview(&mut stdout, t("args", "参数"), name, arguments)? {
+                write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
+            }
+            stdout.flush()?;
+            if self.tool_call_mode == ToolCallDisplayMode::Summary {
+                self.summary.note_tool_call(name);
+            }
+            return Ok(());
+        }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
@@ -230,6 +248,31 @@ impl StreamRenderer {
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_call(name);
         }
+        Ok(())
+    }
+
+    /// 写入工具调用参数接收进度。
+    ///
+    /// 参数:
+    /// - `progress`: 工具调用参数流式进度
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn write_tool_call_progress(&mut self, progress: &ToolCallStreamProgress) -> Result<()> {
+        if self.plain {
+            return Ok(());
+        }
+        self.stop_waiting()?;
+        if self.tool_call_mode == ToolCallDisplayMode::Hidden {
+            return Ok(());
+        }
+        self.end_active_stream_line()?;
+        self.finalize_reasoning_summary()?;
+        let name = progress.name.as_deref().unwrap_or("tool");
+        let text = tool_call_progress_text(self.summary.display_tool_name(name), progress);
+        let mut stdout = io::stdout();
+        writeln!(stdout, "\x1b[2m{text}\x1b[0m")?;
+        stdout.flush()?;
         Ok(())
     }
 
@@ -657,7 +700,7 @@ fn normalize_stream_text(text: &str) -> String {
 /// 返回:
 /// - 是否已经有命令块或 diff 块展示
 fn tool_call_has_visible_block(name: &str) -> bool {
-    matches!(name, "run_command" | "edit_file")
+    matches!(name, "run_command" | "edit_file" | "write_file")
 }
 
 /// 生成工具状态事件文本。
