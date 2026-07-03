@@ -1,6 +1,7 @@
 mod alarm;
 mod archlinux;
 mod calculator;
+pub(crate) mod command;
 mod deep_diagnose;
 mod deep_research;
 mod deepseek_status;
@@ -22,6 +23,7 @@ pub(crate) mod progressive;
 mod protondb_query;
 mod registry;
 mod skills;
+mod trash_path;
 mod vision;
 mod weather;
 mod web;
@@ -39,6 +41,11 @@ pub use skills::{register_skills, skills_catalog_prompt, skills_prompt};
 pub fn readable_tool_name(name: &str) -> &str {
     match name {
         "run_command" => "运行命令",
+        "start_background_command" => "启动后台命令",
+        "list_background_commands" => "列出后台命令",
+        "read_background_command_output" => "读取后台命令输出",
+        "stop_background_command" => "停止后台命令",
+        "cleanup_background_commands" => "清理后台命令",
         "task_agent" => "创建子任务",
         "read_file" => "读取文件",
         "write_file" => "写入文件",
@@ -124,7 +131,9 @@ pub fn clear_aur_review_state(paths: &MiyuPaths) -> anyhow::Result<()> {
 
 pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
-    default_tools::register(&mut registry, true);
+    command::register(&mut registry, config, paths, true);
+    default_tools::register(&mut registry);
+    trash_path::register(&mut registry);
     alarm::register(&mut registry, paths.clone());
     web::register_fetch(&mut registry);
     fcitx_wiki::register(&mut registry);
@@ -192,6 +201,7 @@ pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
 
 pub fn readonly_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
+    command::register_readonly(&mut registry, config, paths);
     default_tools::register_readonly(&mut registry);
     web::register_fetch(&mut registry);
     fcitx_wiki::register(&mut registry);

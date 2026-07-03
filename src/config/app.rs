@@ -151,6 +151,15 @@ impl AppConfig {
         if self.context.default_max_chars == 0 {
             bail!("context.default_max_chars must be greater than 0");
         }
+        if self.tools.background_command_timeout_seconds == 0 {
+            bail!("tools.background_command_timeout_seconds must be greater than 0");
+        }
+        if self.tools.background_command_log_max_bytes == 0 {
+            bail!("tools.background_command_log_max_bytes must be greater than 0");
+        }
+        if self.tools.background_command_stop_grace_seconds == 0 {
+            bail!("tools.background_command_stop_grace_seconds must be greater than 0");
+        }
         if !(0.1..=1.0).contains(&self.context.trim_at_ratio) {
             bail!("context.trim_at_ratio must be between 0.1 and 1.0");
         }

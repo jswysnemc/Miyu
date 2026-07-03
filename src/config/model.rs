@@ -34,6 +34,10 @@ pub struct DisplayConfig {
     pub tool_calls: String,
     #[serde(default = "default_true")]
     pub readable_tool_names: bool,
+    #[serde(default = "default_true")]
+    pub wait_show_model: bool,
+    #[serde(default = "default_true")]
+    pub wait_show_thinking_level: bool,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -50,6 +54,10 @@ struct RawDisplayConfig {
     show_tool_details: Option<bool>,
     #[serde(default)]
     readable_tool_names: Option<bool>,
+    #[serde(default)]
+    wait_show_model: Option<bool>,
+    #[serde(default)]
+    wait_show_thinking_level: Option<bool>,
 }
 
 impl<'de> Deserialize<'de> for DisplayConfig {
@@ -76,6 +84,8 @@ impl<'de> Deserialize<'de> for DisplayConfig {
             reasoning,
             tool_calls,
             readable_tool_names: raw.readable_tool_names.unwrap_or_else(default_true),
+            wait_show_model: raw.wait_show_model.unwrap_or_else(default_true),
+            wait_show_thinking_level: raw.wait_show_thinking_level.unwrap_or_else(default_true),
         })
     }
 }
@@ -171,6 +181,14 @@ pub struct ToolsConfig {
     pub max_rounds: usize,
     #[serde(default)]
     pub progressive_loading_enabled: bool,
+    #[serde(default = "default_true")]
+    pub background_commands_enabled: bool,
+    #[serde(default = "default_background_command_timeout_seconds")]
+    pub background_command_timeout_seconds: u64,
+    #[serde(default = "default_background_command_log_max_bytes")]
+    pub background_command_log_max_bytes: u64,
+    #[serde(default = "default_background_command_stop_grace_seconds")]
+    pub background_command_stop_grace_seconds: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

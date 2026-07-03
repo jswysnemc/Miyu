@@ -3,10 +3,9 @@ use crate::i18n::text as t;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, ErrorKind, Read};
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::time::{SystemTime, UNIX_EPOCH};
 use tokio::process::Command;
 
 const MAX_READ_BYTES: u64 = 50 * 1024;
@@ -15,14 +14,8 @@ const MAX_LINE_CHARS: usize = 2_000;
 const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 const SEARCH_TIMEOUT_SECONDS: u64 = 30;
 
-pub fn register(registry: &mut ToolRegistry, allow_command_execution: bool) {
+pub fn register(registry: &mut ToolRegistry) {
     register_readonly(registry);
-    registry.register(ToolSpec::new(
-        "run_command",
-        t("Run a shell command in the workspace when skills.allow_command_execution is enabled.", "当 skills.allow_command_execution 启用时，在工作区运行 shell 命令。"),
-        json!({"type":"object","properties":{"command":{"type":"string","description": t("Command to run.", "要运行的命令。")},"timeout_seconds":{"type":"integer","description": t("Optional timeout in seconds.", "可选超时时间，单位秒。")}},"required":["command"],"additionalProperties":false}),
-        move |args| async move { run_command(args, allow_command_execution).await },
-    ).writes());
     registry.register(ToolSpec::new(
         "task_agent",
         t("Create a focused subtask plan for a complex task. Current implementation returns a structured handoff prompt for the main agent.", "为复杂任务创建聚焦的子任务计划。当前实现会返回给主 agent 使用的结构化交接提示。"),
@@ -35,21 +28,9 @@ pub fn register(registry: &mut ToolRegistry, allow_command_execution: bool) {
         json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"start_line":{"type":"integer","description": t("1-based first line to replace.", "要替换的第一行，1 起始。")},"end_line":{"type":"integer","description": t("1-based last line to replace, inclusive.", "要替换的最后一行，闭区间。")},"replacement":{"type":"string","description": t("Replacement text. May contain multiple lines. Empty text deletes the line range.", "替换文本，可包含多行；空文本会删除指定行范围。")}},"required":["path","start_line","end_line","replacement"],"additionalProperties":false}),
         |args| async move { edit_file(args) },
     ).writes());
-    registry.register(ToolSpec::new(
-        "trash_path",
-        t("Move a file, directory, or symlink to the system Trash instead of permanently deleting it. Use this when the user asks to delete/remove/clean up a local path; do not use rm unless explicitly requested. Only claim success when exists_after is false.", "把文件、目录或符号链接移入系统回收站，而不是永久删除。用户要求删除/移除/清理本地路径时优先使用它；除非用户明确要求，不要使用 rm。只有 exists_after 为 false 时才说明已处理。"),
-        json!({"type":"object","properties":{"path":{"type":"string","description": t("File, directory, or symlink path to move to Trash. Supports absolute paths, workspace-relative paths, and ~/ paths.", "要移入回收站的文件、目录或符号链接路径。支持绝对路径、工作区相对路径和 ~/ 路径。")}},"required":["path"],"additionalProperties":false}),
-        |args| async move { trash_path(args) },
-    ).writes());
 }
 
 pub fn register_readonly(registry: &mut ToolRegistry) {
-    registry.register(ToolSpec::new(
-        "run_command",
-        t("Run an explicitly read-only shell command for inspection. Mutating commands are blocked in plan mode.", "运行明确只读的 shell 命令用于检查。计划模式会阻止修改性命令。"),
-        json!({"type":"object","properties":{"command":{"type":"string","description": t("Read-only command to run.", "要运行的只读命令。")},"timeout_seconds":{"type":"integer","description": t("Optional timeout in seconds.", "可选超时时间，单位秒。")}},"required":["command"],"additionalProperties":false}),
-        |args| async move { run_readonly_command(args).await },
-    ));
     registry.register(ToolSpec::new(
         "check_os_info",
         t("Check basic read-only OS, shell, desktop session, kernel, host, and package-manager context. For concrete Linux input method issues, prefer linux_input_method_diagnose.", "查看只读基础系统信息，包括 OS、shell、桌面会话、内核、主机和包管理器上下文。排查具体 Linux 输入法问题时优先使用 linux_input_method_diagnose。"),
@@ -362,32 +343,6 @@ fn edit_file(args: Value) -> Result<String> {
     }))?)
 }
 
-fn trash_path(args: Value) -> Result<String> {
-    let input = path_arg(&args, "path")?;
-    let resolved = resolve_existing_path_without_following_leaf(&input)?;
-    ensure_safe_trash_target(&resolved)?;
-    let metadata = std::fs::symlink_metadata(&resolved)?;
-    let kind = path_kind(&metadata);
-    let existed_before = true;
-    let original_path = resolved.display().to_string();
-    let timestamp_before = current_unix_seconds();
-
-    trash::delete(&resolved).map_err(|err| anyhow::anyhow!("failed to move to trash: {err}"))?;
-
-    let exists_after = std::fs::symlink_metadata(&resolved).is_ok();
-    let trash_item_id = find_recent_trash_item(&resolved, timestamp_before);
-    Ok(serde_json::to_string_pretty(&json!({
-        "ok": !exists_after,
-        "kind": kind,
-        "original_path": original_path,
-        "existed_before": existed_before,
-        "exists_after": exists_after,
-        "trash_item_id": trash_item_id,
-        "restore_hint": t("Open the system Trash and restore the item if needed.", "如需恢复，请打开系统回收站并还原该项目。"),
-        "note": t("The path was moved to Trash, not permanently deleted.", "该路径已移入回收站，并未永久删除。")
-    }))?)
-}
-
 async fn glob_files(args: Value) -> Result<String> {
     let path = optional_path(&args).unwrap_or(std::env::current_dir()?);
     let search_path = prepare_search_path(&path)?;
@@ -457,168 +412,6 @@ async fn grep_text(args: Value) -> Result<String> {
     search_output_limited(output, max_results)
 }
 
-async fn run_command(args: Value, allowed: bool) -> Result<String> {
-    if !allowed {
-        bail!("{}", t("command execution is disabled; set skills.allow_command_execution=true in config.jsonc to enable run_command", "命令执行已禁用；请在 config.jsonc 中设置 skills.allow_command_execution=true 以启用 run_command"));
-    }
-    let command = required(&args, "command")?;
-    let timeout = args
-        .get("timeout_seconds")
-        .and_then(Value::as_u64)
-        .unwrap_or(30)
-        .min(120);
-    let output = run_shell_command(&command, timeout).await?;
-    command_output(output)
-}
-
-async fn run_readonly_command(args: Value) -> Result<String> {
-    let command = required(&args, "command")?;
-    ensure_readonly_command(&command)?;
-    let timeout = args
-        .get("timeout_seconds")
-        .and_then(Value::as_u64)
-        .unwrap_or(30)
-        .min(120);
-    let output = run_shell_command(&command, timeout).await?;
-    command_output(output)
-}
-
-async fn run_shell_command(command: &str, timeout_seconds: u64) -> Result<std::process::Output> {
-    let duration = std::time::Duration::from_secs(timeout_seconds);
-    let mut missing = Vec::new();
-    for (program, mut shell) in shell_commands(command) {
-        match tokio::time::timeout(duration, shell.stdin(Stdio::null()).output()).await {
-            Ok(Ok(output)) => return Ok(output),
-            Ok(Err(err)) if err.kind() == ErrorKind::NotFound => {
-                missing.push(program);
-            }
-            Ok(Err(err)) => return Err(err.into()),
-            Err(_) => bail!("shell command timed out after {timeout_seconds}s"),
-        }
-    }
-    bail!("no supported shell found; tried {}", missing.join(", "))
-}
-
-#[cfg(windows)]
-fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
-    let mut pwsh = Command::new("pwsh");
-    pwsh.arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-Command")
-        .arg(command);
-
-    let mut powershell = Command::new("powershell");
-    powershell
-        .arg("-NoLogo")
-        .arg("-NoProfile")
-        .arg("-NonInteractive")
-        .arg("-Command")
-        .arg(command);
-
-    let mut cmd = Command::new("cmd");
-    cmd.arg("/S").arg("/C").arg(command);
-
-    vec![("pwsh", pwsh), ("powershell", powershell), ("cmd", cmd)]
-}
-
-#[cfg(not(windows))]
-fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
-    let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command);
-    vec![("sh", shell)]
-}
-
-fn ensure_readonly_command(command: &str) -> Result<()> {
-    let lower = command.to_ascii_lowercase();
-    let forbidden = [
-        ">",
-        ">>",
-        " 2>",
-        "tee ",
-        "tee -",
-        "rm ",
-        "mv ",
-        "cp ",
-        "mkdir ",
-        "rmdir ",
-        "touch ",
-        "chmod ",
-        "chown ",
-        "chgrp ",
-        "ln ",
-        "truncate ",
-        "dd ",
-        "mkfs",
-        "mount ",
-        "umount ",
-        "systemctl ",
-        "service ",
-        "kill ",
-        "pkill ",
-        "reboot",
-        "shutdown",
-        "poweroff",
-        "pacman -s",
-        "pacman -r",
-        "pacman -u",
-        "paru -s",
-        "yay -s",
-        "apt install",
-        "apt remove",
-        "apt update",
-        "dnf install",
-        "brew install",
-        "sed -i",
-        "git add",
-        "git commit",
-        "git push",
-        "git reset",
-        "git checkout",
-        "cargo build",
-        "cargo test",
-        "make ",
-        "npm install",
-        "pnpm install",
-        "yarn install",
-        "remove-item",
-        "ri ",
-        " ri ",
-        "del ",
-        "erase ",
-        "copy ",
-        "move ",
-        "ren ",
-        "rename ",
-        "move-item",
-        "copy-item",
-        "new-item",
-        "rename-item",
-        "set-content",
-        "add-content",
-        "clear-content",
-        "out-file",
-        "set-acl",
-        "start-process",
-        "stop-process",
-        "taskkill",
-        "winget install",
-        "winget uninstall",
-        "scoop install",
-        "choco install",
-    ];
-    if forbidden.iter().any(|needle| lower.contains(needle)) {
-        bail!(
-            "{}",
-            t(
-                "Plan mode only allows read-only inspection commands",
-                "计划模式只允许只读检查命令"
-            )
-        );
-    }
-    Ok(())
-}
-
 fn task_agent(args: Value) -> Result<String> {
     let prompt = required(&args, "prompt")?;
     let description = args
@@ -627,14 +420,6 @@ fn task_agent(args: Value) -> Result<String> {
         .unwrap_or("subtask");
     Ok(serde_json::to_string_pretty(
         &json!({"description": description, "prompt": prompt, "note": t("Subagent execution is not implemented yet; use this as a structured handoff.", "子 agent 执行尚未实现；请把它作为结构化交接内容使用。")}),
-    )?)
-}
-
-fn command_output(output: std::process::Output) -> Result<String> {
-    let stdout = clip_output(&String::from_utf8_lossy(&output.stdout));
-    let stderr = clip_output(&String::from_utf8_lossy(&output.stderr));
-    Ok(serde_json::to_string_pretty(
-        &json!({"success": output.status.success(), "exit_code": output.status.code(), "stdout": stdout, "stderr": stderr}),
     )?)
 }
 
@@ -735,121 +520,6 @@ fn ensure_editable_file_path(path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn resolve_existing_path_without_following_leaf(path: &Path) -> Result<PathBuf> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let filename = path
-        .file_name()
-        .ok_or_else(|| anyhow::anyhow!("refusing to trash a root path: {}", path.display()))?;
-    let parent = parent.canonicalize()?;
-    let resolved = parent.join(filename);
-    std::fs::symlink_metadata(&resolved)?;
-    Ok(resolved)
-}
-
-fn ensure_safe_trash_target(path: &Path) -> Result<()> {
-    let cwd = std::env::current_dir()?.canonicalize()?;
-    let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
-    let dangerous = [
-        Path::new("/"),
-        Path::new("/bin"),
-        Path::new("/boot"),
-        Path::new("/dev"),
-        Path::new("/etc"),
-        Path::new("/home"),
-        Path::new("/opt"),
-        Path::new("/proc"),
-        Path::new("/root"),
-        Path::new("/run"),
-        Path::new("/sbin"),
-        Path::new("/sys"),
-        Path::new("/tmp"),
-        Path::new("/usr"),
-        Path::new("/var"),
-    ];
-    if dangerous.iter().any(|item| path == *item) {
-        bail!(
-            "refusing to trash dangerous system path: {}",
-            path.display()
-        )
-    }
-    if path == cwd {
-        bail!(
-            "refusing to trash current workspace root: {}",
-            path.display()
-        )
-    }
-    if let Some(home) = home {
-        if path == home {
-            bail!("refusing to trash home directory: {}", path.display())
-        }
-        let trash_dir = home.join(".local/share/Trash");
-        if path == trash_dir || path.starts_with(&trash_dir) {
-            bail!(
-                "refusing to trash the Trash directory itself: {}",
-                path.display()
-            )
-        }
-    }
-    Ok(())
-}
-
-fn path_kind(metadata: &std::fs::Metadata) -> &'static str {
-    let file_type = metadata.file_type();
-    if file_type.is_symlink() {
-        "symlink"
-    } else if file_type.is_dir() {
-        "directory"
-    } else if file_type.is_file() {
-        "file"
-    } else {
-        "other"
-    }
-}
-
-fn current_unix_seconds() -> i64 {
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .map(|duration| duration.as_secs() as i64)
-        .unwrap_or(0)
-}
-
-fn find_recent_trash_item(original_path: &Path, timestamp_before: i64) -> Option<String> {
-    #[cfg(any(
-        target_os = "windows",
-        all(
-            unix,
-            not(target_os = "macos"),
-            not(target_os = "ios"),
-            not(target_os = "android")
-        )
-    ))]
-    {
-        let items = trash::os_limited::list().ok()?;
-        items
-            .into_iter()
-            .filter(|item| item.original_path() == original_path)
-            .filter(|item| {
-                item.time_deleted < 0 || item.time_deleted >= timestamp_before.saturating_sub(2)
-            })
-            .max_by_key(|item| item.time_deleted)
-            .map(|item| item.id.to_string_lossy().to_string())
-    }
-    #[cfg(not(any(
-        target_os = "windows",
-        all(
-            unix,
-            not(target_os = "macos"),
-            not(target_os = "ios"),
-            not(target_os = "android")
-        )
-    )))]
-    {
-        let _ = original_path;
-        let _ = timestamp_before;
-        None
-    }
-}
-
 fn max_results(args: &Value) -> usize {
     args.get("max_results")
         .and_then(Value::as_u64)
@@ -919,37 +589,6 @@ fn required(args: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn readonly_command_allows_inspection() {
-        assert!(ensure_readonly_command("git status --short").is_ok());
-        assert!(ensure_readonly_command("pacman -Q miyu").is_ok());
-    }
-
-    #[test]
-    fn readonly_command_blocks_mutation() {
-        assert!(ensure_readonly_command("rm file").is_err());
-        assert!(ensure_readonly_command("sed -i 's/a/b/' file").is_err());
-        assert!(ensure_readonly_command("cargo test").is_err());
-        assert!(ensure_readonly_command("Remove-Item file").is_err());
-        assert!(ensure_readonly_command("Set-Content file value").is_err());
-        assert!(ensure_readonly_command("winget install foo").is_err());
-    }
-
-    #[tokio::test]
-    async fn readonly_command_runs_with_platform_shell() {
-        #[cfg(windows)]
-        let command = "Write-Output hello";
-        #[cfg(not(windows))]
-        let command = "printf hello";
-
-        let result = run_readonly_command(json!({"command": command}))
-            .await
-            .unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["success"], true);
-        assert_eq!(data["stdout"], "hello");
-    }
 
     #[test]
     fn edit_file_replaces_lines() {
@@ -1055,40 +694,5 @@ mod tests {
         let args = search_exclude_args(root).join(" ");
         assert!(args.contains("--glob=!proc/**"));
         assert!(args.contains("--glob=!usr/**"));
-    }
-
-    #[test]
-    fn trash_path_rejects_workspace_root() {
-        let cwd = std::env::current_dir().unwrap().canonicalize().unwrap();
-        assert!(ensure_safe_trash_target(&cwd).is_err());
-    }
-
-    #[test]
-    fn trash_path_moves_file_to_trash() {
-        let cwd = std::env::current_dir().unwrap();
-        let temp = tempfile::tempdir_in(cwd).unwrap();
-        let path = temp.path().join("trash-me.txt");
-        std::fs::write(&path, "bye").unwrap();
-        let result = trash_path(json!({"path": path.display().to_string()})).unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["ok"], true);
-        assert_eq!(data["kind"], "file");
-        assert_eq!(data["exists_after"], false);
-        assert!(!path.exists());
-    }
-
-    #[test]
-    fn trash_path_moves_directory_to_trash() {
-        let cwd = std::env::current_dir().unwrap();
-        let temp = tempfile::tempdir_in(cwd).unwrap();
-        let path = temp.path().join("trash-dir");
-        std::fs::create_dir(&path).unwrap();
-        std::fs::write(path.join("child.txt"), "bye").unwrap();
-        let result = trash_path(json!({"path": path.display().to_string()})).unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["ok"], true);
-        assert_eq!(data["kind"], "directory");
-        assert_eq!(data["exists_after"], false);
-        assert!(!path.exists());
     }
 }

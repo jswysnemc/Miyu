@@ -31,9 +31,34 @@ fn display_readable_tool_names_defaults_enabled() {
 }
 
 #[test]
+fn display_wait_detail_options_default_enabled() {
+    let display: DisplayConfig = serde_json::from_str(r#"{"tool_calls":"summary"}"#).unwrap();
+    assert!(display.wait_show_model);
+    assert!(display.wait_show_thinking_level);
+}
+
+#[test]
+fn display_wait_detail_options_can_be_disabled() {
+    let display: DisplayConfig =
+        serde_json::from_str(r#"{"wait_show_model":false,"wait_show_thinking_level":false}"#)
+            .unwrap();
+    assert!(!display.wait_show_model);
+    assert!(!display.wait_show_thinking_level);
+}
+
+#[test]
 fn progressive_tool_loading_defaults_disabled() {
     let config = AppConfig::default();
     assert!(!config.tools.progressive_loading_enabled);
+}
+
+#[test]
+fn background_command_defaults_are_enabled() {
+    let config = AppConfig::default();
+    assert!(config.tools.background_commands_enabled);
+    assert!(config.tools.background_command_timeout_seconds > 0);
+    assert!(config.tools.background_command_log_max_bytes > 0);
+    assert!(config.tools.background_command_stop_grace_seconds > 0);
 }
 
 #[test]

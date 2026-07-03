@@ -1,9 +1,9 @@
 use super::*;
 use crate::render::code_block::frame_min_width;
 use crate::render::style::{
-    BOLD_STYLE, CODE_BLOCK_FRAME_STYLE, CODE_FUNCTION_STYLE, CODE_KEYWORD_STYLE,
-    CODE_TOKEN_RESET, HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE,
-    LINK_LABEL_STYLE, PRIMARY_STYLE, RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
+    BOLD_STYLE, CODE_BLOCK_FRAME_STYLE, CODE_FUNCTION_STYLE, CODE_KEYWORD_STYLE, CODE_TOKEN_RESET,
+    HEADER_STYLE, IMAGE_STYLE, INLINE_CODE_STYLE, ITALIC_STYLE, LINK_LABEL_STYLE, PRIMARY_STYLE,
+    RESET, STRIKE_STYLE, TERTIARY_STYLE, URL_STYLE,
 };
 use crate::render::table;
 use std::sync::Mutex;
@@ -58,15 +58,29 @@ fn buffers_tables_until_non_table_line() {
     let mut renderer = MarkdownStreamRenderer::new();
     assert_eq!(renderer.push("| a | b |\n"), "");
     assert_eq!(renderer.push("| - | - |\n"), "");
-    let first_row = renderer.push("| 1 | 2 |\n");
-    assert!(first_row.contains("\x1b[1ma\x1b[0m"));
-    assert!(first_row.contains("1"));
-    assert!(first_row.contains('┌'));
-    assert!(first_row.contains('├'));
-    assert!(!first_row.contains('+'));
+    assert_eq!(renderer.push("| 1 | 2 |\n"), "");
     let output = renderer.push("done\n");
+    assert!(output.contains("\x1b[1ma\x1b[0m"));
+    assert!(output.contains("1"));
+    assert!(output.contains('┌'));
+    assert!(output.contains('├'));
     assert!(output.contains('└'));
+    assert!(!output.contains('+'));
     assert!(output.ends_with("done\n"));
+}
+
+#[test]
+fn streaming_table_width_uses_later_rows() {
+    let mut renderer = MarkdownStreamRenderer::new();
+    assert_eq!(renderer.push("| 软件 | 命令 |\n"), "");
+    assert_eq!(renderer.push("|---|---|\n"), "");
+    assert_eq!(renderer.push("| Arch | `pacman -Syu` |\n"), "");
+    assert_eq!(renderer.push("| Neovim | `sudo pacman -S neovim` |\n"), "");
+
+    let output = renderer.flush();
+
+    assert!(output.contains("sudo pacman -S neovim"));
+    assert_eq!(output.matches('├').count(), 2);
 }
 
 #[test]
@@ -86,9 +100,7 @@ fn code_block_has_label_and_readable_content() {
     assert!(!output.contains("-- code rust"));
     assert!(!output.contains(",-- code rust"));
     assert!(!output.contains("\x1b[2m|\x1b[0m"));
-    assert!(output.contains(&format!(
-        "{CODE_KEYWORD_STYLE}fn{CODE_TOKEN_RESET}"
-    )));
+    assert!(output.contains(&format!("{CODE_KEYWORD_STYLE}fn{CODE_TOKEN_RESET}")));
     assert!(output.contains(&format!("{CODE_FUNCTION_STYLE}main{CODE_TOKEN_RESET}")));
     assert!(output.contains(&format!("{CODE_BLOCK_FRAME_STYLE}── rust ")));
     assert!(output.contains(&format!(
@@ -296,7 +308,10 @@ fn horizontal_rule_uses_terminal_width_fallback() {
     let output = render_markdown_line("---");
     assert!(output.starts_with("\x1b[2m"));
     assert!(output.ends_with("\x1b[0m"));
-    assert!(table::visible_width(&output) >= 16);
+    assert_eq!(
+        table::visible_width(&output),
+        crate::render::markdown_blocks::horizontal_rule_width()
+    );
 }
 
 #[test]
@@ -345,9 +360,7 @@ fn table_cell_renders_display_math_as_halfblock_image() {
 #[test]
 fn table_cell_renders_links_as_label_only() {
     let output = render_table_cell("[点我去 ArchWiki](https://wiki.archlinux.org)");
-    assert!(output.contains(&format!(
-        "{LINK_LABEL_STYLE}点我去 ArchWiki{RESET}"
-    )));
+    assert!(output.contains(&format!("{LINK_LABEL_STYLE}点我去 ArchWiki{RESET}")));
     assert!(!output.contains("https://wiki.archlinux.org"));
     assert!(!output.contains('\n'));
 }

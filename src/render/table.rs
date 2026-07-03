@@ -337,22 +337,22 @@ fn wrap_ansi_text(text: &str, width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     let mut current = String::new();
     let mut current_width = 0usize;
+    let mut active_style = String::new();
     let mut chars = text.chars().peekable();
     while let Some(ch) = chars.next() {
         if ch == '\x1b' {
-            current.push(ch);
-            for next in chars.by_ref() {
-                current.push(next);
-                if next == 'm' {
-                    break;
-                }
-            }
+            let sequence = collect_ansi_sequence(ch, &mut chars);
+            update_active_style(&sequence, &mut active_style);
+            current.push_str(&sequence);
             continue;
         }
         let ch_width = char_display_width(ch);
         if current_width > 0 && current_width + ch_width > width {
+            if !active_style.is_empty() {
+                current.push_str(RESET);
+            }
             lines.push(current);
-            current = String::new();
+            current = active_style.clone();
             current_width = 0;
         }
         current.push(ch);
@@ -360,6 +360,58 @@ fn wrap_ansi_text(text: &str, width: usize) -> Vec<String> {
     }
     lines.push(current);
     lines
+}
+
+/// 收集完整 ANSI 转义序列。
+///
+/// 参数:
+/// - `first`: 已读取的 ESC 字符
+/// - `chars`: 剩余字符迭代器
+///
+/// 返回:
+/// - 完整 ANSI 转义序列
+fn collect_ansi_sequence(
+    first: char,
+    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
+) -> String {
+    let mut sequence = String::new();
+    sequence.push(first);
+    let Some(next) = chars.next() else {
+        return sequence;
+    };
+    sequence.push(next);
+    if next == '[' {
+        for ch in chars.by_ref() {
+            sequence.push(ch);
+            if (ch as u32) >= 0x40 && (ch as u32) <= 0x7e {
+                break;
+            }
+        }
+    } else if next != '\\' {
+        for ch in chars.by_ref() {
+            sequence.push(ch);
+            if ch == '\\' {
+                break;
+            }
+        }
+    }
+    sequence
+}
+
+/// 根据 SGR 转义序列更新当前活动样式。
+///
+/// 参数:
+/// - `sequence`: ANSI 转义序列
+/// - `active_style`: 当前活动样式缓冲
+fn update_active_style(sequence: &str, active_style: &mut String) {
+    if !sequence.starts_with("\x1b[") || !sequence.ends_with('m') {
+        return;
+    }
+    if sequence == RESET || sequence == "\x1b[m" {
+        active_style.clear();
+    } else {
+        active_style.push_str(sequence);
+    }
 }
 
 /// 计算单个字符的显示宽度。
@@ -425,6 +477,7 @@ fn push_vertical(output: &mut String) {
 mod tests {
     use super::*;
     use crate::render::markdown::render_table_cell_content;
+    use crate::render::style::INLINE_CODE_STYLE;
 
     #[test]
     fn table_uses_thin_box_borders() {
@@ -458,7 +511,10 @@ mod tests {
             render_table_cell_content,
         );
         let middle_border_count = output.matches('├').count();
-        assert_eq!(middle_border_count, 2, "expected 2 middle borders, got: {output}");
+        assert_eq!(
+            middle_border_count, 2,
+            "expected 2 middle borders, got: {output}"
+        );
     }
 
     #[test]
@@ -510,5 +566,54 @@ mod tests {
             );
         }
         assert!(output.lines().count() > 5);
+    }
+
+    #[test]
+    fn wrap_ansi_text_preserves_inline_code_style_across_lines() {
+        let text = format!("{INLINE_CODE_STYLE}sudo pacman -S neovim{RESET}");
+
+        let lines = wrap_ansi_text(&text, 12);
+
+        assert!(lines.len() > 1);
+        assert!(lines[0].contains(INLINE_CODE_STYLE));
+        assert!(lines[0].ends_with(RESET));
+        assert!(lines[1].starts_with(INLINE_CODE_STYLE));
+        assert!(lines.last().unwrap().ends_with(RESET));
+        assert_eq!(
+            strip_ansi_for_test(&lines.join("")),
+            "sudo pacman -S neovim"
+        );
+    }
+
+    /// 去除 ANSI 转义序列，方便断言表格可见文本。
+    ///
+    /// 参数:
+    /// - `text`: 原始终端文本
+    ///
+    /// 返回:
+    /// - 去除样式后的文本
+    fn strip_ansi_for_test(text: &str) -> String {
+        let mut output = String::new();
+        let mut escape = false;
+        let mut csi = false;
+        for ch in text.chars() {
+            if ch == '\x1b' {
+                escape = true;
+                csi = false;
+            } else if escape {
+                if csi {
+                    if (ch as u32) >= 0x40 && (ch as u32) <= 0x7e {
+                        escape = false;
+                    }
+                } else if ch == '[' {
+                    csi = true;
+                } else if ch == '\\' || ch == 'm' {
+                    escape = false;
+                }
+            } else {
+                output.push(ch);
+            }
+        }
+        output
     }
 }

@@ -1,20 +1,16 @@
 use crate::i18n::text as t;
+use crate::render::style::TOOL_BULLET;
 use crate::render::tool_names::readable_tool_name;
 use anyhow::Result;
-use crossterm::cursor::{MoveToColumn, MoveUp};
-use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType};
 use std::collections::BTreeMap;
-use std::io::{self, IsTerminal, Write};
+
+const TOOL_SUMMARY_DETAIL_LIMIT: usize = 8;
 
 pub(crate) struct StreamSummary {
     reasoning_chars: usize,
     reasoning_lines: usize,
     tool_stats: BTreeMap<String, ToolStats>,
     readable_tool_names: bool,
-    live_summary: bool,
-    line_active: bool,
-    lines_active: u16,
 }
 
 impl StreamSummary {
@@ -31,9 +27,6 @@ impl StreamSummary {
             reasoning_lines: 0,
             tool_stats: BTreeMap::new(),
             readable_tool_names,
-            live_summary: io::stdout().is_terminal(),
-            line_active: false,
-            lines_active: 0,
         }
     }
 
@@ -68,22 +61,13 @@ impl StreamSummary {
     /// - 推理摘要文本
     pub(crate) fn reasoning_text(&self) -> String {
         format!(
-            "{} · {} {} · {} {}",
+            "{TOOL_BULLET} {} · {} {} · {} {}",
             t("thinking", "思考"),
             self.reasoning_lines.max(1),
             t("lines", "行"),
             self.reasoning_chars,
             t("chars", "字符")
         )
-    }
-
-    /// 渲染实时推理摘要行。
-    ///
-    /// 返回:
-    /// - 渲染是否成功
-    pub(crate) fn render_reasoning_live(&mut self) -> Result<()> {
-        let text = self.reasoning_text();
-        self.render_live_line(&text, SummaryStyle::Reasoning)
     }
 
     /// 固化推理摘要。
@@ -95,18 +79,7 @@ impl StreamSummary {
             return Ok(());
         }
         let text = self.reasoning_text();
-        if self.line_active {
-            let mut stdout = io::stdout();
-            self.clear_live_lines()?;
-            writeln!(
-                stdout,
-                "{}",
-                style_summary_text(&text, SummaryStyle::Reasoning)
-            )?;
-            stdout.flush()?;
-        } else {
-            println!("{}", style_summary_text(&text, SummaryStyle::Reasoning));
-        }
+        println!("{}", style_summary_text(&text, SummaryStyle::Reasoning));
         self.reasoning_chars = 0;
         self.reasoning_lines = 0;
         Ok(())
@@ -147,15 +120,6 @@ impl StreamSummary {
             .progress = Some(message.to_string());
     }
 
-    /// 渲染实时工具摘要行。
-    ///
-    /// 返回:
-    /// - 渲染是否成功
-    pub(crate) fn render_tools_live(&mut self) -> Result<()> {
-        let text = self.tool_summary_text();
-        self.render_live_line(&text, SummaryStyle::Tool)
-    }
-
     /// 固化工具调用摘要。
     ///
     /// 返回:
@@ -165,14 +129,7 @@ impl StreamSummary {
             return Ok(());
         }
         let text = self.tool_summary_text();
-        if self.line_active {
-            let mut stdout = io::stdout();
-            self.clear_live_lines()?;
-            writeln!(stdout, "{}", style_summary_text(&text, SummaryStyle::Tool))?;
-            stdout.flush()?;
-        } else {
-            println!("{}", style_summary_text(&text, SummaryStyle::Tool));
-        }
+        println!("{}", style_summary_text(&text, SummaryStyle::Tool));
         self.tool_stats.clear();
         Ok(())
     }
@@ -182,20 +139,6 @@ impl StreamSummary {
     /// 返回:
     /// - 清除是否成功
     pub(crate) fn clear_live_lines(&mut self) -> Result<()> {
-        if !self.line_active {
-            return Ok(());
-        }
-        let mut stdout = io::stdout();
-        let lines = self.lines_active.max(1);
-        for index in 0..lines {
-            if index > 0 {
-                execute!(stdout, MoveUp(1))?;
-            }
-            execute!(stdout, MoveToColumn(0), Clear(ClearType::CurrentLine))?;
-        }
-        stdout.flush()?;
-        self.line_active = false;
-        self.lines_active = 0;
         Ok(())
     }
 
@@ -214,48 +157,32 @@ impl StreamSummary {
         }
     }
 
-    /// 渲染实时摘要行。
-    ///
-    /// 参数:
-    /// - `text`: 摘要文本
-    /// - `style`: 摘要样式
-    ///
-    /// 返回:
-    /// - 渲染是否成功
-    fn render_live_line(&mut self, text: &str, style: SummaryStyle) -> Result<()> {
-        if !self.live_summary {
-            return Ok(());
-        }
-        let mut stdout = io::stdout();
-        self.clear_live_lines()?;
-        let lines = text.lines().collect::<Vec<_>>();
-        for (index, line) in lines.iter().enumerate() {
-            if index > 0 {
-                writeln!(stdout)?;
-            }
-            write!(stdout, "{}\x1b[K", style_summary_text(line, style))?;
-        }
-        stdout.flush()?;
-        self.line_active = true;
-        self.lines_active = lines.len().max(1) as u16;
-        Ok(())
-    }
-
     /// 生成工具调用摘要文本。
     ///
     /// 返回:
     /// - 工具调用摘要文本
     fn tool_summary_text(&self) -> String {
-        let parts = self
+        let total = tool_totals(&self.tool_stats);
+        let mut lines = vec![format!(
+            "{TOOL_BULLET} {}: {} {} · ok:{} · err:{}{}",
+            t("tools", "工具"),
+            total.calls,
+            t("calls", "次"),
+            total.ok,
+            total.error,
+            running_suffix(total.running)
+        )];
+        let entries = self
             .tool_stats
             .iter()
+            .take(TOOL_SUMMARY_DETAIL_LIMIT)
             .map(|(name, stats)| {
                 let header = tool_status_text(self.display_tool_name(name), stats);
                 stats.progress.as_ref().map_or(header.clone(), |message| {
                     let progress = message
                         .lines()
                         .filter(|line| !line.trim().is_empty())
-                        .map(|line| format!("· {}", clip_progress_line(line, 120)))
+                        .map(|line| format!("    {TOOL_BULLET} {}", clip_progress_line(line, 80)))
                         .collect::<Vec<_>>()
                         .join("\n");
                     if progress.is_empty() {
@@ -265,10 +192,29 @@ impl StreamSummary {
                     }
                 })
             })
-            .collect::<Vec<_>>()
-            .join(", ");
-        format!("{}: {parts}", t("tools", "工具"))
+            .map(|entry| format!("  {TOOL_BULLET} {entry}"));
+        lines.extend(entries);
+        let remaining = self
+            .tool_stats
+            .len()
+            .saturating_sub(TOOL_SUMMARY_DETAIL_LIMIT);
+        if remaining > 0 {
+            lines.push(format!(
+                "  {TOOL_BULLET} ... {} {}",
+                remaining,
+                t("more tools", "个工具未展开")
+            ));
+        }
+        lines.join("\n")
     }
+}
+
+#[derive(Default)]
+struct ToolTotals {
+    calls: usize,
+    ok: usize,
+    error: usize,
+    running: usize,
 }
 
 #[derive(Default)]
@@ -277,6 +223,41 @@ pub(crate) struct ToolStats {
     pub(crate) ok: usize,
     pub(crate) error: usize,
     pub(crate) progress: Option<String>,
+}
+
+/// 汇总工具调用统计。
+///
+/// 参数:
+/// - `tool_stats`: 工具统计表
+///
+/// 返回:
+/// - 汇总后的工具调用统计
+fn tool_totals(tool_stats: &BTreeMap<String, ToolStats>) -> ToolTotals {
+    tool_stats
+        .values()
+        .fold(ToolTotals::default(), |mut total, stats| {
+            let calls = stats.calls.max(stats.ok + stats.error).max(1);
+            total.calls += calls;
+            total.ok += stats.ok;
+            total.error += stats.error;
+            total.running += stats.calls.saturating_sub(stats.ok + stats.error);
+            total
+        })
+}
+
+/// 生成运行中数量后缀。
+///
+/// 参数:
+/// - `running`: 运行中工具数量
+///
+/// 返回:
+/// - 运行中数量文本，空字符串表示没有运行中的工具
+fn running_suffix(running: usize) -> String {
+    if running == 0 {
+        String::new()
+    } else {
+        format!(" · {}:{running}", t("running", "运行中"))
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -354,5 +335,84 @@ fn clip_progress_line(text: &str, max_chars: usize) -> String {
                 .take(max_chars.saturating_sub(3))
                 .collect::<String>()
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tool_summary_uses_bullet_prefix() {
+        let mut summary = StreamSummary::new(false);
+        summary.note_tool_call("run_command");
+
+        let output = summary.tool_summary_text();
+
+        assert!(output.starts_with("• "));
+        assert!(output.contains("run_command×1"));
+    }
+
+    #[test]
+    fn reasoning_summary_uses_bullet_prefix() {
+        let mut summary = StreamSummary::new(false);
+        summary.add_reasoning_text("abc\n");
+
+        let output = summary.reasoning_text();
+
+        assert!(output.starts_with("• "));
+        assert!(output.contains("思考") || output.contains("thinking"));
+    }
+
+    #[test]
+    fn tool_progress_lines_use_bullet_prefix() {
+        let mut summary = StreamSummary::new(false);
+        summary.note_tool_call("edit_file");
+        summary.note_tool_progress("edit_file", "replace line\nwrite file");
+
+        let output = summary.tool_summary_text();
+
+        assert!(output.contains("\n    • replace line"));
+        assert!(output.contains("\n    • write file"));
+        assert!(!output.contains("\n· "));
+    }
+
+    #[test]
+    fn tool_summary_uses_multiline_compact_layout() {
+        let mut summary = StreamSummary::new(false);
+        summary.note_tool_call("read_file");
+        summary.note_tool_result("read_file", true);
+        summary.note_tool_call("web_search");
+        summary.note_tool_result("web_search", false);
+
+        let output = summary.tool_summary_text();
+
+        assert!(output.lines().count() >= 3);
+        assert!(output.lines().next().unwrap().contains("ok:1"));
+        assert!(output.lines().next().unwrap().contains("err:1"));
+        assert!(output.contains("\n  • read_file×1 ok"));
+        assert!(output.contains("\n  • web_search×1 err"));
+        assert!(!output.contains(", web_search"));
+    }
+
+    #[test]
+    fn tool_summary_caps_detail_rows() {
+        let mut summary = StreamSummary::new(false);
+        for index in 0..10 {
+            let name = format!("tool_{index}");
+            summary.note_tool_call(&name);
+            summary.note_tool_result(&name, true);
+        }
+
+        let output = summary.tool_summary_text();
+
+        assert!(output.contains("... 2"));
+        assert_eq!(
+            output
+                .lines()
+                .filter(|line| line.trim_start().starts_with("• tool_"))
+                .count(),
+            8
+        );
     }
 }

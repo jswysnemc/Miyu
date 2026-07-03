@@ -1,7 +1,9 @@
 use super::{readable_tool_name, ToolProgress, ToolRegistry, ToolSpec};
 use crate::config::{AppConfig, DeepResearchPluginConfig};
 use crate::i18n::{is_zh, text as t};
-use crate::llm::{ChatMessage, ChatResult, ChatStreamChunk, ChatStreamKind, OpenAiCompatibleClient, Usage};
+use crate::llm::{
+    ChatMessage, ChatResult, ChatStreamChunk, ChatStreamKind, OpenAiCompatibleClient, Usage,
+};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
 use chrono::Local;
@@ -488,12 +490,16 @@ async fn chat_with_tools(
     let mut steps = 0usize;
     loop {
         let result = client
-            .chat_stream(messages.clone(), definitions.clone(), |chunk: ChatStreamChunk| {
-                if chunk.kind == ChatStreamKind::Reasoning {
-                    progress.reasoning(&chunk.text);
-                }
-                Ok(())
-            })
+            .chat_stream(
+                messages.clone(),
+                definitions.clone(),
+                |chunk: ChatStreamChunk| {
+                    if chunk.kind == ChatStreamKind::Reasoning {
+                        progress.reasoning(&chunk.text);
+                    }
+                    Ok(())
+                },
+            )
             .await?;
         if result.tool_calls.is_empty() {
             return Ok(result);

@@ -55,3 +55,43 @@ fn summary_styles_distinguish_reasoning_from_tools() {
         "\x1b[2m\x1b[36m思考\x1b[0m"
     );
 }
+
+#[test]
+fn tool_event_text_is_append_only_finish_line() {
+    let output = tool_event_text("web_search", "ok");
+    assert!(output.starts_with("• "));
+    assert!(output.contains("web_search"));
+    assert!(output.contains("ok"));
+}
+
+#[test]
+fn visible_tool_blocks_do_not_need_extra_start_events() {
+    assert!(tool_call_has_visible_block("run_command"));
+    assert!(tool_call_has_visible_block("edit_file"));
+    assert!(!tool_call_has_visible_block("web_search"));
+}
+
+#[test]
+fn wait_spinner_detail_line_includes_model_and_thinking_level() {
+    let options = StreamRenderOptions {
+        readable_tool_names: true,
+        wait_model: Some("opencode Zen/gpt-5".to_string()),
+        wait_thinking_level: Some("high".to_string()),
+    };
+
+    let output = wait_spinner_detail_line(&options).unwrap();
+
+    assert!(output.contains("opencode Zen/gpt-5"));
+    assert!(output.contains("high"));
+}
+
+#[test]
+fn wait_spinner_detail_line_omits_empty_values() {
+    let options = StreamRenderOptions {
+        readable_tool_names: true,
+        wait_model: Some("  ".to_string()),
+        wait_thinking_level: None,
+    };
+
+    assert!(wait_spinner_detail_line(&options).is_none());
+}

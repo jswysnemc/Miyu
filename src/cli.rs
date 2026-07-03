@@ -25,6 +25,12 @@ use std::io::{self, IsTerminal, Read, Write};
 use std::path::PathBuf;
 use std::time::Duration;
 
+mod background_commands;
+mod render_options;
+
+use background_commands::{run_background_commands, BackgroundCommandsArgs};
+use render_options::stream_render_options;
+
 const REPL_MAX_VISIBLE_INPUT_ROWS: u16 = 12;
 
 #[derive(Debug, Parser)]
@@ -225,6 +231,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "查看或编辑助手记忆",
         ),
         ("skills", "Manage assistant skills", "管理助手 skills"),
+        ("commands", "Manage background commands", "管理后台命令"),
         (
             "reset",
             "Clear current conversation history",
@@ -241,6 +248,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("kb", localize_kb_command)
         .mut_subcommand("memory", localize_memory_command)
         .mut_subcommand("skills", localize_skills_command)
+        .mut_subcommand("commands", localize_background_commands_command)
         .mut_subcommand("config", localize_config_command)
         .mut_subcommand("reset", localize_reset_command);
     command
@@ -262,6 +270,31 @@ fn localize_ask_command(command: clap::Command) -> clap::Command {
         })
         .mut_arg("message", |arg| {
             arg.help(t("Message to send", "要发送的消息"))
+        })
+}
+
+fn localize_background_commands_command(command: clap::Command) -> clap::Command {
+    command
+        .mut_subcommand("start", |subcommand| {
+            subcommand.about(t(
+                "Start a managed background command",
+                "启动受管理后台命令",
+            ))
+        })
+        .mut_subcommand("list", |subcommand| {
+            subcommand.about(t("List background commands", "列出后台命令"))
+        })
+        .mut_subcommand("output", |subcommand| {
+            subcommand.about(t("Read background command output", "读取后台命令输出"))
+        })
+        .mut_subcommand("stop", |subcommand| {
+            subcommand.about(t("Stop a background command", "停止后台命令"))
+        })
+        .mut_subcommand("cleanup", |subcommand| {
+            subcommand.about(t(
+                "Cleanup finished background commands",
+                "清理已结束后台命令",
+            ))
         })
 }
 
@@ -439,6 +472,7 @@ pub enum Command {
     UpdateDefaultKb,
     Memory(MemoryArgs),
     Skills(SkillsArgs),
+    Commands(BackgroundCommandsArgs),
     Reset(ResetArgs),
 }
 
@@ -698,6 +732,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::UpdateDefaultKb) => run_update_default_kb(&paths).await,
         Some(Command::Memory(args)) => run_memory(&paths, args),
         Some(Command::Skills(args)) => run_skills(&paths, args),
+        Some(Command::Commands(args)) => run_background_commands(&paths, args).await,
         Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
             let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
@@ -1407,10 +1442,10 @@ async fn run_chat_with_options(
     } else {
         render::ToolCallDisplayMode::from_config(&config.display.tool_calls)
     };
-    let readable_tool_names = config.display.readable_tool_names;
+    let render_options = stream_render_options(&config);
     let mut agent = Agent::new(config, paths, state, client, registry, mode)?;
     let mut renderer =
-        render::StreamRenderer::new(reasoning_mode, tool_call_mode, plain, readable_tool_names);
+        render::StreamRenderer::new(reasoning_mode, tool_call_mode, plain, render_options);
     renderer.start_waiting()?;
     let result = agent
         .chat_stream_with_image(&chat_input.message, chat_input.image_url, |event| {
@@ -1418,7 +1453,10 @@ async fn run_chat_with_options(
         })
         .await;
     renderer.finish()?;
-    result?;
+    if let Err(err) = result {
+        render::write_chat_error(&err, plain)?;
+        return Err(err);
+    }
     Ok(())
 }
 
@@ -1534,7 +1572,7 @@ async fn run_repl(
             reasoning_mode,
             tool_call_mode,
             false,
-            config.display.readable_tool_names,
+            stream_render_options(&config),
         );
         renderer.start_waiting()?;
         let chat_result = {
@@ -1549,7 +1587,10 @@ async fn run_repl(
             }
         };
         renderer.finish()?;
-        chat_result?;
+        if let Err(err) = chat_result {
+            render::write_chat_error(&err, false)?;
+            continue;
+        }
     }
     Ok(())
 }

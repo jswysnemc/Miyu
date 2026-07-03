@@ -39,6 +39,8 @@ impl Default for DisplayConfig {
             reasoning: default_reasoning_display(),
             tool_calls: default_tool_call_display(),
             readable_tool_names: default_true(),
+            wait_show_model: default_true(),
+            wait_show_thinking_level: default_true(),
         }
     }
 }
@@ -279,6 +281,10 @@ impl Default for ToolsConfig {
             enabled: default_true(),
             max_rounds: 0,
             progressive_loading_enabled: false,
+            background_commands_enabled: default_true(),
+            background_command_timeout_seconds: default_background_command_timeout_seconds(),
+            background_command_log_max_bytes: default_background_command_log_max_bytes(),
+            background_command_stop_grace_seconds: default_background_command_stop_grace_seconds(),
         }
     }
 }
@@ -328,6 +334,18 @@ impl Default for ContextConfig {
 
 pub(super) fn default_timeout() -> u64 {
     60
+}
+
+pub(super) fn default_background_command_timeout_seconds() -> u64 {
+    86_400
+}
+
+pub(super) fn default_background_command_log_max_bytes() -> u64 {
+    10 * 1024 * 1024
+}
+
+pub(super) fn default_background_command_stop_grace_seconds() -> u64 {
+    5
 }
 
 pub(super) fn default_prompts_dir() -> String {

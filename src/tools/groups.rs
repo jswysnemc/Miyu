@@ -1,5 +1,10 @@
 pub(crate) const BASE_TOOL_NAMES: &[&str] = &[
     "run_command",
+    "start_background_command",
+    "list_background_commands",
+    "read_background_command_output",
+    "stop_background_command",
+    "cleanup_background_commands",
     "task_agent",
     "edit_file",
     "trash_path",

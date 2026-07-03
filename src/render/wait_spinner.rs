@@ -6,21 +6,28 @@ use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-const WIDTH: usize = 7;
+const WIDTH: usize = 8;
 const TRAIL_LEN: usize = 6;
 const HOLD_END: usize = 9;
 const HOLD_START: usize = 30;
 const INTERVAL: Duration = Duration::from_millis(80);
 const MIN_FADE_ALPHA: f64 = 0.12;
-const ACTIVE_DOTS: [&str; TRAIL_LEN] = ["▪", "▪", "▫", "▫", "·", "·"];
-const INACTIVE_DOT: &str = "·";
+const ACCENT_RGB: Rgb = Rgb(133, 153, 0);
+const BASE_RGB: (f64, f64, f64) = (0.522, 0.600, 0.0);
+const ACTIVE_DOT: &str = "■";
+const INACTIVE_DOT: &str = "⬝";
+const DEFAULT_FACE: &str = "(◕‿◕)";
+const BLINK_FACE: &str = "(-‿-)";
+const SLEEPY_FACE: &str = "(◡‿◡)";
+const GLANCE_FACES: [&str; 3] = ["(◐‿◐)", "(◑‿◑)", "(◔‿◔)"];
 const BRAILLE_FRAMES: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub(crate) enum SpinnerStyle {
     Scanner,
+    #[allow(dead_code)]
     Braille,
 }
 
@@ -45,9 +52,13 @@ struct WaitSpinnerState {
     phase: String,
     sub_phase: Option<String>,
     start: Instant,
+    seed: u64,
     lines_rendered: u16,
     style: SpinnerStyle,
 }
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct Rgb(u8, u8, u8);
 
 impl WaitSpinner {
     /// 判断当前终端是否适合显示等待动画。
@@ -63,14 +74,16 @@ impl WaitSpinner {
     /// 参数:
     /// - `phase`: 初始状态文本
     /// - `style`: 动画样式
+    /// - `sub_phase`: 初始子状态文本，空值表示隐藏
     ///
     /// 返回:
     /// - 等待动画控制器
-    pub(crate) fn start(phase: String, style: SpinnerStyle) -> Self {
+    pub(crate) fn start(phase: String, style: SpinnerStyle, sub_phase: Option<String>) -> Self {
         let state = Arc::new(Mutex::new(WaitSpinnerState {
             phase,
-            sub_phase: None,
+            sub_phase,
             start: Instant::now(),
+            seed: spinner_seed(),
             lines_rendered: 0,
             style,
         }));
@@ -82,26 +95,6 @@ impl WaitSpinner {
             state,
             running,
             handle: Some(handle),
-        }
-    }
-
-    /// 更新等待动画的主状态文本。
-    ///
-    /// 参数:
-    /// - `phase`: 新状态文本
-    pub(crate) fn set_phase(&self, phase: String) {
-        if let Ok(mut state) = self.state.lock() {
-            state.phase = phase;
-        }
-    }
-
-    /// 更新等待动画的子状态文本。
-    ///
-    /// 参数:
-    /// - `sub_phase`: 新子状态文本，空值表示隐藏
-    pub(crate) fn set_sub_phase(&self, sub_phase: Option<String>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.sub_phase = sub_phase;
         }
     }
 
@@ -131,12 +124,14 @@ impl Drop for WaitSpinner {
 
 fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool>) {
     let mut frame = 0usize;
+    let mut cycle = 0usize;
     while running.load(Ordering::SeqCst) {
         let (output, prev_lines, lines, total) = match state.lock() {
             Ok(mut guard) => {
                 let prev = guard.lines_rendered;
                 let total = total_frames_for_style(guard.style);
-                let (output, lines) = render_frame(frame, &guard);
+                let absolute_frame = cycle * total + frame;
+                let (output, lines) = render_frame(absolute_frame, &guard);
                 guard.lines_rendered = lines;
                 (output, prev, lines, total)
             }
@@ -146,31 +141,36 @@ fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool
             let _ = write_spinner_lines(&output, prev_lines, lines);
         }
         thread::sleep(INTERVAL);
-        frame = (frame + 1) % total.max(1);
+        frame += 1;
+        if frame >= total.max(1) {
+            frame = 0;
+            cycle += 1;
+        }
     }
 }
 
 fn render_frame(frame: usize, state: &WaitSpinnerState) -> (String, u16) {
-    let elapsed = if state.start.elapsed() > Duration::from_secs(1) {
+    let elapsed_text = if state.start.elapsed() > Duration::from_secs(1) {
         format!(" {:.1}s", state.start.elapsed().as_secs_f64())
     } else {
         String::new()
     };
-    let spinner_prefix = match state.style {
+    let (spinner_prefix, phase, elapsed) = match state.style {
         SpinnerStyle::Scanner => {
-            let scanner = scanner_state(frame % total_frames_scanner());
-            (0..WIDTH)
-                .map(|char_index| render_cell(char_index, scanner))
-                .collect::<String>()
+            let prefix = render_scanner_prefix(frame, state.seed);
+            (
+                prefix,
+                paint_bold_rgb(&state.phase, ACCENT_RGB),
+                paint_faint(&elapsed_text),
+            )
         }
-        SpinnerStyle::Braille => paint_secondary(BRAILLE_FRAMES[frame % BRAILLE_FRAMES.len()]),
+        SpinnerStyle::Braille => (
+            paint_secondary(BRAILLE_FRAMES[frame % BRAILLE_FRAMES.len()]),
+            paint_secondary(&state.phase),
+            paint_secondary(&elapsed_text),
+        ),
     };
-    let main_line = format!(
-        "{} {}{}",
-        spinner_prefix,
-        paint_secondary(&state.phase),
-        paint_secondary(&elapsed)
-    );
+    let main_line = format!("{spinner_prefix} {phase}{elapsed}");
     match &state.sub_phase {
         Some(sub_phase) if !sub_phase.trim().is_empty() => {
             let sub_line = format!("  {}", paint_secondary(sub_phase));
@@ -178,6 +178,25 @@ fn render_frame(frame: usize, state: &WaitSpinnerState) -> (String, u16) {
         }
         _ => (main_line, 1),
     }
+}
+
+/// 渲染旧版表情扫描等待动画前缀。
+///
+/// 参数:
+/// - `frame`: 当前全局帧序号
+/// - `seed`: 表情切换种子
+///
+/// 返回:
+/// - 带 ANSI 样式的表情和扫描点
+fn render_scanner_prefix(frame: usize, seed: u64) -> String {
+    let scanner = scanner_state(frame % total_frames_scanner());
+    let mut output = String::new();
+    output.push_str(&paint_rgb(face_for_frame(frame, seed), ACCENT_RGB));
+    output.push(' ');
+    for index in 0..WIDTH {
+        output.push_str(&render_cell(index, scanner));
+    }
+    output
 }
 
 fn render_cell(char_index: usize, state: ScannerState) -> String {
@@ -189,15 +208,11 @@ fn render_cell(char_index: usize, state: ScannerState) -> String {
 }
 
 fn paint_active_dot(index: usize) -> String {
-    let dot = ACTIVE_DOTS[index.min(ACTIVE_DOTS.len() - 1)];
-    match index {
-        0 | 1 => format!("\x1b[36m{dot}\x1b[0m"),
-        _ => format!("\x1b[2m\x1b[36m{dot}\x1b[0m"),
-    }
+    paint_rgb(ACTIVE_DOT, trail_rgb(index))
 }
 
-fn paint_inactive_dot(_fade: f64) -> String {
-    format!("\x1b[2m\x1b[36m{INACTIVE_DOT}\x1b[0m")
+fn paint_inactive_dot(fade: f64) -> String {
+    paint_rgb(INACTIVE_DOT, inactive_rgb(fade))
 }
 
 fn total_frames_scanner() -> usize {
@@ -292,6 +307,164 @@ fn fade_factor(state: ScannerState) -> f64 {
     }
 }
 
+/// 根据帧序号选择表情。
+///
+/// 参数:
+/// - `frame`: 全局帧序号
+/// - `seed`: 表情切换种子
+///
+/// 返回:
+/// - 表情文本
+fn face_for_frame(frame: usize, seed: u64) -> &'static str {
+    let mut blink_position = 0usize;
+    let mut blink_segment = 0usize;
+    while blink_position <= frame {
+        let hash = face_hash(blink_segment * 7 + seed as usize);
+        let gap = 25 + hash % 25;
+        if frame >= blink_position + gap && frame < blink_position + gap + 3 {
+            return BLINK_FACE;
+        }
+        blink_position += gap + 3;
+        blink_segment += 1;
+    }
+    if frame > 200 {
+        return SLEEPY_FACE;
+    }
+    let mut position = 0usize;
+    let mut segment = 0usize;
+    while position <= frame {
+        let hash = face_hash(segment + seed as usize);
+        let segment_len = 25 + hash % 50;
+        if frame < position + segment_len {
+            let index = (hash / 50) % (GLANCE_FACES.len() + 1);
+            if index < GLANCE_FACES.len() {
+                return GLANCE_FACES[index];
+            }
+            return DEFAULT_FACE;
+        }
+        position += segment_len;
+        segment += 1;
+    }
+    DEFAULT_FACE
+}
+
+/// 生成表情选择用哈希值。
+///
+/// 参数:
+/// - `value`: 输入数字
+///
+/// 返回:
+/// - 哈希值
+fn face_hash(value: usize) -> usize {
+    let mut value = value as u64;
+    value = ((value >> 16) ^ value).wrapping_mul(0x45d9f3b);
+    value = ((value >> 16) ^ value).wrapping_mul(0x45d9f3b);
+    ((value >> 16) ^ value) as usize
+}
+
+/// 生成当前进程的动画种子。
+///
+/// 返回:
+/// - 动画种子
+fn spinner_seed() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos() as u64 & 0x7fff_ffff)
+        .unwrap_or(0)
+}
+
+/// 计算尾迹颜色。
+///
+/// 参数:
+/// - `index`: 尾迹索引
+///
+/// 返回:
+/// - RGB 颜色
+fn trail_rgb(index: usize) -> Rgb {
+    let (mut r, mut g, mut b) = BASE_RGB;
+    let alpha = match index {
+        0 => 1.0,
+        1 => {
+            r = (r * 1.15).min(1.0);
+            g = (g * 1.15).min(1.0);
+            b = (b * 1.15).min(1.0);
+            0.9
+        }
+        _ => 0.65_f64.powi(index.saturating_sub(1) as i32),
+    };
+    Rgb(
+        clamp8(r * alpha * 255.0),
+        clamp8(g * alpha * 255.0),
+        clamp8(b * alpha * 255.0),
+    )
+}
+
+/// 计算非活动点颜色。
+///
+/// 参数:
+/// - `factor`: 淡入淡出系数
+///
+/// 返回:
+/// - RGB 颜色
+fn inactive_rgb(factor: f64) -> Rgb {
+    let (r, g, b) = BASE_RGB;
+    let alpha = 0.6 * factor;
+    Rgb(
+        clamp8(r * alpha * 255.0),
+        clamp8(g * alpha * 255.0),
+        clamp8(b * alpha * 255.0),
+    )
+}
+
+/// 限制颜色通道范围。
+///
+/// 参数:
+/// - `value`: 原始浮点颜色值
+///
+/// 返回:
+/// - 8 位颜色通道
+fn clamp8(value: f64) -> u8 {
+    value.clamp(0.0, 255.0) as u8
+}
+
+/// 渲染真彩前景色文本。
+///
+/// 参数:
+/// - `text`: 原始文本
+/// - `rgb`: 文本颜色
+///
+/// 返回:
+/// - 带 ANSI 样式的文本
+fn paint_rgb(text: &str, rgb: Rgb) -> String {
+    format!("\x1b[38;2;{};{};{}m{text}\x1b[0m", rgb.0, rgb.1, rgb.2)
+}
+
+/// 渲染加粗真彩前景色文本。
+///
+/// 参数:
+/// - `text`: 原始文本
+/// - `rgb`: 文本颜色
+///
+/// 返回:
+/// - 带 ANSI 样式的文本
+fn paint_bold_rgb(text: &str, rgb: Rgb) -> String {
+    format!(
+        "\x1b[1m\x1b[38;2;{};{};{}m{text}\x1b[0m",
+        rgb.0, rgb.1, rgb.2
+    )
+}
+
+/// 渲染弱化文本。
+///
+/// 参数:
+/// - `text`: 原始文本
+///
+/// 返回:
+/// - 带 ANSI 样式的文本
+fn paint_faint(text: &str) -> String {
+    format!("\x1b[2m{text}\x1b[0m")
+}
+
 fn paint_secondary(text: &str) -> String {
     format!("\x1b[2m\x1b[36m{text}\x1b[0m")
 }
@@ -342,6 +515,7 @@ mod tests {
             phase: phase.to_string(),
             sub_phase: sub_phase.map(str::to_string),
             start: Instant::now(),
+            seed: 0,
             lines_rendered: 0,
             style,
         }
@@ -354,6 +528,7 @@ mod tests {
         let (frame, lines) = render_frame(0, &state);
 
         assert!(frame.contains("思考"));
+        assert!(frame.contains("‿"));
         assert_eq!(lines, 1);
     }
 

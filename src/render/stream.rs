@@ -1,10 +1,12 @@
 use crate::i18n::text as t;
 use crate::llm::{ChatStreamChunk, ChatStreamKind};
 use crate::render::command_output::{
-    write_command_block, write_command_error_block, write_command_result_blocks, write_tool_payload,
+    write_command_block, write_command_error_block, write_command_result_blocks,
+    write_edit_file_diff_block, write_tool_payload,
 };
 use crate::render::markdown::MarkdownStreamRenderer;
 use crate::render::stream_summary::StreamSummary;
+use crate::render::style::TOOL_BULLET;
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
@@ -70,11 +72,19 @@ pub struct StreamRenderer {
     reasoning_mode: ReasoningDisplayMode,
     tool_call_mode: ToolCallDisplayMode,
     plain: bool,
+    options: StreamRenderOptions,
     mode: Option<ChatStreamKind>,
     cursor_hidden: bool,
     markdown: MarkdownStreamRenderer,
     summary: StreamSummary,
     wait_spinner: Option<WaitSpinner>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct StreamRenderOptions {
+    pub readable_tool_names: bool,
+    pub wait_model: Option<String>,
+    pub wait_thinking_level: Option<String>,
 }
 
 impl StreamRenderer {
@@ -84,7 +94,7 @@ impl StreamRenderer {
     /// - `reasoning_mode`: 推理内容展示模式
     /// - `tool_call_mode`: 工具调用展示模式
     /// - `plain`: 是否使用纯文本输出
-    /// - `readable_tool_names`: 是否展示可读工具名称
+    /// - `options`: 流式渲染附加选项
     ///
     /// 返回:
     /// - 新的流式渲染器
@@ -92,12 +102,14 @@ impl StreamRenderer {
         reasoning_mode: ReasoningDisplayMode,
         tool_call_mode: ToolCallDisplayMode,
         plain: bool,
-        readable_tool_names: bool,
+        options: StreamRenderOptions,
     ) -> Self {
+        let readable_tool_names = options.readable_tool_names;
         Self {
             reasoning_mode,
             tool_call_mode,
             plain,
+            options,
             mode: None,
             cursor_hidden: false,
             markdown: MarkdownStreamRenderer::new(),
@@ -118,6 +130,7 @@ impl StreamRenderer {
         self.wait_spinner = Some(WaitSpinner::start(
             t("thinking", "思考").to_string(),
             SpinnerStyle::Scanner,
+            wait_spinner_detail_line(&self.options),
         ));
         Ok(())
     }
@@ -143,15 +156,10 @@ impl StreamRenderer {
         if self.reasoning_mode == ReasoningDisplayMode::Summary
             && chunk.kind == ChatStreamKind::Reasoning
         {
+            self.stop_waiting()?;
             self.finalize_tools_summary()?;
             self.summary.add_reasoning_text(&text);
             self.mode = Some(ChatStreamKind::Reasoning);
-            if self.wait_spinner.is_some() {
-                self.summary.clear_live_lines()?;
-                self.set_waiting_phase(self.summary.reasoning_text());
-            } else {
-                self.summary.render_reasoning_live()?;
-            }
             return Ok(());
         }
         self.stop_waiting()?;
@@ -188,6 +196,7 @@ impl StreamRenderer {
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         if name == "run_command" {
+            self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
             write_command_block(&mut stdout, arguments)?;
             stdout.flush()?;
@@ -196,27 +205,30 @@ impl StreamRenderer {
             }
             return Ok(());
         }
-        if self.tool_call_mode == ToolCallDisplayMode::Full {
+        if name == "edit_file" {
+            self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
-            writeln!(stdout, "tool {}", self.summary.display_tool_name(name))?;
+            if !write_edit_file_diff_block(&mut stdout, arguments)? {
+                write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
+            }
+            stdout.flush()?;
+            if self.tool_call_mode == ToolCallDisplayMode::Summary {
+                self.summary.note_tool_call(name);
+            }
+            return Ok(());
+        }
+        if self.tool_call_mode == ToolCallDisplayMode::Full {
+            self.summary.clear_live_lines()?;
+            let mut stdout = io::stdout();
+            writeln!(
+                stdout,
+                "{TOOL_BULLET} tool {}",
+                self.summary.display_tool_name(name)
+            )?;
             write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_call(name);
-            if WaitSpinner::supported() {
-                self.summary.clear_live_lines()?;
-                let phase = format!(
-                    "{}: {}",
-                    t("tools", "工具"),
-                    self.summary.display_tool_name(name)
-                );
-                self.wait_spinner = Some(WaitSpinner::start(phase, SpinnerStyle::Braille));
-                if let Some(spinner) = &self.wait_spinner {
-                    spinner.set_sub_phase(Some(t("running", "运行中").to_string()));
-                }
-            } else {
-                self.summary.render_tools_live()?;
-            }
         }
         Ok(())
     }
@@ -257,14 +269,16 @@ impl StreamRenderer {
             let mut stdout = io::stdout();
             writeln!(
                 stdout,
-                "result {} {status}",
+                "{TOOL_BULLET} result {} {status}",
                 self.summary.display_tool_name(name)
             )?;
             write_tool_payload(&mut stdout, t("output", "输出"), output)?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_result(name, ok);
-            self.summary.render_tools_live()?;
+            if !tool_call_has_visible_block(name) {
+                self.write_tool_event_line(name, status)?;
+            }
         }
         Ok(())
     }
@@ -301,13 +315,12 @@ impl StreamRenderer {
             let mut stdout = io::stdout();
             writeln!(
                 stdout,
-                "progress {}: {message}",
+                "{TOOL_BULLET} progress {}: {message}",
                 self.summary.display_tool_name(name)
             )?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_progress(name, message);
-            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -346,7 +359,7 @@ impl StreamRenderer {
                 t("lines", "行")
             ),
         );
-        self.summary.render_tools_live()
+        Ok(())
     }
 
     /// 写入子工具调用进度。
@@ -371,8 +384,16 @@ impl StreamRenderer {
             let mut stdout = io::stdout();
             if tool_name == "run_command" {
                 write_command_block(&mut stdout, args)?;
+            } else if tool_name == "edit_file" {
+                if !write_edit_file_diff_block(&mut stdout, args)? {
+                    write_tool_payload(&mut stdout, t("args", "参数"), args)?;
+                }
             } else {
-                writeln!(stdout, "tool {}", self.summary.display_tool_name(tool_name))?;
+                writeln!(
+                    stdout,
+                    "{TOOL_BULLET} tool {}",
+                    self.summary.display_tool_name(tool_name)
+                )?;
                 write_tool_payload(&mut stdout, t("args", "参数"), args)?;
             }
             stdout.flush()?;
@@ -385,7 +406,6 @@ impl StreamRenderer {
                     self.summary.display_tool_name(tool_name)
                 ),
             );
-            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -417,7 +437,7 @@ impl StreamRenderer {
             } else {
                 writeln!(
                     stdout,
-                    "result {} {status}",
+                    "{TOOL_BULLET} result {} {status}",
                     self.summary.display_tool_name(tool_name)
                 )?;
                 write_tool_payload(&mut stdout, t("output", "输出"), output)?;
@@ -432,7 +452,6 @@ impl StreamRenderer {
                     self.summary.display_tool_name(tool_name)
                 ),
             );
-            self.summary.render_tools_live()?;
         }
         Ok(())
     }
@@ -555,16 +574,6 @@ impl StreamRenderer {
         Ok(())
     }
 
-    /// 更新等待动画状态文本。
-    ///
-    /// 参数:
-    /// - `phase`: 新状态文本
-    fn set_waiting_phase(&mut self, phase: String) {
-        if let Some(spinner) = &self.wait_spinner {
-            spinner.set_phase(phase);
-        }
-    }
-
     /// 停止等待动画。
     ///
     /// 返回:
@@ -573,6 +582,25 @@ impl StreamRenderer {
         if let Some(mut spinner) = self.wait_spinner.take() {
             spinner.stop()?;
         }
+        Ok(())
+    }
+
+    /// 追加写入工具状态事件。
+    ///
+    /// 参数:
+    /// - `name`: 工具名称
+    /// - `status`: 工具状态文本
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_tool_event_line(&self, name: &str, status: &str) -> Result<()> {
+        let mut stdout = io::stdout();
+        writeln!(
+            stdout,
+            "{}",
+            tool_event_text(self.summary.display_tool_name(name), status)
+        )?;
+        stdout.flush()?;
         Ok(())
     }
 
@@ -619,6 +647,57 @@ impl Drop for StreamRenderer {
 /// - 使用 `\n` 的文本
 fn normalize_stream_text(text: &str) -> String {
     text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
+/// 判断工具调用自身是否已经有可见块展示。
+///
+/// 参数:
+/// - `name`: 工具名称
+///
+/// 返回:
+/// - 是否已经有命令块或 diff 块展示
+fn tool_call_has_visible_block(name: &str) -> bool {
+    matches!(name, "run_command" | "edit_file")
+}
+
+/// 生成工具状态事件文本。
+///
+/// 参数:
+/// - `name`: 工具展示名称
+/// - `status`: 状态文本
+///
+/// 返回:
+/// - 工具状态事件文本
+fn tool_event_text(name: &str, status: &str) -> String {
+    format!("{TOOL_BULLET} {}: {name} {status}", t("tool", "工具"))
+}
+
+/// 生成等待动效详情行。
+///
+/// 参数:
+/// - `options`: 流式渲染附加选项
+///
+/// 返回:
+/// - 需要显示的详情行，没有可显示内容时返回空
+fn wait_spinner_detail_line(options: &StreamRenderOptions) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(model) = options
+        .wait_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("{}: {model}", t("model", "模型")));
+    }
+    if let Some(level) = options
+        .wait_thinking_level
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        parts.push(format!("{}: {level}", t("thinking level", "思考等级")));
+    }
+    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 #[cfg(test)]
