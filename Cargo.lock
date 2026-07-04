@@ -1923,6 +1923,8 @@ dependencies = [
  "termimad",
  "tokio",
  "trash",
+ "unicode-segmentation",
+ "unicode-width",
  "urlencoding",
 ]
 

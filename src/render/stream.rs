@@ -2,12 +2,15 @@ use crate::i18n::text as t;
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
 use crate::render::command_output::{
     write_command_block, write_command_error_block, write_command_result_blocks,
-    write_edit_file_diff_block, write_tool_payload,
+    write_edit_file_diff_block, write_tool_payload, write_write_file_diff_block,
 };
+use crate::render::live_tool_status::LiveToolStatus;
 use crate::render::markdown::MarkdownStreamRenderer;
 use crate::render::stream_summary::StreamSummary;
+pub(crate) use crate::render::stream_text::{
+    normalize_stream_text, tool_call_has_visible_block, tool_event_text, wait_spinner_detail_line,
+};
 use crate::render::style::TOOL_BULLET;
-use crate::render::tool_call_preview::{tool_call_progress_text, write_tool_call_preview};
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
@@ -79,6 +82,7 @@ pub struct StreamRenderer {
     markdown: MarkdownStreamRenderer,
     summary: StreamSummary,
     wait_spinner: Option<WaitSpinner>,
+    live_tool_status: LiveToolStatus,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -116,6 +120,7 @@ impl StreamRenderer {
             markdown: MarkdownStreamRenderer::new(),
             summary: StreamSummary::new(readable_tool_names),
             wait_spinner: None,
+            live_tool_status: LiveToolStatus::new(),
         }
     }
 
@@ -158,12 +163,14 @@ impl StreamRenderer {
             && chunk.kind == ChatStreamKind::Reasoning
         {
             self.stop_waiting()?;
+            self.finish_live_tool_status()?;
             self.finalize_tools_summary()?;
             self.summary.add_reasoning_text(&text);
             self.mode = Some(ChatStreamKind::Reasoning);
             return Ok(());
         }
         self.stop_waiting()?;
+        self.finish_live_tool_status()?;
         if self.mode != Some(chunk.kind) {
             if chunk.kind == ChatStreamKind::Content {
                 self.finalize_reasoning_summary()?;
@@ -194,6 +201,12 @@ impl StreamRenderer {
             return Ok(());
         }
         self.stop_waiting()?;
+        if self.tool_call_mode == ToolCallDisplayMode::Summary && !tool_call_has_visible_block(name)
+        {
+            self.write_live_tool_status(name, "run", false)?;
+            return Ok(());
+        }
+        self.clear_live_tool_status()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
         if name == "run_command" {
@@ -201,9 +214,6 @@ impl StreamRenderer {
             let mut stdout = io::stdout();
             write_command_block(&mut stdout, arguments)?;
             stdout.flush()?;
-            if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                self.summary.note_tool_call(name);
-            }
             return Ok(());
         }
         if name == "edit_file" {
@@ -213,26 +223,15 @@ impl StreamRenderer {
                 write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
             }
             stdout.flush()?;
-            if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                self.summary.note_tool_call(name);
-            }
             return Ok(());
         }
         if name == "write_file" && self.tool_call_mode != ToolCallDisplayMode::Hidden {
             self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
-            writeln!(
-                stdout,
-                "{TOOL_BULLET} tool {}",
-                self.summary.display_tool_name(name)
-            )?;
-            if !write_tool_call_preview(&mut stdout, t("args", "参数"), name, arguments)? {
+            if !write_write_file_diff_block(&mut stdout, arguments)? {
                 write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
             }
             stdout.flush()?;
-            if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                self.summary.note_tool_call(name);
-            }
             return Ok(());
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
@@ -245,8 +244,6 @@ impl StreamRenderer {
             )?;
             write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
             stdout.flush()?;
-        } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            self.summary.note_tool_call(name);
         }
         Ok(())
     }
@@ -266,14 +263,42 @@ impl StreamRenderer {
         if self.tool_call_mode == ToolCallDisplayMode::Hidden {
             return Ok(());
         }
-        self.end_active_stream_line()?;
-        self.finalize_reasoning_summary()?;
         let name = progress.name.as_deref().unwrap_or("tool");
-        let text = tool_call_progress_text(self.summary.display_tool_name(name), progress);
-        let mut stdout = io::stdout();
-        writeln!(stdout, "\x1b[2m{text}\x1b[0m")?;
-        stdout.flush()?;
-        Ok(())
+        self.write_live_tool_status(name, "arg", false)
+    }
+
+    /// 写入单行工具状态。
+    ///
+    /// 参数:
+    /// - `name`: 工具名称
+    /// - `status`: 工具状态，取值为 arg、run、ok 或 err
+    /// - `final_line`: 是否结束当前状态行
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_live_tool_status(&mut self, name: &str, status: &str, final_line: bool) -> Result<()> {
+        if !self.live_tool_status.is_active() {
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+        }
+        self.live_tool_status
+            .write(self.summary.display_tool_name(name), status, final_line)
+    }
+
+    /// 结束当前单行工具状态。
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn finish_live_tool_status(&mut self) -> Result<()> {
+        self.live_tool_status.finish()
+    }
+
+    /// 清除当前单行工具状态。
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn clear_live_tool_status(&mut self) -> Result<()> {
+        self.live_tool_status.clear()
     }
 
     /// 写入工具结果。
@@ -291,16 +316,20 @@ impl StreamRenderer {
         }
         self.stop_waiting()?;
         let status = if ok { "ok" } else { "err" };
-        if name == "run_command" {
-            if self.tool_call_mode == ToolCallDisplayMode::Summary {
-                self.summary.note_tool_result(name, ok);
-                if !ok {
+        if self.tool_call_mode == ToolCallDisplayMode::Summary {
+            if tool_call_has_visible_block(name) {
+                if name == "run_command" && !ok {
                     let mut stdout = io::stdout();
                     write_command_error_block(&mut stdout, output)?;
                     stdout.flush()?;
                 }
                 return Ok(());
             }
+            self.write_live_tool_status(name, status, true)?;
+            return Ok(());
+        }
+        self.finish_live_tool_status()?;
+        if name == "run_command" {
             if self.tool_call_mode == ToolCallDisplayMode::Full {
                 let mut stdout = io::stdout();
                 write_command_result_blocks(&mut stdout, output)?;
@@ -519,6 +548,7 @@ impl StreamRenderer {
     /// - 收尾是否成功
     pub fn finish(&mut self) -> Result<()> {
         self.stop_waiting()?;
+        self.finish_live_tool_status()?;
         self.summary.clear_live_lines()?;
         if self.mode == Some(ChatStreamKind::Content) && !self.plain {
             let mut stdout = io::stdout();
@@ -553,7 +583,7 @@ impl StreamRenderer {
                     writeln!(stdout)?;
                 }
                 execute!(stdout, SetForegroundColor(Color::DarkCyan))?;
-                writeln!(stdout, "{}", t("thinking", "思考"))?;
+                writeln!(stdout, "{TOOL_BULLET} {}", t("thinking", "思考"))?;
             }
             ChatStreamKind::Content => {
                 if self.mode == Some(ChatStreamKind::Reasoning) {
@@ -572,6 +602,7 @@ impl StreamRenderer {
     /// 返回:
     /// - 结束是否成功
     fn end_active_stream_line(&mut self) -> Result<()> {
+        self.finish_live_tool_status()?;
         if self.reasoning_mode == ReasoningDisplayMode::Summary
             && self.mode == Some(ChatStreamKind::Reasoning)
         {
@@ -679,68 +710,6 @@ impl Drop for StreamRenderer {
         let _ = self.show_cursor();
         let _ = execute!(io::stdout(), ResetColor);
     }
-}
-
-/// 归一化流式文本换行。
-///
-/// 参数:
-/// - `text`: 原始文本
-///
-/// 返回:
-/// - 使用 `\n` 的文本
-fn normalize_stream_text(text: &str) -> String {
-    text.replace("\r\n", "\n").replace('\r', "\n")
-}
-
-/// 判断工具调用自身是否已经有可见块展示。
-///
-/// 参数:
-/// - `name`: 工具名称
-///
-/// 返回:
-/// - 是否已经有命令块或 diff 块展示
-fn tool_call_has_visible_block(name: &str) -> bool {
-    matches!(name, "run_command" | "edit_file" | "write_file")
-}
-
-/// 生成工具状态事件文本。
-///
-/// 参数:
-/// - `name`: 工具展示名称
-/// - `status`: 状态文本
-///
-/// 返回:
-/// - 工具状态事件文本
-fn tool_event_text(name: &str, status: &str) -> String {
-    format!("{TOOL_BULLET} {}: {name} {status}", t("tool", "工具"))
-}
-
-/// 生成等待动效详情行。
-///
-/// 参数:
-/// - `options`: 流式渲染附加选项
-///
-/// 返回:
-/// - 需要显示的详情行，没有可显示内容时返回空
-fn wait_spinner_detail_line(options: &StreamRenderOptions) -> Option<String> {
-    let mut parts = Vec::new();
-    if let Some(model) = options
-        .wait_model
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(format!("{}: {model}", t("model", "模型")));
-    }
-    if let Some(level) = options
-        .wait_thinking_level
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(format!("{}: {level}", t("thinking level", "思考等级")));
-    }
-    (!parts.is_empty()).then(|| parts.join(" · "))
 }
 
 #[cfg(test)]

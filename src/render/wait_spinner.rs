@@ -91,6 +91,7 @@ impl WaitSpinner {
             style,
         }));
         let running = Arc::new(AtomicBool::new(true));
+        render_initial_spinner_frame(&state);
         let thread_state = Arc::clone(&state);
         let thread_running = Arc::clone(&running);
         let handle = thread::spawn(move || run_spinner_loop(thread_state, thread_running));
@@ -126,7 +127,7 @@ impl Drop for WaitSpinner {
 }
 
 fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool>) {
-    let mut frame = 0usize;
+    let mut frame = 1usize;
     let mut cycle = 0usize;
     while running.load(Ordering::SeqCst) {
         let (output, anchor_row, prev_lines, lines, total) = match state.lock() {
@@ -149,6 +150,25 @@ fn run_spinner_loop(state: Arc<Mutex<WaitSpinnerState>>, running: Arc<AtomicBool
             frame = 0;
             cycle += 1;
         }
+    }
+}
+
+/// 同步渲染等待动画首帧。
+///
+/// 参数:
+/// - `state`: 等待动画共享状态
+fn render_initial_spinner_frame(state: &Arc<Mutex<WaitSpinnerState>>) {
+    let (output, anchor_row, prev_lines, lines) = match state.lock() {
+        Ok(mut guard) => {
+            let prev = guard.lines_rendered;
+            let (output, lines) = render_frame(0, &guard);
+            guard.lines_rendered = lines;
+            (output, guard.anchor_row, prev, lines)
+        }
+        Err(_) => (String::new(), 0, 0, 0),
+    };
+    if !output.is_empty() {
+        let _ = write_spinner_lines(&output, anchor_row, prev_lines, lines);
     }
 }
 

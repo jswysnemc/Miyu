@@ -1,5 +1,7 @@
 use crate::render::style::{RESET, TABLE_BORDER_STYLE};
 use crossterm::terminal;
+use unicode_segmentation::UnicodeSegmentation;
+use unicode_width::UnicodeWidthStr;
 
 const TOP_LEFT: char = '┌';
 const TOP_MID: char = '┬';
@@ -263,10 +265,13 @@ pub(crate) fn bottom_border(widths: &[usize]) -> String {
 /// 和 ST 终止符（`\x1b\\`，用于 Kitty/Sixel/iTerm 协议）。
 pub(crate) fn visible_width(text: &str) -> usize {
     let mut width = 0;
+    let mut visible_segment = String::new();
     let mut escape = false;
     let mut csi = false;
     for ch in text.chars() {
         if ch == '\x1b' {
+            width += text_display_width(&visible_segment);
+            visible_segment.clear();
             escape = true;
             csi = false;
         } else if escape {
@@ -281,13 +286,11 @@ pub(crate) fn visible_width(text: &str) -> usize {
             } else if ch == 'm' {
                 escape = false;
             }
-        } else if (ch as u32) >= 0x2e80 {
-            width += 2;
         } else {
-            width += 1;
+            visible_segment.push(ch);
         }
     }
-    width
+    width + text_display_width(&visible_segment)
 }
 
 /// 将表格宽度限制在终端宽度内。
@@ -338,16 +341,19 @@ fn wrap_ansi_text(text: &str, width: usize) -> Vec<String> {
     let mut current = String::new();
     let mut current_width = 0usize;
     let mut active_style = String::new();
-    let mut chars = text.chars().peekable();
-    while let Some(ch) = chars.next() {
+    let mut index = 0usize;
+    while index < text.len() {
+        let ch = text[index..].chars().next().unwrap_or_default();
         if ch == '\x1b' {
-            let sequence = collect_ansi_sequence(ch, &mut chars);
+            let (sequence, next_index) = collect_ansi_sequence_at(text, index);
             update_active_style(&sequence, &mut active_style);
             current.push_str(&sequence);
+            index = next_index;
             continue;
         }
-        let ch_width = char_display_width(ch);
-        if current_width > 0 && current_width + ch_width > width {
+        let grapheme = text[index..].graphemes(true).next().unwrap_or("");
+        let grapheme_width = text_display_width(grapheme);
+        if current_width > 0 && current_width + grapheme_width > width {
             if !active_style.is_empty() {
                 current.push_str(RESET);
             }
@@ -355,47 +361,53 @@ fn wrap_ansi_text(text: &str, width: usize) -> Vec<String> {
             current = active_style.clone();
             current_width = 0;
         }
-        current.push(ch);
-        current_width += ch_width;
+        current.push_str(grapheme);
+        current_width += grapheme_width;
+        index += grapheme.len();
     }
     lines.push(current);
     lines
 }
 
-/// 收集完整 ANSI 转义序列。
+/// 从指定字节位置收集完整 ANSI 转义序列。
 ///
 /// 参数:
-/// - `first`: 已读取的 ESC 字符
-/// - `chars`: 剩余字符迭代器
+/// - `text`: 原始文本
+/// - `start`: ANSI 转义序列起始字节位置
 ///
 /// 返回:
-/// - 完整 ANSI 转义序列
-fn collect_ansi_sequence(
-    first: char,
-    chars: &mut std::iter::Peekable<std::str::Chars<'_>>,
-) -> String {
+/// - 完整 ANSI 转义序列和下一个字节位置
+fn collect_ansi_sequence_at(text: &str, start: usize) -> (String, usize) {
     let mut sequence = String::new();
+    let mut chars = text[start..].char_indices();
+    let Some((_, first)) = chars.next() else {
+        return (sequence, start);
+    };
     sequence.push(first);
-    let Some(next) = chars.next() else {
-        return sequence;
+    let mut next_index = start + first.len_utf8();
+    let Some((offset, next)) = chars.next() else {
+        return (sequence, next_index);
     };
     sequence.push(next);
+    next_index = start + offset + next.len_utf8();
     if next == '[' {
-        for ch in chars.by_ref() {
+        for (offset, ch) in chars.by_ref() {
             sequence.push(ch);
+            next_index = start + offset + ch.len_utf8();
             if (ch as u32) >= 0x40 && (ch as u32) <= 0x7e {
                 break;
             }
         }
     } else if next != '\\' {
-        for ch in chars.by_ref() {
+        for (offset, ch) in chars.by_ref() {
             sequence.push(ch);
+            next_index = start + offset + ch.len_utf8();
             if ch == '\\' {
                 break;
             }
         }
     }
-    sequence
+    (sequence, next_index)
 }
 
 /// 根据 SGR 转义序列更新当前活动样式。
@@ -414,13 +426,15 @@ fn update_active_style(sequence: &str, active_style: &mut String) {
     }
 }
 
-/// 计算单个字符的显示宽度。
-fn char_display_width(ch: char) -> usize {
-    if ch.is_ascii() {
-        1
-    } else {
-        2
-    }
+/// 计算一段可见文本的终端显示宽度。
+///
+/// 参数:
+/// - `text`: 不含 ANSI 转义序列的文本
+///
+/// 返回:
+/// - 文本在终端中的显示列宽
+fn text_display_width(text: &str) -> usize {
+    UnicodeWidthStr::width(text)
 }
 
 /// 按对齐方式和已知内容宽度补齐单元格。
@@ -566,6 +580,69 @@ mod tests {
             );
         }
         assert!(output.lines().count() > 5);
+    }
+
+    #[test]
+    fn visible_width_counts_emoji_check_mark_as_wide() {
+        assert_eq!(visible_width("\u{2705} ok"), 5);
+        assert_eq!(visible_width("\u{1f5a5}\u{fe0f} system"), 9);
+    }
+
+    #[test]
+    fn table_rows_keep_same_width_with_emoji_status_cells() {
+        let ok_mark = "\u{2705}";
+        let desktop = "\u{1f5a5}\u{fe0f}";
+        let green_circle = "\u{1f7e2}";
+        let output = render_table(
+            &[
+                "| 操作 | 结果 |".to_string(),
+                "|---|---|".to_string(),
+                format!("| start_background_command | {ok_mark} PID 832048 |"),
+                format!("| stop_background_command | {ok_mark} stopped |"),
+                format!("| {desktop} 系统 | {green_circle} 正常 |"),
+            ],
+            render_table_cell_content,
+        );
+        let line_widths = output.lines().map(visible_width).collect::<Vec<_>>();
+        let Some(first_width) = line_widths.first().copied() else {
+            panic!("expected rendered table output");
+        };
+        assert!(
+            line_widths.iter().all(|width| *width == first_width),
+            "table lines should have identical widths: {line_widths:?}\n{output}"
+        );
+    }
+
+    #[test]
+    fn table_rows_keep_same_width_with_system_status_emojis() {
+        let desktop = "\u{1f5a5}\u{fe0f}";
+        let package = "\u{1f4e6}";
+        let globe = "\u{1f310}";
+        let gamepad = "\u{1f3ae}";
+        let music = "\u{1f3b5}";
+        let plug = "\u{1f50c}";
+        let green_circle = "\u{1f7e2}";
+        let output = render_table(
+            &[
+                "| 项目 | 状态 | 说明 |".to_string(),
+                "|---|---|---|".to_string(),
+                format!("| {desktop} 系统 | {green_circle} 正常 | Arch Linux, kernel 6.x |"),
+                format!("| {package} 包管理 | {green_circle} 正常 | pacman + yay |"),
+                format!("| {globe} 网络 | {green_circle} 在线 | eth0 已连接 |"),
+                format!("| {gamepad} 显卡 | {green_circle} 驱动正常 | nvidia-open |"),
+                format!("| {music} 音频 | {green_circle} 工作中 | pipewire |"),
+                format!("| {plug} 输入法 | {green_circle} 可用 | fcitx5 |"),
+            ],
+            render_table_cell_content,
+        );
+        let line_widths = output.lines().map(visible_width).collect::<Vec<_>>();
+        let Some(first_width) = line_widths.first().copied() else {
+            panic!("expected rendered table output");
+        };
+        assert!(
+            line_widths.iter().all(|width| *width == first_width),
+            "table lines should have identical widths: {line_widths:?}\n{output}"
+        );
     }
 
     #[test]

@@ -49,4 +49,6 @@ tempfile = "3.15"
 tar = "0.4"
 tokio = { version = "1.38", features = ["io-util", "macros", "process", "rt-multi-thread", "signal", "time"] }
 trash = "5.2"
+unicode-segmentation = "1.13"
+unicode-width = "0.1"
 urlencoding = "2.1"

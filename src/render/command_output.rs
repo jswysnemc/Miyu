@@ -57,6 +57,25 @@ pub(crate) fn write_edit_file_diff_block(stdout: &mut io::Stdout, arguments: &st
     Ok(true)
 }
 
+/// 写入整文件写入 diff 视图。
+///
+/// 参数:
+/// - `stdout`: 标准输出句柄
+/// - `arguments`: `write_file` 工具参数
+///
+/// 返回:
+/// - 是否成功渲染 diff 视图
+pub(crate) fn write_write_file_diff_block(
+    stdout: &mut io::Stdout,
+    arguments: &str,
+) -> Result<bool> {
+    let Some(diff) = render_write_file_diff(arguments) else {
+        return Ok(false);
+    };
+    write!(stdout, "{diff}")?;
+    Ok(true)
+}
+
 /// 渲染命令调用块。
 ///
 /// 参数:
@@ -110,64 +129,166 @@ fn render_edit_file_diff(arguments: &str) -> Option<String> {
         replacement.lines().map(str::to_string).collect::<Vec<_>>()
     };
     let removed = old_lines[start_line - 1..end_line].to_vec();
-    Some(render_unified_diff(path, start_line, &removed, &new_lines))
+    Some(render_codex_edit_diff(
+        "Edited", path, start_line, &old_lines, &removed, &new_lines,
+    ))
 }
 
-/// 渲染 unified diff 文本。
+/// 渲染整文件写入 diff 视图。
 ///
 /// 参数:
+/// - `arguments`: `write_file` 工具参数
+///
+/// 返回:
+/// - Codex 风格 diff 文本
+fn render_write_file_diff(arguments: &str) -> Option<String> {
+    let value = serde_json::from_str::<Value>(arguments).ok()?;
+    let path = value.get("path").and_then(Value::as_str)?;
+    let content = value.get("content").and_then(Value::as_str)?;
+    let old_lines = std::fs::read_to_string(Path::new(path))
+        .ok()
+        .map(|text| text.lines().map(str::to_string).collect::<Vec<_>>())
+        .unwrap_or_default();
+    let content = content.replace("\r\n", "\n").replace('\r', "\n");
+    let new_lines = if content.is_empty() {
+        Vec::new()
+    } else {
+        content.lines().map(str::to_string).collect::<Vec<_>>()
+    };
+    let removed = old_lines.clone();
+    Some(render_codex_edit_diff(
+        "Writed", path, 1, &old_lines, &removed, &new_lines,
+    ))
+}
+
+/// 渲染 Codex 风格编辑 diff。
+///
+/// 参数:
+/// - `action`: 操作名称
 /// - `path`: 文件路径
 /// - `start_line`: 变更起始行号
+/// - `old_lines`: 文件原始行
 /// - `removed`: 被替换的旧行
 /// - `added`: 新行
 ///
 /// 返回:
-/// - 代码块风格 diff 文本
-fn render_unified_diff(
+/// - Codex 风格 diff 文本
+fn render_codex_edit_diff(
+    action: &str,
     path: &str,
     start_line: usize,
+    old_lines: &[String],
     removed: &[String],
     added: &[String],
 ) -> String {
-    let mut lines = Vec::new();
-    lines.push(format!("--- {path}"));
-    lines.push(format!("+++ {path}"));
-    lines.push(format!(
-        "@@ -{},{} +{},{} @@",
-        start_line,
-        removed.len(),
-        start_line,
-        added.len()
-    ));
-    lines.extend(removed.iter().map(|line| format!("-{line}")));
-    lines.extend(added.iter().map(|line| format!("+{line}")));
-
-    let mut output = render_code_header(&format!("{TOOL_BULLET} diff"));
-    for line in &lines {
-        output.push_str(&style_diff_line(line));
+    let mut output = format!(
+        "{TOOL_BULLET} {action} {path} ({} {})\n",
+        style_added_count(added.len()),
+        style_removed_count(removed.len())
+    );
+    let width = old_lines.len().max(start_line + added.len()).max(1);
+    let number_width = width.to_string().len().max(3);
+    if start_line > 2 {
+        output.push_str(&style_context_line(&format!(
+            "{:>number_width$}    ⋮",
+            start_line - 1
+        )));
         output.push('\n');
     }
-    output.push_str(&render_code_footer(&lines));
+    if start_line > 1 {
+        output.push_str(&style_context_line(&format!(
+            "{:>number_width$}    {}",
+            start_line - 1,
+            old_lines[start_line - 2]
+        )));
+        output.push('\n');
+    }
+    for (offset, line) in removed.iter().enumerate() {
+        output.push_str(&style_removed_line(&format!(
+            "{:>number_width$} -  {line}",
+            start_line + offset
+        )));
+        output.push('\n');
+    }
+    for (offset, line) in added.iter().enumerate() {
+        output.push_str(&style_added_line(&format!(
+            "{:>number_width$} +  {line}",
+            start_line + offset
+        )));
+        output.push('\n');
+    }
+    let after_line = start_line + removed.len();
+    if after_line <= old_lines.len() {
+        output.push_str(&style_context_line(&format!(
+            "{:>number_width$}    {}",
+            after_line,
+            old_lines[after_line - 1]
+        )));
+        output.push('\n');
+    }
+    if after_line < old_lines.len() {
+        output.push_str(&style_context_line(&format!(
+            "{:>number_width$}    ⋮",
+            after_line + 1
+        )));
+        output.push('\n');
+    }
     output
 }
 
-/// 给 diff 单行添加颜色。
+/// 给 diff 上下文行添加样式。
 ///
 /// 参数:
-/// - `line`: diff 行
+/// - `line`: 上下文行
 ///
 /// 返回:
-/// - 带 ANSI 样式的 diff 行
-fn style_diff_line(line: &str) -> String {
-    if line.starts_with('+') && !line.starts_with("+++") {
-        format!("\x1b[32m{line}\x1b[0m")
-    } else if line.starts_with('-') && !line.starts_with("---") {
-        format!("\x1b[31m{line}\x1b[0m")
-    } else if line.starts_with("@@") {
-        format!("\x1b[36m{line}\x1b[0m")
-    } else {
-        format!("\x1b[2m{line}\x1b[0m")
-    }
+/// - 带 ANSI 样式的上下文行
+fn style_context_line(line: &str) -> String {
+    format!("\x1b[2m{line}\x1b[0m")
+}
+
+/// 给 diff 删除行添加样式。
+///
+/// 参数:
+/// - `line`: 删除行
+///
+/// 返回:
+/// - 带 ANSI 样式的删除行
+fn style_removed_line(line: &str) -> String {
+    format!("\x1b[48;5;52m\x1b[31m{line}\x1b[0m")
+}
+
+/// 给 diff 新增行添加样式。
+///
+/// 参数:
+/// - `line`: 新增行
+///
+/// 返回:
+/// - 带 ANSI 样式的新增行
+fn style_added_line(line: &str) -> String {
+    format!("\x1b[48;5;22m\x1b[32m{line}\x1b[0m")
+}
+
+/// 给新增行数添加样式。
+///
+/// 参数:
+/// - `count`: 新增行数
+///
+/// 返回:
+/// - 带 ANSI 样式的新增行数
+fn style_added_count(count: usize) -> String {
+    format!("\x1b[32m+{count}\x1b[0m")
+}
+
+/// 给删除行数添加样式。
+///
+/// 参数:
+/// - `count`: 删除行数
+///
+/// 返回:
+/// - 带 ANSI 样式的删除行数
+fn style_removed_count(count: usize) -> String {
+    format!("\x1b[31m-{count}\x1b[0m")
 }
 
 /// 生成命令代码块行。
@@ -418,11 +539,60 @@ mod tests {
         let output = render_edit_file_diff(&args).unwrap();
         let plain = strip_ansi_for_test(&output);
 
-        assert!(plain.contains("── • diff "));
-        assert!(plain.contains("--- "));
-        assert!(plain.contains("@@ -2,1 +2,1 @@"));
-        assert!(output.contains("\x1b[31m-old line\x1b[0m"));
-        assert!(output.contains("\x1b[32m+new line\x1b[0m"));
+        assert!(plain.contains("• Edited "));
+        assert!(plain.contains("(+1 -1)"));
+        assert!(output.contains("(\x1b[32m+1\x1b[0m \x1b[31m-1\x1b[0m)"));
+        assert!(plain.contains("  1    one"));
+        assert!(plain.contains("  2 -  old line"));
+        assert!(plain.contains("  2 +  new line"));
+        assert!(plain.contains("  3    three"));
+        assert!(!plain.contains("--- "));
+        assert!(!plain.contains("@@"));
+        assert!(output.contains("\x1b[48;5;52m\x1b[31m"));
+        assert!(output.contains("\x1b[48;5;22m\x1b[32m"));
+    }
+
+    #[test]
+    fn renders_write_file_new_file_as_added_diff_block() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("new.txt");
+        let args = json!({
+            "path": path.to_string_lossy(),
+            "content": "hello\nworld"
+        })
+        .to_string();
+
+        let output = render_write_file_diff(&args).unwrap();
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("• Writed "));
+        assert!(plain.contains("(+2 -0)"));
+        assert!(output.contains("(\x1b[32m+2\x1b[0m \x1b[31m-0\x1b[0m)"));
+        assert!(plain.contains("  1 +  hello"));
+        assert!(plain.contains("  2 +  world"));
+        assert!(!plain.contains("content:"));
+    }
+
+    #[test]
+    fn renders_write_file_overwrite_as_full_file_diff_block() {
+        let temp = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(temp.path(), "old\ntext\n").unwrap();
+        let args = json!({
+            "path": temp.path().to_string_lossy(),
+            "content": "new\ntext"
+        })
+        .to_string();
+
+        let output = render_write_file_diff(&args).unwrap();
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("• Writed "));
+        assert!(plain.contains("(+2 -2)"));
+        assert!(output.contains("(\x1b[32m+2\x1b[0m \x1b[31m-2\x1b[0m)"));
+        assert!(plain.contains("  1 -  old"));
+        assert!(plain.contains("  2 -  text"));
+        assert!(plain.contains("  1 +  new"));
+        assert!(plain.contains("  2 +  text"));
     }
 
     #[test]

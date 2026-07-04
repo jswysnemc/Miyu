@@ -1,6 +1,7 @@
 use crate::i18n::text as t;
 use crate::llm::ChatResult;
 use crate::render::markdown::MarkdownStreamRenderer;
+use crate::render::style::TOOL_BULLET;
 use anyhow::Result;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use crossterm::{execute, terminal};
@@ -51,7 +52,7 @@ pub fn print_markdown(markdown: &str) {
 fn print_reasoning(reasoning: &str) -> Result<()> {
     let mut stdout = io::stdout();
     execute!(stdout, SetForegroundColor(Color::DarkCyan))?;
-    writeln!(stdout, "{}", t("thinking", "思考"))?;
+    writeln!(stdout, "{TOOL_BULLET} {}", t("thinking", "思考"))?;
     for line in reasoning.trim().lines() {
         writeln!(stdout, "  {line}")?;
     }
