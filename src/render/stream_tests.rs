@@ -9,10 +9,9 @@ fn tool_status_prefers_running_for_single_active_call() {
         progress: None,
     };
     let output = tool_status_text("deep_research", &stats);
-    assert!(matches!(
-        output.as_str(),
-        "deep_research×1 运行中" | "deep_research×1 running"
-    ));
+    assert!(output.starts_with("deep_research×1 "));
+    assert!(output.contains("\x1b[33m"));
+    assert!(output.contains("运行中") || output.contains("running"));
 }
 
 #[test]
@@ -23,10 +22,9 @@ fn tool_status_uses_simple_single_success() {
         error: 0,
         progress: None,
     };
-    assert_eq!(
-        tool_status_text("deep_research", &stats),
-        "deep_research×1 ok"
-    );
+    let output = tool_status_text("deep_research", &stats);
+    assert!(output.starts_with("deep_research×1 "));
+    assert!(output.contains("\x1b[32mok\x1b[0m"));
 }
 
 #[test]
@@ -38,10 +36,10 @@ fn tool_status_counts_mixed_multiple_calls() {
         progress: None,
     };
     let output = tool_status_text("grep", &stats);
-    assert!(matches!(
-        output.as_str(),
-        "grep×3 运行中:1 ok:1 err:1" | "grep×3 running:1 ok:1 err:1"
-    ));
+    assert!(output.starts_with("grep×3 "));
+    assert!(output.contains("\x1b[33m"));
+    assert!(output.contains("\x1b[32mok\x1b[0m:1"));
+    assert!(output.contains("\x1b[31merr\x1b[0m:1"));
 }
 
 #[test]

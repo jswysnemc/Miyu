@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
 use crate::default_models::{OPENCODE_DEFAULT_VISION_MODEL, OPENCODE_PROVIDER_ID};
+use crate::i18n::text as t;
 use anyhow::{bail, Result};
 use crossterm::cursor::{Hide, MoveTo, Show};
 use crossterm::event::KeyCode;
@@ -292,7 +293,10 @@ fn draw_form(
     queue!(
         stdout,
         MoveTo(x + 2, y + 1),
-        Print("[j/k]移动 [Enter]编辑/打开编辑器 [s]确认 [q]取消")
+        Print(t(
+            "[j/k] move [Enter] edit/open editor [s] confirm [q] cancel",
+            "[j/k]移动 [Enter]编辑/打开编辑器 [s]确认 [q]取消",
+        ))
     )?;
     let mut cursor = None;
     for (index, field) in fields.iter().enumerate() {
@@ -300,7 +304,7 @@ fn draw_form(
         queue!(stdout, MoveTo(x + 2, row_y))?;
         let marker = if index == selected { ">" } else { " " };
         let value = if field.textarea && field.value.is_empty() {
-            "(Enter 打开 $EDITOR)".to_string()
+            t("(Enter opens $EDITOR)", "(Enter 打开 $EDITOR)").to_string()
         } else if !field.choices.is_empty() && field.value.is_empty() {
             field.empty_choice_label.to_string()
         } else if !field.choices.is_empty() {
@@ -337,21 +341,27 @@ fn draw_form(
         stdout,
         x + 2,
         button_y,
-        " 保存 ",
+        t(" Save ", " 保存 "),
         selected == fields.len() && !editing,
     )?;
     draw_form_button(
         stdout,
         x + 14,
         button_y,
-        " 取消 ",
+        t(" Cancel ", " 取消 "),
         selected == fields.len() + 1 && !editing,
     )?;
 
     let mode = if editing {
-        "编辑中，Enter/Esc 结束编辑"
+        t(
+            "Editing, Enter/Esc ends editing",
+            "编辑中，Enter/Esc 结束编辑",
+        )
     } else {
-        "导航中，Enter 选择当前项"
+        t(
+            "Navigating, Enter selects current item",
+            "导航中，Enter 选择当前项",
+        )
     };
     queue!(
         stdout,
@@ -439,7 +449,7 @@ impl Field {
             textarea: false,
             boolean: false,
             choices: Vec::new(),
-            empty_choice_label: "使用当前 Provider",
+            empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
     }
 
@@ -450,7 +460,7 @@ impl Field {
             textarea: false,
             boolean: true,
             choices: Vec::new(),
-            empty_choice_label: "使用当前 Provider",
+            empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
     }
 
@@ -461,7 +471,7 @@ impl Field {
             textarea: true,
             boolean: false,
             choices: Vec::new(),
-            empty_choice_label: "使用当前 Provider",
+            empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
     }
 

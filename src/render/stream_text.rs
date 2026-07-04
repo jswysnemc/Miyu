@@ -1,4 +1,5 @@
 use crate::i18n::text as t;
+use crate::render::status_style::color_status;
 use crate::render::stream::StreamRenderOptions;
 use crate::render::style::TOOL_BULLET;
 
@@ -33,7 +34,11 @@ pub(crate) fn tool_call_has_visible_block(name: &str) -> bool {
 /// 返回:
 /// - 工具状态事件文本
 pub(crate) fn tool_event_text(name: &str, status: &str) -> String {
-    format!("{TOOL_BULLET} {}: {name} {status}", t("tool", "工具"))
+    format!(
+        "{TOOL_BULLET} {}: {name} {}",
+        t("tool", "工具"),
+        color_status(status)
+    )
 }
 
 /// 生成等待动效详情行。

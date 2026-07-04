@@ -1,4 +1,5 @@
 use crate::config::AppConfig;
+use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
 use crate::prompts::default_system_prompt;
 use anyhow::{bail, Result};
@@ -22,13 +23,16 @@ pub(crate) fn edit_custom_prompts(
         } else {
             persona_display_name(&config.prompt.active_persona).to_string()
         };
-        let options = [format!("AI 人格 (当前: {persona})"), "用户身份".to_string()];
+        let options = [
+            format!("{} ({persona})", t("AI persona", "AI 人格")),
+            t("User identity", "用户身份").to_string(),
+        ];
         draw_menu(
             stdout,
-            " CUSTOM PROMPTS ",
+            t(" CUSTOM PROMPTS ", " 自定义提示词 "),
             &options,
             selected,
-            "[Enter]选择 [q]返回",
+            t("[Enter] select [q] back", "[Enter]选择 [q]返回"),
         )?;
         match read_key()? {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
@@ -64,10 +68,13 @@ fn edit_personas(stdout: &mut io::Stdout, paths: &MiyuPaths, config: &mut AppCon
         selected = selected.min(options.len().saturating_sub(1));
         draw_menu(
             stdout,
-            " AI 人格 ",
+            t(" AI PERSONAS ", " AI 人格 "),
             &options,
             selected,
-            "[Tab]激活 [Enter]编辑 [a]新增 [c]复制 [d]删除 [j/k]移动 [q]返回",
+            t(
+                "[Tab] activate [Enter] edit [a] add [c] copy [d] delete [j/k] move [q] back",
+                "[Tab]激活 [Enter]编辑 [a]新增 [c]复制 [d]删除 [j/k]移动 [q]返回",
+            ),
         )?;
         match read_key()? {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
@@ -153,7 +160,7 @@ fn copy_persona(
     let default_name = copy_persona_default_name(&source_name, personas);
     edit_prompt_file_form(
         stdout,
-        " COPY PERSONA ",
+        t(" COPY PERSONA ", " 复制人格 "),
         Some(&default_name),
         content,
         |name, content| write_persona(paths, config, name, content),
@@ -206,7 +213,7 @@ fn new_persona(
 ) -> Result<Option<String>> {
     edit_prompt_file_form(
         stdout,
-        " NEW PERSONA ",
+        t(" NEW PERSONA ", " 新增人格 "),
         None,
         String::new(),
         |name, content| write_persona(paths, config, name, content),
@@ -222,7 +229,7 @@ fn edit_persona(
     let content = read_persona(paths, config, current_name)?;
     edit_prompt_file_form(
         stdout,
-        " EDIT PERSONA ",
+        t(" EDIT PERSONA ", " 编辑人格 "),
         Some(current_name),
         content,
         |name, content| {
@@ -304,7 +311,10 @@ fn edit_identities(
         } else {
             "  "
         };
-        options.push(format!("{default_marker}不使用用户身份"));
+        options.push(format!(
+            "{default_marker}{}",
+            t("Do not use user identity", "不使用用户身份")
+        ));
         options.extend(identities.iter().map(|name| {
             let display = persona_display_name(name);
             if *name == config.prompt.active_identity {
@@ -316,10 +326,13 @@ fn edit_identities(
         selected = selected.min(options.len().saturating_sub(1));
         draw_menu(
             stdout,
-            " 用户身份 ",
+            t(" USER IDENTITIES ", " 用户身份 "),
             &options,
             selected,
-            "[Tab]激活 [Enter]编辑 [a]新增 [c]复制 [d]删除 [j/k]移动 [q]返回",
+            t(
+                "[Tab] activate [Enter] edit [a] add [c] copy [d] delete [j/k] move [q] back",
+                "[Tab]激活 [Enter]编辑 [a]新增 [c]复制 [d]删除 [j/k]移动 [q]返回",
+            ),
         )?;
         match read_key()? {
             KeyCode::Esc | KeyCode::Char('q') => return Ok(()),
@@ -370,7 +383,7 @@ fn new_identity(
 ) -> Result<Option<String>> {
     edit_prompt_file_form(
         stdout,
-        " NEW IDENTITY ",
+        t(" NEW IDENTITY ", " 新增身份 "),
         None,
         String::new(),
         |name, content| write_identity(paths, config, name, content),
@@ -386,7 +399,7 @@ fn edit_identity(
     let content = read_identity(paths, config, current_name)?;
     edit_prompt_file_form(
         stdout,
-        " EDIT IDENTITY ",
+        t(" EDIT IDENTITY ", " 编辑身份 "),
         Some(current_name),
         content,
         |name, content| {
@@ -435,13 +448,13 @@ where
 {
     let mut fields = vec![
         Field::new(
-            "名称",
+            t("Name", "名称"),
             current_name
                 .map(persona_display_name)
                 .unwrap_or("")
                 .to_string(),
         ),
-        Field::textarea("内容", content),
+        Field::textarea(t("Content", "内容"), content),
     ];
     if !run_form(stdout, title, &mut fields)? {
         return Ok(None);

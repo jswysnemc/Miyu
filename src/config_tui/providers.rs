@@ -1,19 +1,19 @@
 use crate::config::{AppConfig, ProviderConfig};
-use anyhow::{bail, Result};
+use crate::i18n::text as t;
+use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::event::KeyCode;
 use crossterm::queue;
 use crossterm::style::Print;
 use crossterm::terminal::{self, Clear, ClearType};
-use serde::Deserialize;
-use serde_json::Value;
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use super::form::{parse_bool_field, run_form, Field};
 use super::input::{read_key, read_key_with_timeout};
+use super::provider_fetch::fetch_models;
+use super::provider_forms::{edit_model_form, edit_provider_form};
 use super::ui::{draw_column, draw_menu, message, truncate};
 
 pub(crate) struct ProviderBrowser<'a> {
@@ -155,7 +155,7 @@ impl<'a> ProviderBrowser<'a> {
             let (tx, rx) = mpsc::channel();
             self.fetch_rx = Some(rx);
             self.loading = true;
-            self.status = "正在获取模型列表...".to_string();
+            self.status = t("Fetching model list...", "正在获取模型列表...").to_string();
             std::thread::spawn(move || {
                 let result = fetch_models(&provider).map_err(|err| err.to_string());
                 let _ = tx.send((seq, result));
@@ -183,11 +183,19 @@ impl<'a> ProviderBrowser<'a> {
         self.fetch_rx = None;
         match result {
             Ok(models) => {
-                self.status = format!("已获取 {} 个模型", models.len());
+                self.status = format!(
+                    "{} {} {}",
+                    t("Fetched", "已获取"),
+                    models.len(),
+                    t("models", "个模型")
+                );
                 self.raw_models = models;
             }
             Err(err) => {
-                self.status = format_status_line(&format!("获取模型失败: {err}"));
+                self.status = format_status_line(&format!(
+                    "{}: {err}",
+                    t("Failed to fetch models", "获取模型失败")
+                ));
                 self.raw_models.clear();
             }
         }
@@ -281,7 +289,11 @@ impl<'a> ProviderBrowser<'a> {
                 ) {
                     if edit_model_form(stdout, provider, &model.full)? {
                         self.config.active_provider = provider.id.clone();
-                        self.status = format!("已更新模型设置: {}", model.full);
+                        self.status = format!(
+                            "{}: {}",
+                            t("Updated model settings", "已更新模型设置"),
+                            model.full
+                        );
                     }
                 }
             }
@@ -303,13 +315,17 @@ impl<'a> ProviderBrowser<'a> {
                 if provider.default_model == model.full {
                     provider.default_model = provider.models.first().cloned().unwrap_or_default();
                 }
-                self.status = format!("已取消激活模型: {}", model.full);
+                self.status = format!(
+                    "{}: {}",
+                    t("Deactivated model", "已取消激活模型"),
+                    model.full
+                );
             } else {
                 provider.models.push(model.full.clone());
                 if provider.default_model.trim().is_empty() {
                     provider.default_model = model.full.clone();
                 }
-                self.status = format!("已激活模型: {}", model.full);
+                self.status = format!("{}: {}", t("Activated model", "已激活模型"), model.full);
             }
         }
     }
@@ -357,11 +373,16 @@ impl<'a> ProviderBrowser<'a> {
                     .map(|provider| provider.models.iter().any(|item| item == &model.full))
                     .unwrap_or(false);
                 if current && active {
-                    format!("{} [current active]", model.name)
+                    format!(
+                        "{} [{} {}]",
+                        model.name,
+                        t("current", "当前"),
+                        t("active", "激活")
+                    )
                 } else if current {
-                    format!("{} [current]", model.name)
+                    format!("{} [{}]", model.name, t("current", "当前"))
                 } else if active {
-                    format!("{} [active]", model.name)
+                    format!("{} [{}]", model.name, t("active", "激活"))
                 } else {
                     model.name.clone()
                 }
@@ -375,7 +396,7 @@ impl<'a> ProviderBrowser<'a> {
             inner_y,
             left_w,
             inner_h,
-            " PROVIDERS ",
+            t(" PROVIDERS ", " 供应商 "),
             &providers,
             self.provider_idx,
             self.active_col == 0,
@@ -386,15 +407,15 @@ impl<'a> ProviderBrowser<'a> {
             inner_y,
             mid_w,
             inner_h,
-            " ORG ",
+            t(" ORG ", " 组织 "),
             &self.orgs,
             self.org_idx,
             self.active_col == 1,
         )?;
         let title = if self.filter.is_empty() {
-            " MODELS ".to_string()
+            t(" MODELS ", " 模型 ").to_string()
         } else {
-            format!(" MODELS /{} ", self.filter)
+            format!("{} /{} ", t(" MODELS", " 模型"), self.filter)
         };
         draw_column(
             stdout,
@@ -408,10 +429,18 @@ impl<'a> ProviderBrowser<'a> {
             self.active_col == 2,
         )?;
         let help = if self.filter_mode {
-            format!("搜索: {}_  [Enter]确认 [Esc]取消", self.filter)
+            format!(
+                "{}: {}_  {}",
+                t("Search", "搜索"),
+                self.filter,
+                t("[Enter] confirm [Esc] cancel", "[Enter]确认 [Esc]取消")
+            )
         } else {
-            "[h/l]切栏 [j/k]移动 [Tab]激活模型 [Enter]模型设置 [/]搜索 [r]刷新 [a]添加 [d]删除 [q]返回"
-                .to_string()
+            t(
+                "[h/l] columns [j/k] move [Tab] activate model [Enter] model settings [/] search [r] refresh [a] add [d] delete [q] back",
+                "[h/l]切栏 [j/k]移动 [Tab]激活模型 [Enter]模型设置 [/]搜索 [r]刷新 [a]添加 [d]删除 [q]返回",
+            )
+            .to_string()
         };
         let status = if self.loading {
             format!("{}", self.status)
@@ -456,70 +485,19 @@ impl ModelEntry {
     }
 }
 
-fn fetch_models(provider: &ProviderConfig) -> Result<Vec<String>> {
-    let api_key = provider.api_key.as_deref().unwrap_or_default();
-    let mut api_key = if let Some(env_name) = api_key.strip_prefix("$env:") {
-        std::env::var(env_name).unwrap_or_default()
-    } else {
-        api_key.to_string()
-    };
-    if api_key.is_empty() && provider.is_opencode_zen() {
-        api_key = "public".to_string();
-    }
-    let url = models_url(&provider.base_url);
-    let mut request = reqwest::blocking::Client::builder()
-        .timeout(std::time::Duration::from_secs(provider.timeout_seconds))
-        .build()?
-        .get(url)
-        .header("Accept", "application/json")
-        .header("User-Agent", "miyu-config");
-    if !api_key.is_empty() {
-        request = request.bearer_auth(api_key);
-    }
-    let response = request.send()?;
-    let status = response.status();
-    let body = response.text()?;
-    if !status.is_success() {
-        bail!("{status}: {body}");
-    }
-    let parsed: ModelsResponse = serde_json::from_str(&body)?;
-    Ok(parsed
-        .data
-        .into_iter()
-        .map(|model| model.id)
-        .filter(|id| !id.is_empty())
-        .collect())
-}
-
-fn models_url(base_url: &str) -> String {
-    let mut url = base_url.trim().trim_end_matches('/').to_string();
-    if url.ends_with("/chat/completions") {
-        url.truncate(url.len() - "/chat/completions".len());
-    }
-    if url.ends_with("/v1") {
-        format!("{url}/models")
-    } else {
-        format!("{url}/v1/models")
-    }
-}
-
-#[derive(Deserialize)]
-struct ModelsResponse {
-    data: Vec<ModelInfo>,
-}
-
-#[derive(Deserialize)]
-struct ModelInfo {
-    id: String,
-}
-
 pub(crate) fn select_active_provider(
     stdout: &mut io::Stdout,
     config: &mut AppConfig,
 ) -> Result<()> {
     let choices = config.provider_model_choices();
     if choices.is_empty() {
-        message(stdout, "没有可用 Provider，请先添加。")?;
+        message(
+            stdout,
+            t(
+                "No available Provider, add one first.",
+                "没有可用 Provider，请先添加。",
+            ),
+        )?;
         return Ok(());
     }
     let mut selected = choices
@@ -540,10 +518,10 @@ pub(crate) fn select_active_provider(
             .collect::<Vec<_>>();
         draw_menu(
             stdout,
-            " SELECT PROVIDER/MODEL ",
+            t(" SELECT PROVIDER/MODEL ", " 选择供应商/模型 "),
             &options,
             selected,
-            "[Enter]选择 [q]返回",
+            t("[Enter] select [q] back", "[Enter]选择 [q]返回"),
         )?;
         match read_key()? {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
@@ -559,164 +537,4 @@ pub(crate) fn select_active_provider(
             _ => {}
         }
     }
-}
-
-fn edit_provider_form(
-    stdout: &mut io::Stdout,
-    provider: ProviderConfig,
-) -> Result<Option<ProviderConfig>> {
-    let current_context_chars = provider
-        .model_context_chars
-        .get(&provider.default_model)
-        .copied()
-        .unwrap_or_default();
-    let mut fields = vec![
-        Field::new("配置 ID", provider.id.clone()),
-        Field::new("显示名称", provider.display_name.clone()),
-        Field::new("Base URL", provider.base_url.clone()),
-        Field::new("协议", provider.protocol.clone()).choices(&[
-            "auto",
-            "openai-chat",
-            "openai-responses",
-            "anthropic",
-        ]),
-        Field::new(
-            "API Key 或 $env:NAME",
-            provider.api_key.clone().unwrap_or_default(),
-        ),
-        Field::new("当前模型", provider.default_model.clone()),
-        Field::new("模型上下文字符数", current_context_chars.to_string()),
-        Field::new("超时秒数", provider.timeout_seconds.to_string()),
-        Field::new("Temperature", provider.temperature.to_string()),
-        Field::new("思考等级", provider.thinking_level.clone())
-            .choices(&["auto", "none", "low", "medium", "high", "xhigh", "max"]),
-        Field::new("思考格式", provider.thinking_format.clone()).choices(&[
-            "auto",
-            "string",
-            "object",
-            "deepseek-thinking",
-            "openai-chat-reasoning-effort",
-            "reasoning",
-            "anthropic-thinking",
-            "disabled",
-        ]),
-        Field::textarea("自定义 Body JSON", provider.extra_body.clone()),
-    ];
-    if !run_form(stdout, " EDIT PROVIDER ", &mut fields)? {
-        return Ok(None);
-    }
-    let default_model = fields[5].value.trim().to_string();
-    let mut model_context_chars = provider.model_context_chars.clone();
-    match fields[6].value.trim().parse::<usize>().unwrap_or_default() {
-        0 => {
-            model_context_chars.remove(&default_model);
-        }
-        value => {
-            model_context_chars.insert(default_model.clone(), value);
-        }
-    }
-    let mut models = provider.models.clone();
-    if !default_model.trim().is_empty() && !models.iter().any(|item| item == &default_model) {
-        models.push(default_model.clone());
-    }
-    let extra_body = normalize_extra_body(&fields[11].value)?;
-    Ok(Some(ProviderConfig {
-        id: fields[0].value.trim().to_string(),
-        display_name: fields[1].value.trim().to_string(),
-        base_url: normalize_base_url(&fields[2].value),
-        protocol: fields[3].value.trim().to_string(),
-        api_key: Some(fields[4].value.trim().to_string()).filter(|value| !value.is_empty()),
-        models,
-        model_context_chars,
-        default_model,
-        timeout_seconds: fields[7].value.trim().parse().unwrap_or(60),
-        temperature: fields[8].value.trim().parse().unwrap_or(0.7),
-        thinking_level: fields[9].value.trim().to_string(),
-        thinking_format: fields[10].value.trim().to_string(),
-        extra_body,
-    }))
-}
-
-/// 规范化并校验自定义 Body JSON。
-///
-/// 参数:
-/// - `value`: 表单中输入的 JSON 文本
-///
-/// 返回:
-/// - 为空时返回空字符串，否则返回格式化后的 JSON 对象字符串
-fn normalize_extra_body(value: &str) -> Result<String> {
-    let value = value.trim();
-    if value.is_empty() {
-        return Ok(String::new());
-    }
-    let parsed = serde_json::from_str::<Value>(value)?;
-    if !parsed.is_object() {
-        bail!("自定义 Body JSON 必须是 JSON 对象");
-    }
-    Ok(serde_json::to_string_pretty(&parsed)?)
-}
-
-fn edit_model_form(
-    stdout: &mut io::Stdout,
-    provider: &mut ProviderConfig,
-    model: &str,
-) -> Result<bool> {
-    let active = provider.models.iter().any(|item| item == model);
-    let current = provider.default_model == model;
-    let context_chars = provider
-        .model_context_chars
-        .get(model)
-        .copied()
-        .unwrap_or_default();
-    let mut fields = vec![
-        Field::boolean("激活模型", active),
-        Field::boolean("设为当前模型", current),
-        Field::new("模型上下文字符数", context_chars.to_string()),
-    ];
-    if !run_form(stdout, " EDIT MODEL ", &mut fields)? {
-        return Ok(false);
-    }
-    let active = parse_bool_field(&fields[0].value)?;
-    let current = parse_bool_field(&fields[1].value)?;
-    if active {
-        if !provider.models.iter().any(|item| item == model) {
-            provider.models.push(model.to_string());
-        }
-    } else {
-        provider.models.retain(|item| item != model);
-    }
-    if current || provider.default_model == model && !active {
-        provider.default_model = if active {
-            model.to_string()
-        } else {
-            provider.models.first().cloned().unwrap_or_default()
-        };
-        if !provider.default_model.is_empty()
-            && !provider
-                .models
-                .iter()
-                .any(|item| item == &provider.default_model)
-        {
-            provider.models.push(provider.default_model.clone());
-        }
-    }
-    match fields[2].value.trim().parse::<usize>().unwrap_or_default() {
-        0 => {
-            provider.model_context_chars.remove(model);
-        }
-        value => {
-            provider
-                .model_context_chars
-                .insert(model.to_string(), value);
-        }
-    }
-    Ok(true)
-}
-
-fn normalize_base_url(value: &str) -> String {
-    let mut url = value.trim().trim_end_matches('/').to_string();
-    if url.ends_with("/chat/completions") {
-        url.truncate(url.len() - "/chat/completions".len());
-    }
-    url
 }

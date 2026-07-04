@@ -323,6 +323,7 @@ impl StreamRenderer {
                     write_command_error_block(&mut stdout, output)?;
                     stdout.flush()?;
                 }
+                self.write_tool_event_line(name, status)?;
                 return Ok(());
             }
             self.write_live_tool_status(name, status, true)?;

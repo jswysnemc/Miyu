@@ -6,6 +6,7 @@ mod live_tool_status;
 mod markdown;
 mod markdown_blocks;
 mod markdown_inline;
+mod status_style;
 mod stream;
 mod stream_output;
 mod stream_summary;

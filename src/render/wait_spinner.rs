@@ -1,7 +1,7 @@
 use anyhow::Result;
 use crossterm::cursor::{self, MoveTo};
 use crossterm::execute;
-use crossterm::terminal::{Clear, ClearType};
+use crossterm::terminal::{self, Clear, ClearType};
 use std::io::{self, IsTerminal, Write};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
@@ -80,7 +80,7 @@ impl WaitSpinner {
     /// 返回:
     /// - 等待动画控制器
     pub(crate) fn start(phase: String, style: SpinnerStyle, sub_phase: Option<String>) -> Self {
-        let anchor_row = cursor::position().map(|(_, row)| row).unwrap_or(0);
+        let anchor_row = reserve_spinner_rows(spinner_line_count(sub_phase.as_deref()));
         let state = Arc::new(Mutex::new(WaitSpinnerState {
             phase,
             sub_phase,
@@ -201,6 +201,54 @@ fn render_frame(frame: usize, state: &WaitSpinnerState) -> (String, u16) {
         }
         _ => (main_line, 1),
     }
+}
+
+/// 计算等待动画需要占用的终端行数。
+///
+/// 参数:
+/// - `sub_phase`: 等待动画详情行
+///
+/// 返回:
+/// - 等待动画渲染行数
+fn spinner_line_count(sub_phase: Option<&str>) -> u16 {
+    match sub_phase {
+        Some(value) if !value.trim().is_empty() => 2,
+        _ => 1,
+    }
+}
+
+/// 为等待动画预留终端空间并返回锚点行。
+///
+/// 参数:
+/// - `lines`: 等待动画需要渲染的行数
+///
+/// 返回:
+/// - 等待动画锚点行
+fn reserve_spinner_rows(lines: u16) -> u16 {
+    let row = cursor::position().map(|(_, row)| row).unwrap_or(0);
+    let rows = terminal::size().map(|(_, rows)| rows.max(1)).unwrap_or(24);
+    let overflow = spinner_row_overflow(row, rows, lines.max(1));
+    if overflow > 0 {
+        let mut stdout = io::stdout();
+        for _ in 0..overflow {
+            let _ = writeln!(stdout);
+        }
+        let _ = stdout.flush();
+    }
+    row.saturating_sub(overflow)
+}
+
+/// 计算等待动画在终端底部需要滚动的行数。
+///
+/// 参数:
+/// - `row`: 当前光标行
+/// - `rows`: 终端总行数
+/// - `lines`: 等待动画行数
+///
+/// 返回:
+/// - 需要滚动的行数
+fn spinner_row_overflow(row: u16, rows: u16, lines: u16) -> u16 {
+    row.saturating_add(lines).saturating_sub(rows)
 }
 
 /// 渲染旧版表情扫描等待动画前缀。
@@ -561,6 +609,20 @@ mod tests {
         assert!(frame.contains("工具运行中"));
         assert!(frame.contains("第 1 轮"));
         assert_eq!(lines, 2);
+    }
+
+    #[test]
+    fn spinner_row_overflow_reserves_bottom_space() {
+        assert_eq!(spinner_row_overflow(22, 24, 2), 0);
+        assert_eq!(spinner_row_overflow(23, 24, 2), 1);
+        assert_eq!(spinner_row_overflow(23, 24, 1), 0);
+    }
+
+    #[test]
+    fn spinner_line_count_includes_non_empty_detail() {
+        assert_eq!(spinner_line_count(Some("model: test")), 2);
+        assert_eq!(spinner_line_count(Some("  ")), 1);
+        assert_eq!(spinner_line_count(None), 1);
     }
 
     #[test]

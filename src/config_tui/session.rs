@@ -1,5 +1,6 @@
 use crate::config::AppConfig;
 use crate::default_kb;
+use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
@@ -58,17 +59,22 @@ fn run_main_menu(
     loop {
         let active = active_label(config);
         let options = [
-            format!("激活配置 (当前: {active})"),
-            "供应商和模型".to_string(),
-            "插件配置".to_string(),
-            "自定义提示词".to_string(),
-            "全局参数设置".to_string(),
-            "保存并退出".to_string(),
+            format!("{} ({active})", t("Active configuration", "激活配置")),
+            t("Providers and models", "供应商和模型").to_string(),
+            t("Plugin configuration", "插件配置").to_string(),
+            t("Custom prompts", "自定义提示词").to_string(),
+            t("Global settings", "全局参数设置").to_string(),
+            t("Save and exit", "保存并退出").to_string(),
         ];
         let status = default_kb::status(paths)
             .ok()
             .filter(|status| status.has_update_notice)
-            .map(|_| "默认知识库需要更新，运行 miyu update-default-kb")
+            .map(|_| {
+                t(
+                    "Default knowledge base needs update, run miyu update-default-kb",
+                    "默认知识库需要更新，运行 miyu update-default-kb",
+                )
+            })
             .unwrap_or("");
         draw_menu(stdout, " MIYU CONFIG ", &options, selected, status)?;
 
@@ -97,5 +103,5 @@ fn active_label(config: &AppConfig) -> String {
     config
         .provider(None)
         .map(|provider| format!("{} / {}", provider.display_name, provider.default_model))
-        .unwrap_or_else(|_| "未配置".to_string())
+        .unwrap_or_else(|_| t("not configured", "未配置").to_string())
 }

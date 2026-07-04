@@ -1,7 +1,10 @@
 mod custom_prompts;
 mod form;
 mod input;
+mod plugin_fields;
 mod plugins;
+mod provider_fetch;
+mod provider_forms;
 mod providers;
 mod session;
 mod settings;

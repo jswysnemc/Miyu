@@ -1,4 +1,5 @@
 use crate::i18n::text as t;
+use crate::render::status_style::{color_running, color_status};
 use crate::render::style::TOOL_BULLET;
 use crate::render::tool_names::readable_tool_name;
 use anyhow::Result;
@@ -164,11 +165,13 @@ impl StreamSummary {
     fn tool_summary_text(&self) -> String {
         let total = tool_totals(&self.tool_stats);
         let mut lines = vec![format!(
-            "{TOOL_BULLET} {}: {} {} · ok:{} · err:{}{}",
+            "{TOOL_BULLET} {}: {} {} · {}:{} · {}:{}{}",
             t("tools", "工具"),
             total.calls,
             t("calls", "次"),
+            color_status("ok"),
             total.ok,
+            color_status("err"),
             total.error,
             running_suffix(total.running)
         )];
@@ -256,7 +259,7 @@ fn running_suffix(running: usize) -> String {
     if running == 0 {
         String::new()
     } else {
-        format!(" · {}:{running}", t("running", "运行中"))
+        format!(" · {}:{running}", color_running(t("running", "运行中")))
     }
 }
 
@@ -294,25 +297,33 @@ pub(crate) fn tool_status_text(name: &str, stats: &ToolStats) -> String {
     let running = stats.calls.saturating_sub(stats.ok + stats.error);
     if calls == 1 {
         if running > 0 {
-            return format!("{name}×1 {}", t("running", "运行中"));
+            return format!("{name}×1 {}", color_running(t("running", "运行中")));
         }
         if stats.error > 0 {
-            return format!("{name}×1 err");
+            return format!("{name}×1 {}", color_status("err"));
         }
         if stats.ok > 0 {
-            return format!("{name}×1 ok");
+            return format!("{name}×1 {}", color_status("ok"));
         }
     }
     if running > 0 {
         format!(
-            "{name}×{calls} {}:{} ok:{} err:{}",
-            t("running", "运行中"),
+            "{name}×{calls} {}:{} {}:{} {}:{}",
+            color_running(t("running", "运行中")),
             running,
+            color_status("ok"),
             stats.ok,
+            color_status("err"),
             stats.error
         )
     } else {
-        format!("{name}×{calls} ok:{} err:{}", stats.ok, stats.error)
+        format!(
+            "{name}×{calls} {}:{} {}:{}",
+            color_status("ok"),
+            stats.ok,
+            color_status("err"),
+            stats.error
+        )
     }
 }
 
@@ -388,10 +399,18 @@ mod tests {
         let output = summary.tool_summary_text();
 
         assert!(output.lines().count() >= 3);
-        assert!(output.lines().next().unwrap().contains("ok:1"));
-        assert!(output.lines().next().unwrap().contains("err:1"));
-        assert!(output.contains("\n  • read_file×1 ok"));
-        assert!(output.contains("\n  • web_search×1 err"));
+        assert!(output
+            .lines()
+            .next()
+            .unwrap()
+            .contains("\x1b[32mok\x1b[0m:1"));
+        assert!(output
+            .lines()
+            .next()
+            .unwrap()
+            .contains("\x1b[31merr\x1b[0m:1"));
+        assert!(output.contains("\n  • read_file×1 \x1b[32mok\x1b[0m"));
+        assert!(output.contains("\n  • web_search×1 \x1b[31merr\x1b[0m"));
         assert!(!output.contains(", web_search"));
     }
 

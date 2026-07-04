@@ -1,3 +1,4 @@
+use crate::i18n::text as t;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
 use crossterm::queue;
@@ -61,7 +62,10 @@ pub(crate) fn draw_menu(
 
 fn menu_help(status: &str) -> &str {
     if status.is_empty() {
-        "[j/k]移动 [Enter]选择 [q]返回"
+        t(
+            "[j/k] move [Enter] select [q] back",
+            "[j/k]移动 [Enter]选择 [q]返回",
+        )
     } else {
         status
     }
@@ -164,7 +168,7 @@ pub(crate) fn message(stdout: &mut io::Stdout, text: &str) -> Result<()> {
         MoveTo(0, 0),
         Print(text),
         MoveTo(0, 2),
-        Print("按任意键继续")
+        Print(t("Press any key to continue", "按任意键继续"))
     )?;
     stdout.flush()?;
     let _ = read_key()?;
