@@ -1,7 +1,5 @@
 use crate::i18n::text as t;
-use crate::render::status_style::color_status;
-use crate::render::stream::StreamRenderOptions;
-use crate::render::style::TOOL_BULLET;
+use crate::render::stream_config::StreamRenderOptions;
 
 /// 归一化流式文本换行。
 ///
@@ -23,22 +21,6 @@ pub(crate) fn normalize_stream_text(text: &str) -> String {
 /// - 是否已经有命令块或 diff 块展示
 pub(crate) fn tool_call_has_visible_block(name: &str) -> bool {
     matches!(name, "run_command" | "edit_file" | "write_file")
-}
-
-/// 生成工具状态事件文本。
-///
-/// 参数:
-/// - `name`: 工具展示名称
-/// - `status`: 状态文本
-///
-/// 返回:
-/// - 工具状态事件文本
-pub(crate) fn tool_event_text(name: &str, status: &str) -> String {
-    format!(
-        "{TOOL_BULLET} {}: {name} {}",
-        t("tool", "工具"),
-        color_status(status)
-    )
 }
 
 /// 生成等待动效详情行。

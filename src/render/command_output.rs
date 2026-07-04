@@ -28,16 +28,25 @@ pub(crate) fn write_tool_payload(
     Ok(())
 }
 
-/// 写入命令调用块。
+/// 写入带动作标题的命令调用块。
 ///
 /// 参数:
 /// - `stdout`: 标准输出句柄
 /// - `arguments`: 工具调用参数
+/// - `action`: 命令动作展示名
 ///
 /// 返回:
 /// - 写入是否成功
-pub(crate) fn write_command_block(stdout: &mut io::Stdout, arguments: &str) -> Result<()> {
-    write!(stdout, "{}", render_command_block(arguments))?;
+pub(crate) fn write_command_block_with_action(
+    stdout: &mut io::Stdout,
+    arguments: &str,
+    action: &str,
+) -> Result<()> {
+    write!(
+        stdout,
+        "{}",
+        render_command_block_with_action(arguments, action)
+    )?;
     Ok(())
 }
 
@@ -84,6 +93,18 @@ pub(crate) fn write_write_file_diff_block(
 /// 返回:
 /// - 代码块风格的命令文本
 fn render_command_block(arguments: &str) -> String {
+    render_command_block_with_action(arguments, "")
+}
+
+/// 渲染带动作标题的命令调用块。
+///
+/// 参数:
+/// - `arguments`: 工具调用参数
+/// - `action`: 命令动作展示名
+///
+/// 返回:
+/// - 代码块风格的命令文本
+fn render_command_block_with_action(arguments: &str, action: &str) -> String {
     let parsed = serde_json::from_str::<Value>(arguments).ok();
     let command = parsed
         .as_ref()
@@ -92,7 +113,12 @@ fn render_command_block(arguments: &str) -> String {
         .unwrap_or(arguments)
         .trim();
     let lines = shell_command_lines(command);
-    let mut output = render_code_header(&format!("{TOOL_BULLET} command"));
+    let header = if action.trim().is_empty() {
+        format!("{TOOL_BULLET} command")
+    } else {
+        format!("{TOOL_BULLET} {} command", action.trim())
+    };
+    let mut output = render_code_header(&header);
     for line in &lines {
         output.push_str(&highlight_code_line("sh", line));
         output.push('\n');
@@ -522,6 +548,17 @@ mod tests {
         assert!(plain.contains("\nPY\n"));
         assert!(!plain.contains(",-- command"));
         assert!(!plain.contains("`--"));
+    }
+
+    #[test]
+    fn renders_command_block_with_action_header() {
+        let output = render_command_block_with_action(r#"{"command":"date"}"#, "Run");
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • Run command "));
+        assert!(plain.contains("date"));
+        assert!(!plain.contains("Run run"));
+        assert!(!plain.contains("── • command "));
     }
 
     #[test]

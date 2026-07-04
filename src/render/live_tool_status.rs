@@ -28,7 +28,7 @@ impl LiveToolStatus {
     /// 写入或覆盖当前工具状态行。
     ///
     /// 参数:
-    /// - `name`: 工具展示名称
+    /// - `name`: 工具展示标签
     /// - `status`: 工具状态，取值为 arg、run、ok 或 err
     /// - `final_line`: 是否结束当前状态行
     ///

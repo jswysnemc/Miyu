@@ -10,7 +10,7 @@ pub(crate) fn color_status(status: &str) -> String {
         "ok" => "\x1b[32mok\x1b[0m".to_string(),
         "err" => "\x1b[31merr\x1b[0m".to_string(),
         "run" => "\x1b[33mrun\x1b[0m".to_string(),
-        "arg" => "\x1b[36marg\x1b[0m".to_string(),
+        "arg" => "\x1b[36m...\x1b[0m".to_string(),
         value => value.to_string(),
     }
 }
@@ -35,7 +35,7 @@ mod tests {
         assert_eq!(color_status("ok"), "\x1b[32mok\x1b[0m");
         assert_eq!(color_status("err"), "\x1b[31merr\x1b[0m");
         assert_eq!(color_status("run"), "\x1b[33mrun\x1b[0m");
-        assert_eq!(color_status("arg"), "\x1b[36marg\x1b[0m");
+        assert_eq!(color_status("arg"), "\x1b[36m...\x1b[0m");
         assert_eq!(color_status("custom"), "custom");
     }
 

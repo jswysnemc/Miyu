@@ -12,4 +12,5 @@ pub struct ToolCallStreamProgress {
     pub name: Option<String>,
     pub arguments_chars: usize,
     pub arguments_bytes: usize,
+    pub arguments_preview: String,
 }

@@ -1,0 +1,368 @@
+use crate::render::status_style::color_status;
+use crate::render::style::TOOL_BULLET;
+use serde_json::Value;
+use std::path::Path;
+
+/// 生成工具调用展示标签。
+///
+/// 参数:
+/// - `name`: 工具原始名称
+/// - `arguments`: 工具参数 JSON 文本
+///
+/// 返回:
+/// - 面向终端展示的短标签
+pub(crate) fn tool_event_label(name: &str, arguments: Option<&str>) -> String {
+    let action = tool_action(name);
+    let suffix = arguments.and_then(|arguments| tool_suffix_from_text(name, arguments));
+    match suffix {
+        Some(suffix) if !suffix.trim().is_empty() => format!("{action} {suffix}"),
+        _ if action == "Tool" => format!("Tool {name}"),
+        _ => action.to_string(),
+    }
+}
+
+/// 生成工具状态事件文本。
+///
+/// 参数:
+/// - `label`: 工具展示标签
+/// - `status`: 状态文本
+///
+/// 返回:
+/// - 工具状态事件文本
+pub(crate) fn tool_event_text(label: &str, status: &str) -> String {
+    format!("{TOOL_BULLET} {label} {}", color_status(status))
+}
+
+/// 生成工具状态文本。
+///
+/// 参数:
+/// - `label`: 工具展示标签
+/// - `status`: 工具状态
+///
+/// 返回:
+/// - 可直接写入终端的单行状态文本
+pub(crate) fn tool_call_status_text(label: &str, status: &str) -> String {
+    format!("{TOOL_BULLET} {label} {}", color_status(status))
+}
+
+/// 返回工具动作短名。
+///
+/// 参数:
+/// - `name`: 工具原始名称
+///
+/// 返回:
+/// - 动作短名
+fn tool_action(name: &str) -> &'static str {
+    match name {
+        "run_command" | "background_command" => "Run",
+        "write_file" => "Write",
+        "edit_file" => "Edit",
+        "read_file" => "Read",
+        "trash_path" => "Trash",
+        "glob" | "find_files" => "Find",
+        "grep" | "search_text" => "Search",
+        "task_agent" => "Task",
+        "check_os_info" => "Check",
+        "load_tools" | "load_skill" => "Load",
+        "create_directory" => "Create",
+        "list_directory" => "List",
+        _ => "Tool",
+    }
+}
+
+/// 解析工具参数 JSON。
+///
+/// 参数:
+/// - `arguments`: 工具参数 JSON 文本
+///
+/// 返回:
+/// - 解析后的 JSON 值
+fn parse_arguments(arguments: &str) -> Option<Value> {
+    serde_json::from_str::<Value>(arguments).ok()
+}
+
+/// 从完整或部分参数文本中提取展示对象。
+///
+/// 参数:
+/// - `name`: 工具原始名称
+/// - `arguments`: 工具参数文本
+///
+/// 返回:
+/// - 可展示对象文本
+fn tool_suffix_from_text(name: &str, arguments: &str) -> Option<String> {
+    parse_arguments(arguments)
+        .and_then(|value| tool_suffix(name, &value))
+        .or_else(|| tool_suffix_from_partial_text(name, arguments))
+}
+
+/// 提取工具展示对象。
+///
+/// 参数:
+/// - `name`: 工具原始名称
+/// - `arguments`: 工具参数
+///
+/// 返回:
+/// - 可展示对象文本
+fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
+    match name {
+        "write_file" | "edit_file" | "read_file" | "trash_path" => {
+            string_field(arguments, &["path"]).map(file_basename)
+        }
+        "glob" | "find_files" | "grep" | "search_text" => {
+            string_field(arguments, &["include", "pattern"]).map(compact_text)
+        }
+        "load_skill" => string_field(arguments, &["name"])
+            .map(compact_text)
+            .map(|value| format!("skill {value}")),
+        "load_tools" => load_tools_suffix(arguments),
+        _ => None,
+    }
+}
+
+/// 从不完整 JSON 参数文本中提取工具展示对象。
+///
+/// 参数:
+/// - `name`: 工具原始名称
+/// - `arguments`: 可能尚未闭合的 JSON 参数文本
+///
+/// 返回:
+/// - 可展示对象文本
+fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> {
+    match name {
+        "write_file" | "edit_file" | "read_file" | "trash_path" => {
+            string_field_from_partial(arguments, &["path"]).map(file_basename)
+        }
+        "glob" | "find_files" | "grep" | "search_text" => {
+            string_field_from_partial(arguments, &["include", "pattern"]).map(compact_text)
+        }
+        "load_skill" => string_field_from_partial(arguments, &["name"])
+            .map(compact_text)
+            .map(|value| format!("skill {value}")),
+        "load_tools" => load_tools_suffix_from_partial(arguments),
+        _ => None,
+    }
+}
+
+/// 提取加载工具的展示对象。
+///
+/// 参数:
+/// - `arguments`: 工具参数
+///
+/// 返回:
+/// - 加载对象文本
+fn load_tools_suffix(arguments: &Value) -> Option<String> {
+    if let Some(tool) = string_field(arguments, &["tool_name"]).map(compact_text) {
+        return Some(format!("tool {tool}"));
+    }
+    string_field(arguments, &["group_name"])
+        .map(compact_text)
+        .map(|group| format!("group {group}"))
+}
+
+/// 从不完整参数文本中提取加载工具的展示对象。
+///
+/// 参数:
+/// - `arguments`: 可能尚未闭合的 JSON 参数文本
+///
+/// 返回:
+/// - 加载对象文本
+fn load_tools_suffix_from_partial(arguments: &str) -> Option<String> {
+    if let Some(tool) = string_field_from_partial(arguments, &["tool_name"]).map(compact_text) {
+        return Some(format!("tool {tool}"));
+    }
+    string_field_from_partial(arguments, &["group_name"])
+        .map(compact_text)
+        .map(|group| format!("group {group}"))
+}
+
+/// 从 JSON 中读取第一个非空字符串字段。
+///
+/// 参数:
+/// - `value`: JSON 值
+/// - `keys`: 待检查字段名
+///
+/// 返回:
+/// - 字符串字段值
+fn string_field(value: &Value, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .filter_map(|key| value.get(key).and_then(Value::as_str))
+        .map(str::trim)
+        .find(|value| !value.is_empty())
+        .map(ToString::to_string)
+}
+
+/// 从不完整 JSON 文本中读取第一个完整字符串字段。
+///
+/// 参数:
+/// - `raw`: JSON 参数片段
+/// - `keys`: 待检查字段名
+///
+/// 返回:
+/// - 字符串字段值
+fn string_field_from_partial(raw: &str, keys: &[&str]) -> Option<String> {
+    keys.iter()
+        .find_map(|key| json_string_field_from_partial(raw, key))
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
+}
+
+/// 从 JSON 片段中读取指定字符串字段。
+///
+/// 参数:
+/// - `raw`: JSON 参数片段
+/// - `key`: 字段名
+///
+/// 返回:
+/// - 字段字符串值
+fn json_string_field_from_partial(raw: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{}\"", key);
+    let key_index = raw.find(&pattern)?;
+    let after_key = &raw[key_index + pattern.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+    let quote_index = after_colon.find('"')?;
+    let value = &after_colon[quote_index..];
+    let end_index = find_json_string_end(value)?;
+    serde_json::from_str::<String>(&value[..=end_index]).ok()
+}
+
+/// 查找 JSON 字符串结束位置。
+///
+/// 参数:
+/// - `value`: 以双引号开头的 JSON 字符串片段
+///
+/// 返回:
+/// - 结束双引号的字节位置
+fn find_json_string_end(value: &str) -> Option<usize> {
+    if !value.starts_with('"') {
+        return None;
+    }
+    let mut escaped = false;
+    for (index, ch) in value.char_indices().skip(1) {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return Some(index);
+        }
+    }
+    None
+}
+
+/// 提取路径末尾文件名。
+///
+/// 参数:
+/// - `value`: 路径文本
+///
+/// 返回:
+/// - 文件名或原始路径文本
+fn file_basename(value: String) -> String {
+    Path::new(&value)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .filter(|name| !name.trim().is_empty())
+        .map(ToString::to_string)
+        .unwrap_or(value)
+}
+
+/// 压缩展示对象文本。
+///
+/// 参数:
+/// - `value`: 原始文本
+///
+/// 返回:
+/// - 单行展示文本
+fn compact_text(value: String) -> String {
+    let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
+    if value.chars().count() <= 48 {
+        value
+    } else {
+        format!("{}...", value.chars().take(45).collect::<String>())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn command_tools_use_run_label() {
+        assert_eq!(
+            tool_event_label("run_command", Some(r#"{"command":"date"}"#)),
+            "Run"
+        );
+        assert_eq!(
+            tool_event_label(
+                "background_command",
+                Some(r#"{"action":"start","command":"sleep 1"}"#)
+            ),
+            "Run"
+        );
+    }
+
+    #[test]
+    fn file_tools_include_basename() {
+        assert_eq!(
+            tool_event_label("write_file", Some(r#"{"path":"/tmp/example.rs"}"#)),
+            "Write example.rs"
+        );
+        assert_eq!(
+            tool_event_label("edit_file", Some(r#"{"path":"src/render/stream.rs"}"#)),
+            "Edit stream.rs"
+        );
+    }
+
+    #[test]
+    fn partial_arguments_extract_target() {
+        assert_eq!(
+            tool_event_label(
+                "write_file",
+                Some(r#"{"path":"src/main.rs","content":"unfinished"#)
+            ),
+            "Write main.rs"
+        );
+        assert_eq!(
+            tool_event_label("load_tools", Some(r#"{"group_name":"web","#)),
+            "Load group web"
+        );
+    }
+
+    #[test]
+    fn load_tools_use_load_label() {
+        assert_eq!(
+            tool_event_label("load_tools", Some(r#"{"group_name":"web"}"#)),
+            "Load group web"
+        );
+        assert_eq!(
+            tool_event_label("load_tools", Some(r#"{"tool_name":"web_fetch"}"#)),
+            "Load tool web_fetch"
+        );
+        assert_eq!(
+            tool_event_label("load_skill", Some(r#"{"name":"yce"}"#)),
+            "Load skill yce"
+        );
+    }
+
+    #[test]
+    fn event_text_omits_tool_prefix() {
+        let output = tool_event_text("Write main.rs", "ok");
+
+        assert!(output.starts_with("• Write main.rs "));
+        assert!(!output.contains("tool:"));
+    }
+
+    #[test]
+    fn unknown_tools_use_tool_label() {
+        let label = tool_event_label("custom_tool", Some(r#"{"value":1}"#));
+        let output = tool_event_text(&label, "err");
+
+        assert_eq!(label, "Tool custom_tool");
+        assert!(output.contains("Tool custom_tool"));
+        assert!(output.contains("\x1b[31merr\x1b[0m"));
+    }
+}
