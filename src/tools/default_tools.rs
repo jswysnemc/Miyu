@@ -23,8 +23,14 @@ pub fn register(registry: &mut ToolRegistry) {
         |args| async move { task_agent(args) },
     ).writes());
     registry.register(ToolSpec::new(
+        "write_file",
+        t("Create or overwrite a UTF-8 text file. Use this for new files or full-file replacement instead of run_command with cat, tee, heredoc, or shell redirection.", "创建或覆盖 UTF-8 文本文件。新建文件或整文件替换时使用它，不要用 run_command 执行 cat、tee、heredoc 或 shell 重定向写文件。"),
+        json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"content":{"type":"string","description": t("Full UTF-8 file content.", "完整 UTF-8 文件内容。")}},"required":["path","content"],"additionalProperties":false}),
+        |args| async move { write_file(args) },
+    ).writes());
+    registry.register(ToolSpec::new(
         "edit_file",
-        t("Edit an existing UTF-8 file by replacing an inclusive 1-based line range. Use after read_file identifies exact line numbers.", "按 1 起始的闭区间行号替换现有 UTF-8 文件内容。应先用 read_file 确认准确行号。"),
+        t("Edit an existing UTF-8 file by replacing an inclusive 1-based line range. Use after read_file identifies exact line numbers. Use write_file for new files or full-file replacement.", "按 1 起始的闭区间行号替换现有 UTF-8 文件内容。应先用 read_file 确认准确行号。新建文件或整文件替换时使用 write_file。"),
         json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"start_line":{"type":"integer","description": t("1-based first line to replace.", "要替换的第一行，1 起始。")},"end_line":{"type":"integer","description": t("1-based last line to replace, inclusive.", "要替换的最后一行，闭区间。")},"replacement":{"type":"string","description": t("Replacement text. May contain multiple lines. Empty text deletes the line range.", "替换文本，可包含多行；空文本会删除指定行范围。")}},"required":["path","start_line","end_line","replacement"],"additionalProperties":false}),
         |args| async move { edit_file(args) },
     ).writes());
@@ -289,6 +295,36 @@ fn read_file(args: Value) -> Result<String> {
         "content": lines.join("\n"),
         "truncated": next.is_some(),
         "next": next,
+    }))?)
+}
+
+/// 创建或覆盖 UTF-8 文本文件。
+///
+/// 参数:
+/// - `args`: 工具参数，包含 path 和 content
+///
+/// 返回:
+/// - JSON 格式写入结果
+fn write_file(args: Value) -> Result<String> {
+    let path = path_arg(&args, "path")?;
+    let content = args
+        .get("content")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("content is required"))?;
+    if path.exists() && !path.is_file() {
+        bail!("not a regular file: {}", path.display())
+    }
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    std::fs::create_dir_all(parent)?;
+    let old_bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
+    let temp = tempfile::NamedTempFile::new_in(parent)?;
+    std::fs::write(temp.path(), content.as_bytes())?;
+    temp.persist(&path)?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "ok": true,
+        "path": path.display().to_string(),
+        "old_bytes": old_bytes,
+        "new_bytes": content.len()
     }))?)
 }
 
@@ -589,6 +625,19 @@ fn required(args: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn write_file_creates_and_overwrites_text_file() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("nested").join("sample.txt");
+        write_file(json!({"path": path.display().to_string(), "content": "one\n"})).unwrap();
+        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\n");
+        let result =
+            write_file(json!({"path": path.display().to_string(), "content": "two"})).unwrap();
+        let data: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(data["old_bytes"], 4);
+        assert_eq!(std::fs::read_to_string(path).unwrap(), "two");
+    }
 
     #[test]
     fn edit_file_replaces_lines() {

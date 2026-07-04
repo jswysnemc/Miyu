@@ -14,7 +14,7 @@ const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 pub(crate) fn register(registry: &mut ToolRegistry, allow_command_execution: bool) {
     registry.register(ToolSpec::new(
         "run_command",
-        t("Run a shell command in the workspace when skills.allow_command_execution is enabled.", "当 skills.allow_command_execution 启用时，在工作区运行 shell 命令。"),
+        t("Run a shell command in the workspace when skills.allow_command_execution is enabled. Do not use this to create or modify files; use write_file or edit_file instead.", "当 skills.allow_command_execution 启用时，在工作区运行 shell 命令。不要用它创建或修改文件，应使用 write_file 或 edit_file。"),
         json!({"type":"object","properties":{"command":{"type":"string","description": t("Command to run.", "要运行的命令。")},"timeout_seconds":{"type":"integer","description": t("Optional timeout in seconds.", "可选超时时间，单位秒。")}},"required":["command"],"additionalProperties":false}),
         move |args| async move { run_command(args, allow_command_execution).await },
     ).writes());
@@ -46,6 +46,7 @@ async fn run_command(args: Value, allowed: bool) -> Result<String> {
         bail!("{}", t("command execution is disabled; set skills.allow_command_execution=true in config.jsonc to enable run_command", "命令执行已禁用；请在 config.jsonc 中设置 skills.allow_command_execution=true 以启用 run_command"));
     }
     let command = required(&args, "command")?;
+    ensure_not_file_write_command(&command)?;
     let timeout = command_timeout(&args);
     let output = run_shell_command(&command, timeout).await?;
     command_output(output)
@@ -177,6 +178,165 @@ fn ensure_readonly_command(command: &str) -> Result<()> {
     Ok(())
 }
 
+/// 禁止用 shell 命令代替专用文件写入工具。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+///
+/// 返回:
+/// - 命令是否允许
+fn ensure_not_file_write_command(command: &str) -> Result<()> {
+    if has_output_redirection(command) || has_tee_write(command) || has_cat_heredoc(command) {
+        bail!(
+            "{}",
+            t(
+                "Use write_file for new/full-file content or edit_file for line edits instead of shell file writes",
+                "请使用 write_file 新建或整文件写入，或使用 edit_file 做行级修改，不要用 shell 写文件"
+            )
+        );
+    }
+    Ok(())
+}
+
+/// 判断命令是否包含输出重定向写文件。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+///
+/// 返回:
+/// - 是否包含 stdout 写文件重定向
+fn has_output_redirection(command: &str) -> bool {
+    let mut single = false;
+    let mut double = false;
+    let mut escaped = false;
+    let chars = command.chars().collect::<Vec<_>>();
+    for (index, ch) in chars.iter().enumerate() {
+        if escaped {
+            escaped = false;
+            continue;
+        }
+        if *ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if *ch == '\'' && !double {
+            single = !single;
+            continue;
+        }
+        if *ch == '"' && !single {
+            double = !double;
+            continue;
+        }
+        if *ch != '>' || single || double || previous_non_space(&chars, index) == Some('2') {
+            continue;
+        }
+        if next_non_space(&chars, index) != Some('&') {
+            return true;
+        }
+    }
+    false
+}
+
+/// 判断命令是否通过 tee 写文件。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+///
+/// 返回:
+/// - 是否包含 tee 写文件
+fn has_tee_write(command: &str) -> bool {
+    let words = shell_words(command);
+    words
+        .iter()
+        .enumerate()
+        .any(|(index, word)| is_tee_command(word) && has_tee_target(&words[index + 1..]))
+}
+
+/// 判断 shell 词是否是 tee 命令。
+///
+/// 参数:
+/// - `word`: shell 词
+///
+/// 返回:
+/// - 是否为 tee 命令
+fn is_tee_command(word: &str) -> bool {
+    word == "tee" || word.ends_with("/tee")
+}
+
+/// 判断 tee 后续参数是否包含写入目标。
+///
+/// 参数:
+/// - `words`: tee 后面的 shell 词
+///
+/// 返回:
+/// - 是否包含文件目标
+fn has_tee_target(words: &[String]) -> bool {
+    words
+        .iter()
+        .any(|word| word != "-" && !word.starts_with('-'))
+}
+
+/// 判断命令是否使用 cat heredoc。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+///
+/// 返回:
+/// - 是否包含 cat heredoc
+fn has_cat_heredoc(command: &str) -> bool {
+    command.contains("<<")
+        && shell_words(command)
+            .iter()
+            .any(|word| word == "cat" || word.ends_with("/cat"))
+}
+
+/// 返回指定位置前一个非空白字符。
+///
+/// 参数:
+/// - `chars`: 字符列表
+/// - `index`: 当前索引
+///
+/// 返回:
+/// - 前一个非空白字符
+fn previous_non_space(chars: &[char], index: usize) -> Option<char> {
+    chars[..index]
+        .iter()
+        .rev()
+        .copied()
+        .find(|ch| !ch.is_whitespace())
+}
+
+/// 返回指定位置后一个非空白字符。
+///
+/// 参数:
+/// - `chars`: 字符列表
+/// - `index`: 当前索引
+///
+/// 返回:
+/// - 后一个非空白字符
+fn next_non_space(chars: &[char], index: usize) -> Option<char> {
+    chars[index + 1..]
+        .iter()
+        .copied()
+        .find(|ch| !ch.is_whitespace())
+}
+
+/// 提取未加引号的 shell 词。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+///
+/// 返回:
+/// - 简化后的词列表
+fn shell_words(command: &str) -> Vec<String> {
+    command
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, '|' | ';' | '&' | '(' | ')'))
+        .map(|word| word.trim_matches(|ch: char| matches!(ch, '"' | '\'')))
+        .filter(|word| !word.is_empty())
+        .map(|word| word.to_ascii_lowercase())
+        .collect()
+}
+
 /// 生成命令输出 JSON。
 ///
 /// 参数:
@@ -255,6 +415,16 @@ mod tests {
         assert!(ensure_readonly_command("Remove-Item file").is_err());
         assert!(ensure_readonly_command("Set-Content file value").is_err());
         assert!(ensure_readonly_command("winget install foo").is_err());
+    }
+
+    #[test]
+    fn writable_command_rejects_shell_file_writes() {
+        assert!(ensure_not_file_write_command("cat <<'EOF' > file\nx\nEOF").is_err());
+        assert!(ensure_not_file_write_command("printf hello > file").is_err());
+        assert!(ensure_not_file_write_command("echo hello >> file").is_err());
+        assert!(ensure_not_file_write_command("printf hello | tee file").is_err());
+        assert!(ensure_not_file_write_command("grep foo file 2>/dev/null").is_ok());
+        assert!(ensure_not_file_write_command("tee --help").is_ok());
     }
 
     #[tokio::test]

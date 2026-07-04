@@ -6,6 +6,7 @@ pub(crate) const BASE_TOOL_NAMES: &[&str] = &[
     "stop_background_command",
     "cleanup_background_commands",
     "task_agent",
+    "write_file",
     "edit_file",
     "trash_path",
     "check_os_info",
