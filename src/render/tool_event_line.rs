@@ -105,9 +105,10 @@ fn tool_suffix_from_text(name: &str, arguments: &str) -> Option<String> {
 /// - 可展示对象文本
 fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
     match name {
-        "write_file" | "edit_file" | "read_file" | "trash_path" => {
+        "write_file" | "edit_file" | "trash_path" => {
             string_field(arguments, &["path"]).map(file_basename)
         }
+        "read_file" => read_file_suffix(arguments),
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field(arguments, &["include", "pattern"]).map(compact_text)
         }
@@ -129,9 +130,10 @@ fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
 /// - 可展示对象文本
 fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> {
     match name {
-        "write_file" | "edit_file" | "read_file" | "trash_path" => {
+        "write_file" | "edit_file" | "trash_path" => {
             string_field_from_partial(arguments, &["path"]).map(file_basename)
         }
+        "read_file" => read_file_suffix_from_partial(arguments),
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field_from_partial(arguments, &["include", "pattern"]).map(compact_text)
         }
@@ -141,6 +143,49 @@ fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> 
         "load_tools" => load_tools_suffix_from_partial(arguments),
         _ => None,
     }
+}
+
+/// 提取读取文件的展示对象。
+///
+/// 参数:
+/// - `arguments`: 工具参数
+///
+/// 返回:
+/// - 读取对象文本
+fn read_file_suffix(arguments: &Value) -> Option<String> {
+    if let Some(path) = string_field(arguments, &["path"]).map(file_basename) {
+        return Some(path);
+    }
+    let files = arguments
+        .get("files")
+        .and_then(Value::as_array)
+        .filter(|files| !files.is_empty())?;
+    let names = files
+        .iter()
+        .filter_map(|file| string_field(file, &["path"]))
+        .map(file_basename)
+        .take(4)
+        .collect::<Vec<_>>();
+    if names.is_empty() {
+        return None;
+    }
+    let suffix = if files.len() > names.len() {
+        format!("{} ...", names.join(" "))
+    } else {
+        names.join(" ")
+    };
+    Some(compact_text(suffix))
+}
+
+/// 从不完整参数文本中提取读取文件的展示对象。
+///
+/// 参数:
+/// - `arguments`: 可能尚未闭合的 JSON 参数文本
+///
+/// 返回:
+/// - 读取对象文本
+fn read_file_suffix_from_partial(arguments: &str) -> Option<String> {
+    string_field_from_partial(arguments, &["path"]).map(file_basename)
 }
 
 /// 提取加载工具的展示对象。
@@ -314,6 +359,13 @@ mod tests {
         assert_eq!(
             tool_event_label("edit_file", Some(r#"{"path":"src/render/stream.rs"}"#)),
             "Edit stream.rs"
+        );
+        assert_eq!(
+            tool_event_label(
+                "read_file",
+                Some(r#"{"files":[{"path":"src/a.rs"},{"path":"src/b.rs"}]}"#)
+            ),
+            "Read a.rs b.rs"
         );
     }
 

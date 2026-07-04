@@ -1649,6 +1649,7 @@ async fn run_repl(
     let mut mode = initial_mode;
     let mut input_history = load_repl_input_history(&state)?;
     let mut prefill = None::<String>;
+    let mut loaded_tools = Vec::<String>::new();
 
     println!(
         "\x1b[2m{}\x1b[0m",
@@ -1722,11 +1723,13 @@ async fn run_repl(
         if input.eq_ignore_ascii_case("/reset") {
             run_reset(paths, None)?;
             input_history.clear();
+            loaded_tools.clear();
             continue;
         }
         if input.eq_ignore_ascii_case("/reset all") {
             run_reset(paths, Some("all"))?;
             input_history.clear();
+            loaded_tools.clear();
             continue;
         }
         if let Some(rest) = repl_command_rest(input, "/thinking") {
@@ -1771,6 +1774,7 @@ async fn run_repl(
             registry,
             mode,
         )?;
+        agent.restore_loaded_tools(&loaded_tools);
         let reasoning_mode = render::ReasoningDisplayMode::from_config(&config.display.reasoning);
         let tool_call_mode = render::ToolCallDisplayMode::from_config(&config.display.tool_calls);
         let mut renderer = render::StreamRenderer::new(
@@ -1810,6 +1814,7 @@ async fn run_repl(
             }
         };
         renderer.finish()?;
+        loaded_tools = agent.loaded_tools();
         if interrupted {
             prefill = Some(submitted_input);
             continue;

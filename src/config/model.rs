@@ -302,6 +302,8 @@ pub struct WebPluginConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
     #[serde(default)]
+    pub tinyfish_api_keys: Vec<String>,
+    #[serde(default)]
     pub tavily_api_keys: Vec<String>,
     #[serde(default)]
     pub firecrawl_api_keys: Vec<String>,

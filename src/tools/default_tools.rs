@@ -3,14 +3,10 @@ use crate::i18n::text as t;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
-use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use tokio::process::Command;
 
-const MAX_READ_BYTES: u64 = 50 * 1024;
-const MAX_READ_LINES: usize = 2_000;
-const MAX_LINE_CHARS: usize = 2_000;
 const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 const SEARCH_TIMEOUT_SECONDS: u64 = 30;
 
@@ -43,12 +39,7 @@ pub fn register_readonly(registry: &mut ToolRegistry) {
         json!({"type":"object","properties":{},"additionalProperties":false}),
         |_| async move { check_os_info() },
     ));
-    registry.register(ToolSpec::new(
-        "read_file",
-        t("Read a UTF-8 text file by 1-based line offset, or list a directory page. Use absolute paths, workspace-relative paths, or ~/ paths. Large files are paged and binary files are refused.", "按 1 起始行号分页读取 UTF-8 文本文件，或分页列出目录。支持绝对路径、工作区相对路径和 ~/ 路径。大文件会分页，二进制文件会被拒绝。"),
-        json!({"type":"object","properties":{"path":{"type":"string","description": t("File or directory path.", "文件或目录路径。")},"offset":{"type":"integer","description": t("Starting line, 1-based.", "起始行，1 起始。")},"limit":{"type":"integer","description": t("Maximum lines to read.", "最多读取行数。")}},"required":["path"],"additionalProperties":false}),
-        |args| async move { read_file(args) },
-    ));
+    super::file_read::register(registry);
     registry.register(ToolSpec::new(
         "glob",
         t("Find files by case-insensitive glob pattern under a directory. Defaults to workspace; use ~ or /home for user files, or / for protected global search.", "在目录下按大小写不敏感 glob 模式查找文件。默认工作区；查用户文件用 ~ 或 /home，受保护的全局搜索可用 /。"),
@@ -210,92 +201,6 @@ fn plist_value(raw: &str, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(ToString::to_string)
-}
-
-fn read_file(args: Value) -> Result<String> {
-    let path = path_arg(&args, "path")?;
-    let offset = args
-        .get("offset")
-        .and_then(Value::as_u64)
-        .unwrap_or(1)
-        .max(1) as usize;
-    let limit = args
-        .get("limit")
-        .and_then(Value::as_u64)
-        .unwrap_or(MAX_READ_LINES as u64)
-        .clamp(1, MAX_READ_LINES as u64) as usize;
-    if path.is_dir() {
-        let mut entries = Vec::new();
-        for entry in std::fs::read_dir(&path)? {
-            let entry = entry?;
-            let suffix = if entry.file_type()?.is_dir() { "/" } else { "" };
-            entries.push(format!("{}{}", entry.file_name().to_string_lossy(), suffix));
-        }
-        entries.sort();
-        let start = offset.saturating_sub(1);
-        let selected = entries
-            .iter()
-            .skip(start)
-            .take(limit)
-            .cloned()
-            .collect::<Vec<_>>();
-        let next = (start + selected.len() < entries.len()).then_some(offset + selected.len());
-        return Ok(serde_json::to_string_pretty(&json!({
-            "type": "directory-page",
-            "path": path.display().to_string(),
-            "offset": offset,
-            "limit": limit,
-            "entries": selected,
-            "truncated": next.is_some(),
-            "next": next,
-        }))?);
-    }
-    let metadata = std::fs::metadata(&path)?;
-    if !metadata.is_file() {
-        bail!("not a regular file or directory: {}", path.display())
-    }
-    ensure_not_binary_file(&path)?;
-    let file = std::fs::File::open(&path)?;
-    let reader = BufReader::new(file);
-    let mut lines = Vec::new();
-    let mut bytes = 0usize;
-    let mut next = None;
-    for (index, line) in reader.lines().enumerate() {
-        let line_number = index + 1;
-        if line_number < offset {
-            continue;
-        }
-        if lines.len() >= limit || bytes >= MAX_READ_BYTES as usize {
-            next = Some(line_number);
-            break;
-        }
-        let mut line = line?;
-        if line.chars().count() > MAX_LINE_CHARS {
-            line = format!(
-                "{}... (line truncated to {MAX_LINE_CHARS} chars)",
-                line.chars().take(MAX_LINE_CHARS).collect::<String>()
-            );
-        }
-        let rendered = format!("{line_number}: {line}");
-        bytes += rendered.len() + 1;
-        if bytes > MAX_READ_BYTES as usize {
-            next = Some(line_number);
-            break;
-        }
-        lines.push(rendered);
-    }
-    if lines.is_empty() && offset != 1 {
-        bail!("offset {offset} is out of range")
-    }
-    Ok(serde_json::to_string_pretty(&json!({
-        "type": "text-page",
-        "path": path.display().to_string(),
-        "offset": offset,
-        "limit": limit,
-        "content": lines.join("\n"),
-        "truncated": next.is_some(),
-        "next": next,
-    }))?)
 }
 
 /// 创建或覆盖 UTF-8 文本文件。
@@ -530,24 +435,6 @@ fn search_exclude_args(search_root: &Path) -> Vec<String> {
     args
 }
 
-fn ensure_not_binary_file(path: &Path) -> Result<()> {
-    let mut file = std::fs::File::open(path)?;
-    let mut buffer = [0u8; 8192];
-    let read = file.read(&mut buffer)?;
-    let sample = &buffer[..read];
-    if sample.contains(&0) {
-        bail!("cannot read binary file: {}", path.display())
-    }
-    let non_printable = sample
-        .iter()
-        .filter(|byte| **byte < 9 || (**byte > 13 && **byte < 32))
-        .count();
-    if !sample.is_empty() && non_printable * 10 > sample.len() * 3 {
-        bail!("cannot read binary file: {}", path.display())
-    }
-    Ok(())
-}
-
 fn ensure_editable_file_path(path: &Path) -> Result<()> {
     let canonical = path.canonicalize()?;
     if !canonical.is_file() {
@@ -671,34 +558,6 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(std::fs::read_to_string(path).unwrap(), "table\n");
-    }
-
-    #[test]
-    fn read_file_paginates_text() {
-        let cwd = std::env::current_dir().unwrap();
-        let temp = tempfile::tempdir_in(cwd).unwrap();
-        let path = temp.path().join("sample.txt");
-        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
-        let result = read_file(json!({
-            "path": path.display().to_string(),
-            "offset": 2,
-            "limit": 1,
-        }))
-        .unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["type"], "text-page");
-        assert_eq!(data["content"], "2: two");
-        assert_eq!(data["truncated"], true);
-        assert_eq!(data["next"], 3);
-    }
-
-    #[test]
-    fn read_file_rejects_binary() {
-        let cwd = std::env::current_dir().unwrap();
-        let temp = tempfile::tempdir_in(cwd).unwrap();
-        let path = temp.path().join("sample.bin");
-        std::fs::write(&path, [0, 1, 2, 3]).unwrap();
-        assert!(read_file(json!({"path": path.display().to_string()})).is_err());
     }
 
     #[tokio::test]

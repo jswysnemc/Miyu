@@ -8,7 +8,7 @@ use crate::llm::{
 };
 use crate::memory::{EvictedTurn, MemoryStore};
 use crate::paths::MiyuPaths;
-use crate::state::StateStore;
+use crate::state::{PendingTurnGuard, StateStore};
 use crate::tools::{self, memes, ToolPermission, ToolRegistry};
 use anyhow::{bail, Result};
 use chrono::Local;
@@ -98,6 +98,7 @@ impl Agent {
         }
         if mode == AgentMode::Yolo {
             state.reset_if_prompt_changed(&base_system_prompt)?;
+            state.recover_stale_turns()?;
         }
         let system_prompt = with_current_time(base_system_prompt, mode);
         let context_chars = config.active_context_chars()?;
@@ -134,6 +135,29 @@ impl Agent {
         self.chat_stream_with_image(input, None, on_event).await
     }
 
+    /// 恢复上一轮已经加载的工具集合。
+    ///
+    /// 参数:
+    /// - `loaded_tools`: 上一轮保存的已加载工具名称
+    ///
+    /// 返回:
+    /// - 无
+    pub fn restore_loaded_tools(&mut self, loaded_tools: &[String]) {
+        self.tool_visibility
+            .restore_loaded_tools(&self.tools, loaded_tools);
+    }
+
+    /// 导出当前已经加载的工具集合。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 当前已经加载的工具名称列表
+    pub fn loaded_tools(&self) -> Vec<String> {
+        self.tool_visibility.loaded_tool_names()
+    }
+
     /// 发送一轮带可选图片的流式对话。
     ///
     /// 参数:
@@ -152,7 +176,6 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
-        self.state.mark_interrupted_turn_if_needed()?;
         let evicted = self.state.trim_conversation_to_budget(
             self.context_chars,
             self.trim_at_ratio,
@@ -168,8 +191,11 @@ impl Agent {
             .collect::<Vec<_>>();
         self.memory.remember_evicted_turns(&evicted)?;
         let input = clean_user_visible_text(input);
-        self.state.append_message("user", &input)?;
-        let mut messages = self.chat_messages()?;
+        let turn_id = new_turn_id();
+        self.state.start_turn(&turn_id, &input)?;
+        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        let mut messages = self.chat_messages(Some(&turn_id))?;
+        messages.push(ChatMessage::plain("user", input.clone()));
         if let Some(image_url) = image_url {
             if let Some(message) = messages.last_mut().filter(|message| message.role == "user") {
                 *message = ChatMessage::user_with_image(&input, image_url);
@@ -203,11 +229,11 @@ impl Agent {
             memes::render_auto_meme(&self.config, &self.paths, &plan.event).await?;
             memes::record_auto_meme_event(&self.config, &self.paths, &plan.event)?;
         }
-        self.state
-            .append_assistant_message(&result.content, result.reasoning.as_deref())?;
         for (tool_name, report) in persisted_tool_reports {
-            self.state.append_tool_report_context(&tool_name, &report)?;
+            self.state
+                .append_tool_report_context(&turn_id, &tool_name, &report)?;
         }
+        guard.complete(&result.content, result.reasoning.as_deref())?;
         self.memory.process_after_turn(&input, &result.content)?;
         if let Some(usage) = &result.usage {
             self.state.add_usage(usage)?;
@@ -391,18 +417,36 @@ impl Agent {
         }
     }
 
-    fn chat_messages(&self) -> Result<Vec<ChatMessage>> {
+    fn chat_messages(&self, exclude_turn_id: Option<&str>) -> Result<Vec<ChatMessage>> {
         let mut messages = vec![ChatMessage::system(self.system_prompt.clone())];
         if let Some(summary) = memes::last_auto_meme_reminder(&self.config, &self.paths)? {
             messages.push(ChatMessage::system(summary));
         }
-        for entry in self.state.load_conversation()? {
+        let entries = match exclude_turn_id {
+            Some(turn_id) => {
+                crate::state::turns_to_entries(self.state.load_turns_excluding(turn_id)?)
+            }
+            None => self.state.load_conversation()?,
+        };
+        for entry in entries {
             if entry.role == "user" || entry.role == "assistant" {
                 messages.push(ChatMessage::plain(entry.role, entry.content));
             }
         }
         Ok(messages)
     }
+}
+
+/// 创建当前对话轮次标识。
+///
+/// 返回:
+/// - 当前轮唯一标识
+fn new_turn_id() -> String {
+    format!(
+        "turn_{}_{}",
+        chrono::Utc::now().timestamp_millis(),
+        rand::random::<u16>()
+    )
 }
 
 fn extract_persistable_tool_report(tool_name: &str, output: &str) -> Option<String> {

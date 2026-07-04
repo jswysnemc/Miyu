@@ -92,6 +92,7 @@ pub(crate) fn write_write_file_diff_block(
 ///
 /// 返回:
 /// - 代码块风格的命令文本
+#[cfg(test)]
 fn render_command_block(arguments: &str) -> String {
     render_command_block_with_action(arguments, "")
 }

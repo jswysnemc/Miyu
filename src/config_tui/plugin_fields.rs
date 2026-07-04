@@ -21,6 +21,10 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
         0 => vec![
             Field::boolean(t("Enabled", "启用"), config.plugins.web.enabled),
             Field::textarea(
+                "TinyFish API Keys",
+                config.plugins.web.tinyfish_api_keys.join("\n"),
+            ),
+            Field::textarea(
                 "Tavily API Keys",
                 config.plugins.web.tavily_api_keys.join("\n"),
             ),
@@ -397,11 +401,12 @@ pub(super) fn apply_plugin_fields(
     match index {
         0 => {
             config.plugins.web.enabled = parse_bool_field(&fields[0].value)?;
-            config.plugins.web.tavily_api_keys = parse_key_list(&fields[1].value);
-            config.plugins.web.firecrawl_api_keys = parse_key_list(&fields[2].value);
-            config.plugins.web.anysearch_api_keys = parse_key_list(&fields[3].value);
+            config.plugins.web.tinyfish_api_keys = parse_key_list(&fields[1].value);
+            config.plugins.web.tavily_api_keys = parse_key_list(&fields[2].value);
+            config.plugins.web.firecrawl_api_keys = parse_key_list(&fields[3].value);
+            config.plugins.web.anysearch_api_keys = parse_key_list(&fields[4].value);
             config.plugins.web.searxng_base_url =
-                fields[4].value.trim().trim_end_matches('/').to_string();
+                fields[5].value.trim().trim_end_matches('/').to_string();
         }
         1 => {
             config.plugins.deep_research.enabled = parse_bool_field(&fields[0].value)?;

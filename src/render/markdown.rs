@@ -64,6 +64,7 @@ struct MarkdownLineRenderer {
     code_buffer: Vec<String>,
     code_is_asset: bool,
     just_closed_code_block: bool,
+    pending_blank_lines: usize,
     math_buffer: Vec<String>,
     table_buffer: Vec<String>,
 }
@@ -81,6 +82,7 @@ impl MarkdownLineRenderer {
             code_buffer: Vec::new(),
             code_is_asset: false,
             just_closed_code_block: false,
+            pending_blank_lines: 0,
             math_buffer: Vec::new(),
             table_buffer: Vec::new(),
         }
@@ -111,6 +113,7 @@ impl MarkdownLineRenderer {
                     render_code_footer(&lines)
                 }
             } else {
+                self.pending_blank_lines = 0;
                 let pending = self.flush();
                 self.in_code_block = true;
                 self.code_lang = line
@@ -135,6 +138,9 @@ impl MarkdownLineRenderer {
             } else {
                 format!("{}\n", highlight_code_line(&self.code_lang, line))
             }
+        } else if line.trim().is_empty() {
+            self.pending_blank_lines += 1;
+            String::new()
         } else if line.trim() == "$$" {
             if self.in_math_block {
                 self.in_math_block = false;
@@ -151,9 +157,11 @@ impl MarkdownLineRenderer {
             self.math_buffer.push(line.to_string());
             String::new()
         } else if table::looks_like_table_row(line) {
+            self.pending_blank_lines = 0;
             self.table_buffer.push(line.to_string());
             String::new()
         } else {
+            self.pending_blank_lines = 0;
             let mut output = self.flush();
             output.push_str(&render_markdown_line(line));
             output.push('\n');
@@ -181,15 +189,16 @@ impl MarkdownLineRenderer {
             self.math_buffer.clear();
             output
         } else if self.table_buffer.is_empty() {
-            String::new()
+            self.take_pending_blank_lines()
         } else {
+            let mut output = self.take_pending_blank_lines();
             let lines = std::mem::take(&mut self.table_buffer);
             if lines.len() >= 2
                 && table::is_table_separator(lines.get(1).map(String::as_str).unwrap_or(""))
             {
-                table::render_table(&lines, render_table_cell_content)
+                output.push_str(&table::render_table(&lines, render_table_cell_content));
+                output
             } else {
-                let mut output = String::new();
                 for line in lines {
                     output.push_str(&render_markdown_line(&line));
                     output.push('\n');
@@ -197,6 +206,15 @@ impl MarkdownLineRenderer {
                 output
             }
         }
+    }
+
+    /// 取出待输出空行。
+    ///
+    /// 返回:
+    /// - 空行文本
+    fn take_pending_blank_lines(&mut self) -> String {
+        let count = std::mem::take(&mut self.pending_blank_lines);
+        "\n".repeat(count)
     }
 }
 

@@ -1,30 +1,50 @@
+mod pending_turn;
+mod turns;
 mod usage;
 
 use crate::llm::Usage;
 use crate::paths::MiyuPaths;
 use anyhow::Result;
+#[cfg(test)]
 use chrono::Utc;
-use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs::OpenOptions;
-use std::io::{BufRead, BufReader, Write};
 use std::path::PathBuf;
+use std::sync::Arc;
+
+pub use pending_turn::PendingTurnGuard;
+pub use turns::{
+    turn_chars, turns_to_entries, ConversationDb, StoredConversationEntry, Turn, TurnStatus,
+};
 
 #[derive(Debug, Clone)]
 pub struct StateStore {
     state_dir: PathBuf,
+    conv_db: Arc<ConversationDb>,
 }
 
 impl StateStore {
+    /// 创建状态存储并迁移旧对话历史。
+    ///
+    /// 参数:
+    /// - `paths`: Miyu 路径集合
+    ///
+    /// 返回:
+    /// - 状态存储
     pub fn new(paths: &MiyuPaths) -> Result<Self> {
-        Ok(Self {
-            state_dir: paths.state_dir.clone(),
-        })
+        let state_dir = paths.state_dir.clone();
+        let conv_db = Arc::new(ConversationDb::open(&state_dir)?);
+        let store = Self { state_dir, conv_db };
+        store.migrate_from_jsonl()?;
+        Ok(store)
     }
 
+    /// 初始化状态文件。
+    ///
+    /// 返回:
+    /// - 初始化是否成功
     pub fn init_files(&self) -> Result<()> {
         std::fs::create_dir_all(&self.state_dir)?;
-        touch(self.conversation_file())?;
         if !self.usage_file().exists() {
             std::fs::write(self.usage_file(), "{\n  \"requests\": 0,\n  \"prompt_tokens\": 0,\n  \"completion_tokens\": 0,\n  \"total_tokens\": 0\n}\n")?;
         }
@@ -35,157 +55,274 @@ impl StateStore {
         Ok(())
     }
 
+    /// 系统提示变化时重置会话。
+    ///
+    /// 参数:
+    /// - `system_prompt`: 当前系统提示
+    ///
+    /// 返回:
+    /// - 重置检查是否成功
     pub fn reset_if_prompt_changed(&self, system_prompt: &str) -> Result<()> {
         self.init_files()?;
         let fingerprint = prompt_fingerprint(system_prompt);
         let file = self.prompt_fingerprint_file();
         let previous = std::fs::read_to_string(&file).unwrap_or_default();
         if previous.trim() != fingerprint {
-            std::fs::write(self.conversation_file(), "")?;
+            self.conv_db.reset()?;
             std::fs::write(file, format!("{fingerprint}\n"))?;
         }
         Ok(())
     }
 
-    pub fn append_message(&self, role: &str, content: &str) -> Result<()> {
-        self.append_entry(role, content, None)
+    /// 开始新对话轮次。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    /// - `user_content`: 用户输入
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn start_turn(&self, turn_id: &str, user_content: &str) -> Result<()> {
+        self.conv_db.start_turn(turn_id, user_content)
     }
 
-    pub fn append_assistant_message(&self, content: &str, reasoning: Option<&str>) -> Result<()> {
-        self.append_entry("assistant", content, reasoning)
+    /// 完成对话轮次。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    /// - `content`: 助手回复
+    /// - `reasoning`: 可选推理内容
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn complete_turn(
+        &self,
+        turn_id: &str,
+        content: &str,
+        reasoning: Option<&str>,
+    ) -> Result<()> {
+        self.conv_db.complete_turn(turn_id, content, reasoning)
     }
 
-    pub fn append_tool_report_context(&self, tool_name: &str, report: &str) -> Result<()> {
-        self.append_assistant_message(
+    /// 中断对话轮次。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
+        self.conv_db.interrupt_turn(turn_id)
+    }
+
+    /// 附加工具报告上下文。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    /// - `tool_name`: 工具名称
+    /// - `report`: 工具报告
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn append_tool_report_context(
+        &self,
+        turn_id: &str,
+        tool_name: &str,
+        report: &str,
+    ) -> Result<()> {
+        self.conv_db.append_tool_report(
+            turn_id,
             &format!(
                 "<previous_tool_report name=\"{tool_name}\">\n{}\n</previous_tool_report>",
                 report.trim()
             ),
-            None,
         )
     }
 
+    /// 恢复运行中的旧轮次为中断状态。
+    ///
+    /// 返回:
+    /// - 被恢复轮次数量
+    pub fn recover_stale_turns(&self) -> Result<usize> {
+        self.conv_db.recover_stale_running_turns()
+    }
+
+    /// 兼容旧 JSONL 孤立用户消息检查。
+    ///
+    /// 返回:
+    /// - 是否标记了中断轮次
+    #[cfg(test)]
     pub fn mark_interrupted_turn_if_needed(&self) -> Result<bool> {
-        let entries = self.load_conversation()?;
-        if !matches!(entries.last(), Some(entry) if entry.role == "user") {
-            return Ok(false);
-        }
-        self.append_assistant_message(
-            "上一轮响应已中断，未完成。不要继续执行上一轮任务，除非用户重新要求。",
-            None,
-        )?;
-        Ok(true)
+        let recovered = self.recover_stale_turns()?;
+        Ok(recovered > 0)
     }
 
-    fn append_entry(&self, role: &str, content: &str, reasoning: Option<&str>) -> Result<()> {
-        self.init_files()?;
-        let entry = ConversationEntry {
-            timestamp: Utc::now().to_rfc3339(),
-            role,
-            content,
-            reasoning,
-        };
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(self.conversation_file())?;
-        writeln!(file, "{}", serde_json::to_string(&entry)?)?;
-        Ok(())
-    }
-
+    /// 读取最近历史入口。
+    ///
+    /// 参数:
+    /// - `limit`: 最大入口数量
+    ///
+    /// 返回:
+    /// - 历史入口
     pub fn history(&self, limit: usize) -> Result<Vec<StoredConversationEntry>> {
         let mut entries = self.load_conversation()?;
         let start = entries.len().saturating_sub(limit);
         Ok(entries.split_off(start))
     }
 
+    /// 读取完整对话历史入口。
+    ///
+    /// 返回:
+    /// - 旧消息入口视图
     pub fn load_conversation(&self) -> Result<Vec<StoredConversationEntry>> {
-        self.init_files()?;
-        let file = OpenOptions::new()
-            .read(true)
-            .open(self.conversation_file())?;
-        let mut entries = Vec::new();
-        for line in BufReader::new(file).lines() {
-            let line = line?;
-            if line.trim().is_empty() {
-                continue;
-            }
-            entries.push(serde_json::from_str(&line)?);
-        }
-        Ok(entries)
+        Ok(turns_to_entries(self.conv_db.load_turns()?))
     }
 
+    /// 读取完整对话轮次。
+    ///
+    /// 返回:
+    /// - 轮次列表
+    #[cfg(test)]
+    pub fn load_turns(&self) -> Result<Vec<Turn>> {
+        self.conv_db.load_turns()
+    }
+
+    /// 读取排除指定轮次后的上下文轮次。
+    ///
+    /// 参数:
+    /// - `exclude_turn_id`: 排除轮次标识
+    ///
+    /// 返回:
+    /// - 轮次列表
+    pub fn load_turns_excluding(&self, exclude_turn_id: &str) -> Result<Vec<Turn>> {
+        self.conv_db.load_turns_excluding(exclude_turn_id)
+    }
+
+    /// 按上下文预算裁剪旧轮次。
+    ///
+    /// 参数:
+    /// - `max_chars`: 最大上下文字符数
+    /// - `trim_at_ratio`: 触发裁剪比例
+    /// - `trim_batch_ratio`: 批量裁剪比例
+    ///
+    /// 返回:
+    /// - 被裁剪的旧消息入口
     pub fn trim_conversation_to_budget(
         &self,
         max_chars: usize,
         trim_at_ratio: f32,
         trim_batch_ratio: f32,
     ) -> Result<Vec<StoredConversationEntry>> {
-        let entries = self.load_conversation()?;
+        let turns = self.conv_db.load_turns()?;
         let trigger = (max_chars as f32 * trim_at_ratio).max(1.0) as usize;
-        let mut total = conversation_chars(&entries);
+        let mut total = turns.iter().map(turn_chars).sum::<usize>();
         if total <= trigger {
             return Ok(Vec::new());
         }
         let target =
             max_chars.saturating_sub((max_chars as f32 * trim_batch_ratio).max(1.0) as usize);
-        let mut start = 0usize;
-        while start < entries.len() && total > target {
-            total = total.saturating_sub(entry_chars(&entries[start]));
-            start += 1;
+        let mut remove_count = 0usize;
+        for turn in &turns {
+            if total <= target {
+                break;
+            }
+            if turn.status == TurnStatus::Running {
+                continue;
+            }
+            total = total.saturating_sub(turn_chars(turn));
+            remove_count += 1;
         }
-        let evicted = entries[..start].to_vec();
-        self.rewrite_conversation(&entries[start..])?;
-        Ok(evicted)
+        Ok(turns_to_entries(
+            self.conv_db.trim_oldest_non_running_turns(remove_count)?,
+        ))
     }
 
+    /// 清空对话历史。
+    ///
+    /// 返回:
+    /// - 清空是否成功
     pub fn reset_conversation(&self) -> Result<()> {
-        self.init_files()?;
-        std::fs::write(self.conversation_file(), "")?;
-        Ok(())
+        self.conv_db.reset()
     }
 
+    /// 撤销最后一轮对话。
+    ///
+    /// 返回:
+    /// - 删除轮次数量和被撤销的用户输入
     pub fn undo_last_turn(&self) -> Result<(usize, Option<String>)> {
-        let mut entries = self.load_conversation()?;
-        let original_len = entries.len();
-        let mut prompt = None;
-        while matches!(entries.last(), Some(entry) if entry.role != "assistant") {
-            entries.pop();
-        }
-        if matches!(entries.last(), Some(entry) if entry.role == "assistant") {
-            entries.pop();
-        }
-        if matches!(entries.last(), Some(entry) if entry.role == "user") {
-            prompt = entries.last().map(|entry| entry.content.clone());
-            entries.pop();
-        }
-        let removed = original_len.saturating_sub(entries.len());
-        if removed > 0 {
-            self.rewrite_conversation(&entries)?;
-        }
-        Ok((removed, prompt))
+        self.conv_db.undo_last_turn()
     }
 
+    /// 累加用量统计。
+    ///
+    /// 参数:
+    /// - `usage`: 模型用量
+    ///
+    /// 返回:
+    /// - 写入是否成功
     pub fn add_usage(&self, usage: &Usage) -> Result<()> {
         self.init_files()?;
         usage::add_usage(&self.usage_file(), usage)
     }
 
-    fn conversation_file(&self) -> PathBuf {
-        self.state_dir.join("conversation.jsonl")
+    /// 是否存在运行中轮次。
+    ///
+    /// 返回:
+    /// - 是否存在运行中轮次
+    #[allow(dead_code)]
+    pub fn has_running_turns(&self) -> Result<bool> {
+        self.conv_db.has_running_turns()
     }
 
-    fn rewrite_conversation(&self, entries: &[StoredConversationEntry]) -> Result<()> {
-        self.init_files()?;
-        let mut file = OpenOptions::new()
-            .create(true)
-            .write(true)
-            .truncate(true)
-            .open(self.conversation_file())?;
-        for entry in entries {
-            writeln!(file, "{}", serde_json::to_string(entry)?)?;
+    /// 从旧 JSONL 文件迁移历史。
+    ///
+    /// 返回:
+    /// - 迁移轮次数量
+    pub fn migrate_from_jsonl(&self) -> Result<usize> {
+        self.conv_db.migrate_from_jsonl(&self.conversation_file())
+    }
+
+    /// 兼容旧测试和辅助代码追加消息。
+    ///
+    /// 参数:
+    /// - `role`: 消息角色
+    /// - `content`: 消息内容
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    #[cfg(test)]
+    pub fn append_message(&self, role: &str, content: &str) -> Result<()> {
+        match role {
+            "user" => self.start_turn(&compat_turn_id(), content),
+            "assistant" => self.append_assistant_message(content, None),
+            _ => Ok(()),
+        }
+    }
+
+    /// 兼容旧测试和辅助代码追加助手消息。
+    ///
+    /// 参数:
+    /// - `content`: 助手回复
+    /// - `reasoning`: 可选推理内容
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    #[cfg(test)]
+    pub fn append_assistant_message(&self, content: &str, reasoning: Option<&str>) -> Result<()> {
+        if let Some(turn) = self
+            .conv_db
+            .load_turns()?
+            .into_iter()
+            .rev()
+            .find(|turn| turn.status == TurnStatus::Running)
+        {
+            self.complete_turn(&turn.turn_id, content, reasoning)?;
         }
         Ok(())
+    }
+
+    fn conversation_file(&self) -> PathBuf {
+        self.state_dir.join("conversation.jsonl")
     }
 
     fn usage_file(&self) -> PathBuf {
@@ -205,45 +342,39 @@ impl StateStore {
     }
 }
 
+/// 计算系统提示指纹。
+///
+/// 参数:
+/// - `system_prompt`: 系统提示
+///
+/// 返回:
+/// - 十六进制指纹
 fn prompt_fingerprint(system_prompt: &str) -> String {
     let mut hasher = Sha256::new();
     hasher.update(system_prompt.as_bytes());
     format!("{:x}", hasher.finalize())
 }
 
-fn conversation_chars(entries: &[StoredConversationEntry]) -> usize {
-    entries.iter().map(entry_chars).sum()
+/// 创建兼容写入使用的轮次标识。
+///
+/// 返回:
+/// - 轮次标识
+#[cfg(test)]
+fn compat_turn_id() -> String {
+    format!(
+        "compat_{}_{}",
+        Utc::now().timestamp_millis(),
+        rand::random::<u16>()
+    )
 }
 
-fn entry_chars(entry: &StoredConversationEntry) -> usize {
-    entry.role.chars().count()
-        + entry.content.chars().count()
-        + entry
-            .reasoning
-            .as_deref()
-            .map(str::chars)
-            .map(Iterator::count)
-            .unwrap_or(0)
-}
-
-#[derive(Serialize)]
-struct ConversationEntry<'a> {
-    timestamp: String,
-    role: &'a str,
-    content: &'a str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    reasoning: Option<&'a str>,
-}
-
-#[derive(Debug, Clone, Deserialize, Serialize)]
-pub struct StoredConversationEntry {
-    pub timestamp: String,
-    pub role: String,
-    pub content: String,
-    #[serde(default)]
-    pub reasoning: Option<String>,
-}
-
+/// 确保文件存在。
+///
+/// 参数:
+/// - `path`: 文件路径
+///
+/// 返回:
+/// - 创建是否成功
 fn touch(path: PathBuf) -> Result<()> {
     OpenOptions::new().create(true).append(true).open(path)?;
     Ok(())
@@ -251,20 +382,66 @@ fn touch(path: PathBuf) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
+    use super::turns::pending_placeholder;
     use super::*;
 
+    fn test_paths(state_dir: PathBuf) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: PathBuf::new(),
+            config_file: PathBuf::new(),
+            secrets_file: PathBuf::new(),
+            skills_dir: PathBuf::new(),
+            data_dir: PathBuf::new(),
+            cache_dir: PathBuf::new(),
+            state_dir,
+            pictures_dir: PathBuf::new(),
+            fish_hook_file: PathBuf::new(),
+            bash_hook_file: PathBuf::new(),
+            zsh_hook_file: PathBuf::new(),
+            powershell_hook_file: PathBuf::new(),
+        }
+    }
+
     #[test]
-    fn marks_orphan_user_turn_as_interrupted() {
+    fn turn_lifecycle() {
         let temp = tempfile::tempdir().unwrap();
-        let store = StateStore {
-            state_dir: temp.path().to_path_buf(),
-        };
-        store.append_message("user", "old task").unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        store.start_turn("turn_1", "hello").unwrap();
+        let turns = store.load_turns().unwrap();
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].status, TurnStatus::Running);
+        assert_eq!(turns[0].assistant_content, pending_placeholder());
+
+        store.complete_turn("turn_1", "hi there", None).unwrap();
+        let turns = store.load_turns().unwrap();
+        assert_eq!(turns[0].status, TurnStatus::Completed);
+        assert_eq!(turns[0].assistant_content, "hi there");
+    }
+
+    #[test]
+    fn marks_running_turns_as_interrupted() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        store.start_turn("turn_1", "old task").unwrap();
         assert!(store.mark_interrupted_turn_if_needed().unwrap());
-        let entries = store.load_conversation().unwrap();
-        assert_eq!(entries.len(), 2);
-        assert_eq!(entries[1].role, "assistant");
-        assert!(entries[1].content.contains("已中断"));
+        let turns = store.load_turns().unwrap();
+        assert_eq!(turns[0].status, TurnStatus::Interrupted);
+        assert!(turns[0].assistant_content.contains("被中断"));
         assert!(!store.mark_interrupted_turn_if_needed().unwrap());
+    }
+
+    #[test]
+    fn undo_removes_last_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        store.start_turn("turn_1", "hello").unwrap();
+        store.complete_turn("turn_1", "hi", None).unwrap();
+        store.start_turn("turn_2", "bye").unwrap();
+        store.complete_turn("turn_2", "goodbye", None).unwrap();
+
+        let (removed, prompt) = store.undo_last_turn().unwrap();
+        assert_eq!(removed, 1);
+        assert_eq!(prompt.as_deref(), Some("bye"));
+        assert_eq!(store.load_turns().unwrap().len(), 1);
     }
 }

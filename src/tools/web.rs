@@ -2,7 +2,7 @@ use super::{ToolRegistry, ToolSpec};
 use crate::config::WebPluginConfig;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
-use std::time::Duration;
+use std::{env, time::Duration};
 
 const MAX_RESPONSE_SIZE: usize = 5 * 1024 * 1024;
 const DEFAULT_FETCH_MAX_CHARS: usize = 40_000;
@@ -34,13 +34,15 @@ pub fn register_fetch(registry: &mut ToolRegistry) {
 fn register_search_tool(registry: &mut ToolRegistry, name: &'static str, config: WebPluginConfig) {
     registry.register(ToolSpec::new(
         name,
-        "Search the web. Prefer configured Tavily, Firecrawl, or AnySearch API keys; fallback to SearXNG, then built-in DuckDuckGo HTML search when providers fail.",
+        "Search the web. Prefer configured TinyFish, Tavily, Firecrawl, or AnySearch API keys; fallback to SearXNG, then built-in DuckDuckGo HTML search when providers fail.",
         json!({
             "type": "object",
             "properties": {
                 "query": { "type": "string", "description": "Search query." },
                 "max_results": { "type": "integer", "description": "Maximum results, default 5." },
-                "provider": { "type": "string", "enum": ["auto", "tavily", "firecrawl", "anysearch", "searxng", "script"], "description": "Search provider." }
+                "provider": { "type": "string", "enum": ["auto", "tinyfish", "tavily", "firecrawl", "anysearch", "searxng", "script"], "description": "Search provider." },
+                "location": { "type": "string", "description": "Optional country code for TinyFish geo-targeted results, such as US or GB." },
+                "language": { "type": "string", "description": "Optional language code for TinyFish result language, such as en or fr." }
             },
             "required": ["query"],
             "additionalProperties": false
@@ -70,16 +72,46 @@ async fn web_search(args: Value, config: WebPluginConfig) -> Result<String> {
         .get("provider")
         .and_then(Value::as_str)
         .unwrap_or("auto");
+    let location = args
+        .get("location")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
+    let language = args
+        .get("language")
+        .and_then(Value::as_str)
+        .unwrap_or_default()
+        .trim()
+        .to_string();
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(20))
         .build()?;
     let order: Vec<&str> = if provider == "auto" {
-        vec!["tavily", "firecrawl", "anysearch", "searxng", "script"]
+        vec![
+            "tinyfish",
+            "tavily",
+            "firecrawl",
+            "anysearch",
+            "searxng",
+            "script",
+        ]
     } else {
         vec![provider]
     };
     for item in order {
         let result = match item {
+            "tinyfish" => {
+                search_tinyfish(
+                    &client,
+                    query,
+                    max_results,
+                    &config.tinyfish_api_keys,
+                    &location,
+                    &language,
+                )
+                .await
+            }
             "tavily" => search_tavily(&client, query, max_results, &config.tavily_api_keys).await,
             "firecrawl" => {
                 search_firecrawl(&client, query, max_results, &config.firecrawl_api_keys).await
@@ -100,6 +132,87 @@ async fn web_search(args: Value, config: WebPluginConfig) -> Result<String> {
         }
     }
     bail!("no web search provider succeeded; API keys missing/failed, SearXNG unavailable, and built-in DuckDuckGo fallback returned no results")
+}
+
+/// 使用 TinyFish Search API 执行网页搜索。
+///
+/// 参数:
+/// - `client`: 复用的 HTTP 客户端
+/// - `query`: 搜索关键词
+/// - `max_results`: 最多返回结果数
+/// - `keys`: 配置中的 TinyFish API Key 列表
+/// - `location`: 可选国家代码
+/// - `language`: 可选语言代码
+///
+/// 返回:
+/// - Markdown 格式的搜索结果
+async fn search_tinyfish(
+    client: &reqwest::Client,
+    query: &str,
+    max_results: usize,
+    keys: &[String],
+    location: &str,
+    language: &str,
+) -> Result<String> {
+    let Some(key) = first_api_key(keys, "TINYFISH_API_KEY") else {
+        bail!("missing TinyFish API key")
+    };
+    let mut params = vec![("query", query)];
+    if !location.is_empty() {
+        params.push(("location", location));
+    }
+    if !language.is_empty() {
+        params.push(("language", language));
+    }
+    let data: Value = client
+        .get("https://api.search.tinyfish.ai")
+        .header("X-API-Key", key)
+        .query(&params)
+        .send()
+        .await?
+        .error_for_status()?
+        .json()
+        .await?;
+    let results = data
+        .get("results")
+        .and_then(Value::as_array)
+        .cloned()
+        .unwrap_or_default()
+        .into_iter()
+        .take(max_results)
+        .collect::<Vec<_>>();
+    if results.is_empty() {
+        bail!("TinyFish returned no results")
+    }
+    Ok(format_search_results(query, "TinyFish", results))
+}
+
+/// 读取第一个可用 API Key，配置为空时可回退到环境变量。
+///
+/// 参数:
+/// - `keys`: 配置中的 API Key 列表
+/// - `fallback_env`: 回退环境变量名称
+///
+/// 返回:
+/// - 可用 API Key
+fn first_api_key(keys: &[String], fallback_env: &str) -> Option<String> {
+    keys.iter()
+        .map(|key| key.trim())
+        .filter_map(|key| {
+            if let Some(env_name) = key.strip_prefix("$env:") {
+                env::var(env_name.trim()).ok()
+            } else {
+                Some(key.to_string())
+            }
+        })
+        .map(|key| key.trim().to_string())
+        .find(|key| !key.is_empty())
+        .or_else(|| {
+            env::var(fallback_env)
+                .ok()
+                .map(|key| key.trim().to_string())
+        })
+        .filter(|key| !key.is_empty())
 }
 
 async fn search_tavily(
@@ -462,5 +575,36 @@ mod tests {
     #[test]
     fn keeps_short_fetch_output_unchanged() {
         assert_eq!(clip_fetch_output("abc", 3), "abc");
+    }
+
+    #[test]
+    fn first_api_key_prefers_configured_key() {
+        let keys = vec![" configured-key ".to_string()];
+
+        assert_eq!(
+            first_api_key(&keys, "MIYU_TINYFISH_UNUSED_KEY").as_deref(),
+            Some("configured-key")
+        );
+    }
+
+    #[test]
+    fn first_api_key_reads_env_reference() {
+        std::env::set_var("MIYU_TINYFISH_ENV_REF_KEY", " env-ref-key ");
+        let keys = vec!["$env:MIYU_TINYFISH_ENV_REF_KEY".to_string()];
+
+        assert_eq!(
+            first_api_key(&keys, "MIYU_TINYFISH_UNUSED_KEY").as_deref(),
+            Some("env-ref-key")
+        );
+    }
+
+    #[test]
+    fn first_api_key_falls_back_to_env() {
+        std::env::set_var("MIYU_TINYFISH_FALLBACK_KEY", " fallback-key ");
+
+        assert_eq!(
+            first_api_key(&[], "MIYU_TINYFISH_FALLBACK_KEY").as_deref(),
+            Some("fallback-key")
+        );
     }
 }

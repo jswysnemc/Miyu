@@ -9,6 +9,7 @@ mod default_tools;
 mod diagnostics;
 mod exchange_rate;
 mod fcitx_wiki;
+mod file_read;
 pub(crate) mod groups;
 mod hash_codec;
 mod image_generation;

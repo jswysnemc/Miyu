@@ -66,6 +66,37 @@ impl ToolVisibility {
         self.progressive && name == tools::LOAD_TOOLS_NAME
     }
 
+    /// 恢复已经加载过的工具集合。
+    ///
+    /// 参数:
+    /// - `registry`: 当前完整工具注册表
+    /// - `names`: 上一轮保存的已加载工具名称
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn restore_loaded_tools(&mut self, registry: &ToolRegistry, names: &[String]) {
+        self.loaded.clear();
+        if !self.progressive {
+            return;
+        }
+        for name in names {
+            if registry.contains(name) && !tools::progressive::is_initial_tool(name) {
+                self.loaded.insert(name.clone());
+            }
+        }
+    }
+
+    /// 获取已经额外加载的工具名称。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 已加载工具名称列表
+    pub(crate) fn loaded_tool_names(&self) -> Vec<String> {
+        self.loaded.iter().cloned().collect()
+    }
+
     /// 按加载工具参数更新可见工具集合。
     ///
     /// 参数:
@@ -212,6 +243,31 @@ mod tests {
 
         assert!(names.contains(&"web_search".to_string()));
         assert!(!names.contains(&"analyze_image".to_string()));
+    }
+
+    #[test]
+    fn progressive_visibility_restores_loaded_tools() {
+        let mut registry = test_registry();
+        tools::register_progressive_loader(&mut registry);
+        let mut visibility = ToolVisibility::new(true);
+
+        visibility.restore_loaded_tools(
+            &registry,
+            &[
+                "web_search".to_string(),
+                "unknown_tool".to_string(),
+                "read_file".to_string(),
+            ],
+        );
+        let names = definition_names(visibility.definitions(&registry));
+
+        assert!(names.contains(&"web_search".to_string()));
+        assert!(names.contains(&"read_file".to_string()));
+        assert!(!names.contains(&"unknown_tool".to_string()));
+        assert_eq!(
+            visibility.loaded_tool_names(),
+            vec!["web_search".to_string()]
+        );
     }
 
     fn test_registry() -> ToolRegistry {

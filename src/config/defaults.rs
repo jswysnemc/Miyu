@@ -94,6 +94,7 @@ impl Default for WebPluginConfig {
     fn default() -> Self {
         Self {
             enabled: default_true(),
+            tinyfish_api_keys: Vec::new(),
             tavily_api_keys: Vec::new(),
             firecrawl_api_keys: Vec::new(),
             anysearch_api_keys: Vec::new(),

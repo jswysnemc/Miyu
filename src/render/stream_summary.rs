@@ -90,6 +90,7 @@ impl StreamSummary {
     ///
     /// 参数:
     /// - `name`: 工具名称
+    #[cfg(test)]
     pub(crate) fn note_tool_call(&mut self, name: &str) {
         self.tool_stats.entry(name.to_string()).or_default().calls += 1;
     }

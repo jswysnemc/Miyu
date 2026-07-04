@@ -1,0 +1,137 @@
+use serde::{Deserialize, Serialize};
+
+const PENDING_PLACEHOLDER: &str = "此轮响应正在由另一条对话线处理...";
+const INTERRUPTED_TEXT: &str = "此轮响应被中断，但是除非用户重新要求否则不要重新执行此轮对话。";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TurnStatus {
+    Running,
+    Completed,
+    Interrupted,
+}
+
+impl TurnStatus {
+    /// 转换为数据库状态文本。
+    ///
+    /// 返回:
+    /// - 状态文本
+    pub(super) fn as_str(self) -> &'static str {
+        match self {
+            Self::Running => "running",
+            Self::Completed => "completed",
+            Self::Interrupted => "interrupted",
+        }
+    }
+
+    /// 从数据库状态文本恢复状态枚举。
+    ///
+    /// 参数:
+    /// - `value`: 数据库状态文本
+    ///
+    /// 返回:
+    /// - 状态枚举
+    pub(super) fn from_str(value: &str) -> Self {
+        match value {
+            "completed" => Self::Completed,
+            "interrupted" => Self::Interrupted,
+            _ => Self::Running,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+pub struct Turn {
+    pub turn_id: String,
+    pub seq: i64,
+    pub user_content: String,
+    pub user_timestamp: String,
+    pub assistant_content: String,
+    pub assistant_reasoning: Option<String>,
+    pub assistant_timestamp: Option<String>,
+    pub status: TurnStatus,
+    pub tool_reports: Vec<String>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub struct StoredConversationEntry {
+    pub timestamp: String,
+    pub role: String,
+    pub content: String,
+    #[serde(default)]
+    pub reasoning: Option<String>,
+}
+
+/// 返回运行中占位文本。
+///
+/// 返回:
+/// - 运行中占位文本
+pub fn pending_placeholder() -> &'static str {
+    PENDING_PLACEHOLDER
+}
+
+/// 返回中断轮次提示文本。
+///
+/// 返回:
+/// - 中断轮次提示文本
+pub fn interrupted_text() -> &'static str {
+    INTERRUPTED_TEXT
+}
+
+/// 计算轮次上下文字符数。
+///
+/// 参数:
+/// - `turn`: 对话轮次
+///
+/// 返回:
+/// - 用于上下文裁剪的字符数
+pub fn turn_chars(turn: &Turn) -> usize {
+    turn.user_content.chars().count()
+        + turn.assistant_content.chars().count()
+        + turn
+            .assistant_reasoning
+            .as_deref()
+            .map(str::chars)
+            .map(Iterator::count)
+            .unwrap_or(0)
+        + turn
+            .tool_reports
+            .iter()
+            .map(|report| report.chars().count())
+            .sum::<usize>()
+}
+
+/// 将轮次列表转换为旧消息入口视图。
+///
+/// 参数:
+/// - `turns`: 轮次列表
+///
+/// 返回:
+/// - 按 user/assistant 展开的消息入口
+pub fn turns_to_entries(turns: Vec<Turn>) -> Vec<StoredConversationEntry> {
+    let mut entries = Vec::with_capacity(turns.len() * 3);
+    for turn in turns {
+        let assistant_timestamp = turn.assistant_timestamp.clone().unwrap_or_default();
+        entries.push(StoredConversationEntry {
+            timestamp: turn.user_timestamp,
+            role: "user".to_string(),
+            content: turn.user_content,
+            reasoning: None,
+        });
+        entries.push(StoredConversationEntry {
+            timestamp: assistant_timestamp.clone(),
+            role: "assistant".to_string(),
+            content: turn.assistant_content,
+            reasoning: turn.assistant_reasoning,
+        });
+        for report in turn.tool_reports {
+            entries.push(StoredConversationEntry {
+                timestamp: assistant_timestamp.clone(),
+                role: "assistant".to_string(),
+                content: report,
+                reasoning: None,
+            });
+        }
+    }
+    entries
+}

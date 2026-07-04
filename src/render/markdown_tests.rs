@@ -147,6 +147,23 @@ fn code_block_suppresses_first_empty_line() {
 }
 
 #[test]
+fn code_block_suppresses_previous_empty_line() {
+    let mut renderer = MarkdownStreamRenderer::new();
+    let output = renderer.push("先测试：\n\n```bash\npwd\n```\n");
+    assert!(!output.contains("先测试：\n\n"));
+    assert!(output.contains("先测试：\n"));
+    assert!(output.contains("── bash "));
+}
+
+#[test]
+fn regular_paragraphs_suppress_single_blank_line() {
+    let mut renderer = MarkdownStreamRenderer::new();
+    let output = renderer.push("第一段\n\n第二段\n");
+    assert!(output.contains("第一段\n第二段\n"));
+    assert!(!output.contains("第一段\n\n第二段\n"));
+}
+
+#[test]
 fn code_block_content_has_default_color() {
     let mut renderer = MarkdownStreamRenderer::new();
     let output = renderer.push("```\nXMODIFIERS \"@im=fcitx\"\n```\n");
