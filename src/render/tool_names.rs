@@ -22,6 +22,7 @@ pub(crate) fn readable_tool_name(name: &str) -> &str {
 fn readable_tool_name_for_locale(name: &str, locale: Locale) -> &str {
     match name {
         "run_command" => localized(locale, "Run command", "运行命令"),
+        "background_command" => localized(locale, "Background command", "后台命令"),
         "task_agent" => localized(locale, "Create subtask", "创建子任务"),
         "read_file" => localized(locale, "Read file", "读取文件"),
         "write_file" => localized(locale, "Write file", "写入文件"),
@@ -241,6 +242,10 @@ mod tests {
         assert_eq!(
             readable_tool_name_for_locale("run_command", Locale::En),
             "Run command"
+        );
+        assert_eq!(
+            readable_tool_name_for_locale("background_command", Locale::En),
+            "Background command"
         );
         assert_eq!(
             readable_tool_name_for_locale("custom_skill", Locale::En),

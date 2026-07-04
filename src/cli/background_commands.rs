@@ -1,9 +1,9 @@
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 use crate::tools::command::{
-    cleanup_background_commands_for_user, list_background_commands_for_user,
-    read_background_command_output_for_user, start_background_command_for_user,
-    stop_background_command_for_user,
+    cleanup_background_tasks_for_user, list_background_tasks_for_user,
+    read_background_task_output_for_user, start_background_task_for_user,
+    stop_background_task_for_user,
 };
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -75,7 +75,7 @@ pub async fn run_background_commands(
             let config = AppConfig::load_or_default(paths)?;
             println!(
                 "{}",
-                start_background_command_for_user(
+                start_background_task_for_user(
                     paths,
                     &config,
                     &args.command.join(" "),
@@ -88,17 +88,14 @@ pub async fn run_background_commands(
         BackgroundCommand::List => {
             AppConfig::init_files(paths)?;
             let config = AppConfig::load_or_default(paths)?;
-            println!(
-                "{}",
-                list_background_commands_for_user(paths, &config).await?
-            );
+            println!("{}", list_background_tasks_for_user(paths, &config).await?);
         }
         BackgroundCommand::Output(args) => {
             AppConfig::init_files(paths)?;
             let config = AppConfig::load_or_default(paths)?;
             println!(
                 "{}",
-                read_background_command_output_for_user(
+                read_background_task_output_for_user(
                     paths,
                     &config,
                     &args.task_id,
@@ -113,7 +110,7 @@ pub async fn run_background_commands(
             let config = AppConfig::load_or_default(paths)?;
             println!(
                 "{}",
-                stop_background_command_for_user(paths, &config, &args.task_id, args.force).await?
+                stop_background_task_for_user(paths, &config, &args.task_id, args.force).await?
             );
         }
         BackgroundCommand::Cleanup(args) => {
@@ -121,7 +118,7 @@ pub async fn run_background_commands(
             let config = AppConfig::load_or_default(paths)?;
             println!(
                 "{}",
-                cleanup_background_commands_for_user(paths, &config, args.remove_logs).await?
+                cleanup_background_tasks_for_user(paths, &config, args.remove_logs).await?
             );
         }
     }

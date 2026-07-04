@@ -41,11 +41,7 @@ pub use skills::{register_skills, skills_catalog_prompt, skills_prompt};
 pub fn readable_tool_name(name: &str) -> &str {
     match name {
         "run_command" => "运行命令",
-        "start_background_command" => "启动后台命令",
-        "list_background_commands" => "列出后台命令",
-        "read_background_command_output" => "读取后台命令输出",
-        "stop_background_command" => "停止后台命令",
-        "cleanup_background_commands" => "清理后台命令",
+        "background_command" => "后台命令",
         "task_agent" => "创建子任务",
         "read_file" => "读取文件",
         "write_file" => "写入文件",

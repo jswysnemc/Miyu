@@ -1,4 +1,8 @@
 mod background;
+mod background_actions;
+pub(crate) mod background_render;
+mod background_schema;
+mod background_tasks;
 mod process;
 mod run;
 mod store;
@@ -8,9 +12,9 @@ use crate::paths::MiyuPaths;
 use crate::tools::ToolRegistry;
 
 pub(crate) use background::{
-    cleanup_background_commands_for_user, list_background_commands_for_user,
-    read_background_command_output_for_user, start_background_command_for_user,
-    stop_background_command_for_user,
+    cleanup_background_tasks_for_user, list_background_tasks_for_user,
+    read_background_task_output_for_user, start_background_task_for_user,
+    stop_background_task_for_user,
 };
 
 /// 注册命令相关工具。

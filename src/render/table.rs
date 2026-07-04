@@ -597,8 +597,8 @@ mod tests {
             &[
                 "| 操作 | 结果 |".to_string(),
                 "|---|---|".to_string(),
-                format!("| start_background_command | {ok_mark} PID 832048 |"),
-                format!("| stop_background_command | {ok_mark} stopped |"),
+                format!("| background_command | {ok_mark} PID 832048 |"),
+                format!("| background_command | {ok_mark} stopped |"),
                 format!("| {desktop} 系统 | {green_circle} 正常 |"),
             ],
             render_table_cell_content,

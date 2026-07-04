@@ -12,6 +12,7 @@ pub(crate) use crate::render::stream_text::{
 };
 use crate::render::style::TOOL_BULLET;
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
+use crate::tools::command::background_render::is_background_command_start;
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
@@ -201,7 +202,11 @@ impl StreamRenderer {
             return Ok(());
         }
         self.stop_waiting()?;
-        if self.tool_call_mode == ToolCallDisplayMode::Summary && !tool_call_has_visible_block(name)
+        let background_command_start =
+            name == "background_command" && is_background_command_start(arguments);
+        if self.tool_call_mode == ToolCallDisplayMode::Summary
+            && !tool_call_has_visible_block(name)
+            && !background_command_start
         {
             self.write_live_tool_status(name, "run", false)?;
             return Ok(());
@@ -209,7 +214,7 @@ impl StreamRenderer {
         self.clear_live_tool_status()?;
         self.end_active_stream_line()?;
         self.finalize_reasoning_summary()?;
-        if name == "run_command" {
+        if name == "run_command" || background_command_start {
             self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
             write_command_block(&mut stdout, arguments)?;

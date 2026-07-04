@@ -2,8 +2,8 @@ use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
 use crate::tools::command::{
-    cleanup_background_commands_for_user, list_background_commands_for_user,
-    read_background_command_output_for_user, stop_background_command_for_user,
+    cleanup_background_tasks_for_user, list_background_tasks_for_user,
+    read_background_task_output_for_user, stop_background_task_for_user,
 };
 use anyhow::Result;
 use crossterm::cursor::{Hide, MoveTo, Show};
@@ -105,20 +105,20 @@ pub(super) async fn run_repl_background_manager(
                 }
                 KeyCode::Char('s') => {
                     if let Some(task) = tasks.get(selected) {
-                        stop_background_command_for_user(paths, config, &task.id, false).await?;
+                        stop_background_task_for_user(paths, config, &task.id, false).await?;
                         status = format!("{}: {}", t("stopped", "已停止"), task.id);
                         tasks = load_repl_background_tasks(paths, config).await?;
                     }
                 }
                 KeyCode::Char('f') => {
                     if let Some(task) = tasks.get(selected) {
-                        stop_background_command_for_user(paths, config, &task.id, true).await?;
+                        stop_background_task_for_user(paths, config, &task.id, true).await?;
                         status = format!("{}: {}", t("force stopped", "已强制停止"), task.id);
                         tasks = load_repl_background_tasks(paths, config).await?;
                     }
                 }
                 KeyCode::Char('x') => {
-                    cleanup_background_commands_for_user(paths, config, false).await?;
+                    cleanup_background_tasks_for_user(paths, config, false).await?;
                     status = t("finished tasks cleaned", "已清理结束任务").to_string();
                     tasks = load_repl_background_tasks(paths, config).await?;
                 }
@@ -141,7 +141,7 @@ async fn load_repl_background_tasks(
     paths: &MiyuPaths,
     config: &AppConfig,
 ) -> Result<Vec<ReplBackgroundTask>> {
-    let raw = list_background_commands_for_user(paths, config).await?;
+    let raw = list_background_tasks_for_user(paths, config).await?;
     let list: ReplBackgroundTaskList = serde_json::from_str(&raw)?;
     Ok(list.tasks)
 }
@@ -244,7 +244,7 @@ async fn show_task_output(
     task: &ReplBackgroundTask,
 ) -> Result<()> {
     let raw =
-        read_background_command_output_for_user(paths, config, &task.id, "all", OUTPUT_TAIL_LINES)
+        read_background_task_output_for_user(paths, config, &task.id, "all", OUTPUT_TAIL_LINES)
             .await?;
     let output: ReplBackgroundOutput = serde_json::from_str(&raw)?;
     loop {
