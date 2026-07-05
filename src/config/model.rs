@@ -17,6 +17,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub prompt: PromptConfig,
     #[serde(default)]
+    pub gateways: GatewayConfig,
+    #[serde(default)]
     pub plugins: PluginsConfig,
     #[serde(default, skip_serializing)]
     pub memory: MemoryConfig,
@@ -144,6 +146,50 @@ pub struct PromptConfig {
     pub active_persona: String,
     #[serde(default)]
     pub active_identity: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct GatewayConfig {
+    #[serde(default)]
+    pub qq: QqGatewayConfig,
+    #[serde(default)]
+    pub weixin: WeixinGatewayConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QqGatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_qq_gateway_transport")]
+    pub transport: String,
+    #[serde(default = "default_qq_gateway_listen")]
+    pub listen: String,
+    #[serde(default = "default_qq_gateway_base_url")]
+    pub base_url: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub app_id: String,
+    #[serde(default)]
+    pub client_secret: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WeixinGatewayConfig {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_weixin_gateway_base_url")]
+    pub base_url: String,
+    #[serde(default = "default_weixin_gateway_cdn_base_url")]
+    pub cdn_base_url: String,
+    #[serde(default = "default_weixin_gateway_bot_type")]
+    pub bot_type: String,
+    #[serde(default)]
+    pub token: String,
+    #[serde(default)]
+    pub account: String,
+    #[serde(default)]
+    pub bot_agent: String,
 }
 
 #[derive(Debug, Clone)]

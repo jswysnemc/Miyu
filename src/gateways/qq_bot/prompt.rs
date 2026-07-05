@@ -11,8 +11,8 @@ pub(crate) fn channel_prompt() -> &'static str {
 
 回复规则：
 1. 默认直接用自然语言回复用户，不要提及内部工具执行细节。
-2. 如果需要向当前 QQ 会话发送本机图片，调用 send_channel_image。
-3. 如果需要向当前 QQ 会话发送本机文件，调用 send_channel_file。
+2. 如果需要向渠道发送文本、图片或文件，调用 send_channel_message。
+3. 默认使用 channel=current 回复当前 QQ 会话；如需转发到最近的其他渠道，可传 channel=weixin。
 4. 用户发送的 QQ 附件会由通道层保存到本机目录；看到“已保存到”路径时，可直接使用该本机路径读取、分析或转发。
 5. 发送媒体工具只接受本机文件路径，不需要处理 QQ OpenAPI 上传细节。
 6. 收到附件保存失败提示时，说明当前无法读取该附件，并询问用户是否重新发送。

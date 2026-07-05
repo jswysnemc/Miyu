@@ -1,4 +1,5 @@
 use super::client::default_cdn_base_url;
+use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -167,6 +168,7 @@ pub(crate) async fn run_weixin_login(paths: &MiyuPaths, config: WeixinLoginConfi
                     saved_at: chrono::Utc::now().to_rfc3339(),
                 };
                 let path = save_weixin_account(paths, &saved)?;
+                update_weixin_gateway_config(paths, &saved)?;
                 println!("微信登录成功。");
                 println!("账号: {}", saved.account_id);
                 println!("凭证已保存: {}", path.display());
@@ -181,6 +183,25 @@ pub(crate) async fn run_weixin_login(paths: &MiyuPaths, config: WeixinLoginConfi
             }
         }
     }
+}
+
+/// 回写微信网关 TUI 配置。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `account`: 已保存微信账号
+///
+/// 返回:
+/// - 回写是否成功
+fn update_weixin_gateway_config(paths: &MiyuPaths, account: &SavedWeixinAccount) -> Result<()> {
+    AppConfig::init_files(paths)?;
+    let mut config = AppConfig::load_or_default(paths)?;
+    config.gateways.weixin.enabled = true;
+    config.gateways.weixin.account = account.account_id.clone();
+    config.gateways.weixin.base_url = account.base_url.clone();
+    config.gateways.weixin.cdn_base_url = account.cdn_base_url.clone();
+    config.gateways.weixin.token.clear();
+    config.save(paths)
 }
 
 /// 读取已保存的微信账号。

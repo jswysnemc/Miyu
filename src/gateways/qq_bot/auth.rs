@@ -1,5 +1,5 @@
 use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -24,6 +24,7 @@ struct CachedToken {
 #[derive(Debug, Deserialize)]
 struct AccessTokenResponse {
     access_token: Option<String>,
+    #[serde(default, deserialize_with = "deserialize_optional_u64")]
     expires_in: Option<u64>,
 }
 
@@ -54,13 +55,24 @@ impl QqBotAuthenticator {
     /// 返回:
     /// - Authorization 请求头完整内容
     pub(crate) async fn authorization(&mut self) -> Result<String> {
+        Ok(format!("QQBot {}", self.access_token().await?))
+    }
+
+    /// 获取 QQ 官方 access token。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - access token
+    pub(crate) async fn access_token(&mut self) -> Result<String> {
         if let Some(token) = self.valid_cached_token() {
-            return Ok(format!("QQBot {token}"));
+            return Ok(token.to_string());
         }
         let token = self.fetch_access_token().await?;
-        let authorization = format!("QQBot {}", token.access_token);
+        let access_token = token.access_token.clone();
         self.cached = Some(token);
-        Ok(authorization)
+        Ok(access_token)
     }
 
     /// 读取仍然有效的缓存 token。
@@ -102,7 +114,7 @@ impl QqBotAuthenticator {
             bail!("QQ token API returned HTTP {status}: {body}");
         }
         let parsed = serde_json::from_str::<AccessTokenResponse>(&body)
-            .with_context(|| format!("invalid QQ token response: {body}"))?;
+            .with_context(|| "invalid QQ token response")?;
         let access_token = parsed
             .access_token
             .filter(|value| !value.trim().is_empty())
@@ -112,5 +124,66 @@ impl QqBotAuthenticator {
             access_token,
             expires_at: Instant::now() + Duration::from_secs(expires_in),
         })
+    }
+}
+
+/// 兼容 QQ token 响应中的数字或字符串过期时间。
+///
+/// 参数:
+/// - `deserializer`: Serde 反序列化器
+///
+/// 返回:
+/// - 可选秒数
+fn deserialize_optional_u64<'de, D>(deserializer: D) -> std::result::Result<Option<u64>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    let value = Option::<serde_json::Value>::deserialize(deserializer)?;
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    match value {
+        serde_json::Value::Null => Ok(None),
+        serde_json::Value::Number(number) => number
+            .as_u64()
+            .ok_or_else(|| serde::de::Error::custom("expires_in must be a non-negative integer"))
+            .map(Some),
+        serde_json::Value::String(text) => {
+            let text = text.trim();
+            if text.is_empty() {
+                return Ok(None);
+            }
+            text.parse::<u64>()
+                .map(Some)
+                .map_err(|err| serde::de::Error::custom(format!("invalid expires_in: {err}")))
+        }
+        _ => Err(serde::de::Error::custom(
+            "expires_in must be a number or string",
+        )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_string_expires_in() {
+        let response = serde_json::from_str::<AccessTokenResponse>(
+            r#"{"access_token":"token","expires_in":"4789"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.expires_in, Some(4789));
+    }
+
+    #[test]
+    fn parses_numeric_expires_in() {
+        let response = serde_json::from_str::<AccessTokenResponse>(
+            r#"{"access_token":"token","expires_in":4789}"#,
+        )
+        .unwrap();
+
+        assert_eq!(response.expires_in, Some(4789));
     }
 }

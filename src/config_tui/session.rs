@@ -10,6 +10,7 @@ use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use std::io;
 
 use super::custom_prompts::edit_custom_prompts;
+use super::gateways::edit_gateways;
 use super::input::read_key;
 use super::plugins::edit_plugins;
 use super::providers::{select_active_provider, ProviderBrowser};
@@ -62,6 +63,7 @@ fn run_main_menu(
             format!("{} ({active})", t("Active configuration", "激活配置")),
             t("Providers and models", "供应商和模型").to_string(),
             t("Plugin configuration", "插件配置").to_string(),
+            t("Gateway channels", "渠道接入").to_string(),
             t("Custom prompts", "自定义提示词").to_string(),
             t("Global settings", "全局参数设置").to_string(),
             t("Save and exit", "保存并退出").to_string(),
@@ -86,9 +88,10 @@ fn run_main_menu(
                 0 => select_active_provider(stdout, config)?,
                 1 => ProviderBrowser::new(config).run(stdout)?,
                 2 => edit_plugins(stdout, config)?,
-                3 => edit_custom_prompts(stdout, paths, config)?,
-                4 => edit_settings(stdout, config)?,
-                5 => {
+                3 => edit_gateways(stdout, paths, config)?,
+                4 => edit_custom_prompts(stdout, paths, config)?,
+                5 => edit_settings(stdout, config)?,
+                6 => {
                     config.save(paths)?;
                     return Ok(true);
                 }

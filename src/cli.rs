@@ -323,6 +323,12 @@ fn localize_background_commands_command(command: clap::Command) -> clap::Command
 
 fn localize_gateway_command(command: clap::Command) -> clap::Command {
     command
+        .mut_subcommand("start", |subcommand| {
+            subcommand.about(t(
+                "Start all enabled gateway channels from configuration",
+                "启动配置中已启用的所有渠道网关",
+            ))
+        })
         .mut_subcommand("wecom-webhook", |subcommand| {
             subcommand
                 .about(t(
@@ -339,10 +345,16 @@ fn localize_gateway_command(command: clap::Command) -> clap::Command {
                 "通过 QQ 官方机器人 OpenAPI 发送文本、图片或文件",
             ))
         })
+        .mut_subcommand("qq-bot", |subcommand| {
+            subcommand.about(t(
+                "Receive QQ Bot events through websocket by default, invoke Miyu, and reply through QQ Bot OpenAPI",
+                "默认通过 WebSocket 接收 QQ 官方机器人事件，调用 Miyu 后通过 QQ Bot OpenAPI 回复",
+            ))
+        })
         .mut_subcommand("qq-bot-webhook", |subcommand| {
             subcommand.about(t(
-                "Receive QQ Bot webhook events, invoke Miyu, and reply through QQ Bot OpenAPI",
-                "接收 QQ 官方机器人 Webhook 事件，调用 Miyu 后通过 QQ Bot OpenAPI 回复",
+                "Receive QQ Bot webhook events through the legacy HTTP callback mode",
+                "通过旧 HTTP 回调模式接收 QQ 官方机器人 Webhook 事件",
             ))
         })
         .mut_subcommand("onebot", |subcommand| {

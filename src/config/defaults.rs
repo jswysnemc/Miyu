@@ -13,6 +13,7 @@ impl Default for AppConfig {
             skills: SkillsConfig::default(),
             display: DisplayConfig::default(),
             prompt: PromptConfig::default(),
+            gateways: GatewayConfig::default(),
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
             system_prompt_file: Some("system-prompt.md".to_string()),
@@ -29,6 +30,43 @@ impl Default for PromptConfig {
             user_identity_file: default_user_identity_file(),
             active_persona: String::new(),
             active_identity: String::new(),
+        }
+    }
+}
+
+impl Default for GatewayConfig {
+    fn default() -> Self {
+        Self {
+            qq: QqGatewayConfig::default(),
+            weixin: WeixinGatewayConfig::default(),
+        }
+    }
+}
+
+impl Default for QqGatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            transport: default_qq_gateway_transport(),
+            listen: default_qq_gateway_listen(),
+            base_url: default_qq_gateway_base_url(),
+            token: String::new(),
+            app_id: String::new(),
+            client_secret: String::new(),
+        }
+    }
+}
+
+impl Default for WeixinGatewayConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            base_url: default_weixin_gateway_base_url(),
+            cdn_base_url: default_weixin_gateway_cdn_base_url(),
+            bot_type: default_weixin_gateway_bot_type(),
+            token: String::new(),
+            account: String::new(),
+            bot_agent: String::new(),
         }
     }
 }
@@ -359,6 +397,30 @@ pub(super) fn default_identities_dir() -> String {
 
 pub(super) fn default_user_identity_file() -> String {
     "user-identity.md".to_string()
+}
+
+pub(super) fn default_qq_gateway_listen() -> String {
+    "127.0.0.1:8766".to_string()
+}
+
+pub(super) fn default_qq_gateway_transport() -> String {
+    "websocket".to_string()
+}
+
+pub(super) fn default_qq_gateway_base_url() -> String {
+    "https://api.sgroup.qq.com".to_string()
+}
+
+pub(super) fn default_weixin_gateway_base_url() -> String {
+    "https://ilink.tencentbot.top".to_string()
+}
+
+pub(super) fn default_weixin_gateway_cdn_base_url() -> String {
+    "https://novac2c.cdn.weixin.qq.com/c2c".to_string()
+}
+
+pub(super) fn default_weixin_gateway_bot_type() -> String {
+    "3".to_string()
 }
 
 pub(super) fn default_temperature() -> f32 {

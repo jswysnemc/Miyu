@@ -62,6 +62,53 @@ fn background_command_defaults_are_enabled() {
 }
 
 #[test]
+fn gateway_defaults_are_valid() {
+    let config = AppConfig::default();
+
+    assert!(config.validate().is_ok());
+    assert!(!config.gateways.qq.enabled);
+    assert!(!config.gateways.weixin.enabled);
+    assert_eq!(config.gateways.qq.transport, "websocket");
+    assert_eq!(config.gateways.qq.listen, "127.0.0.1:8766");
+    assert_eq!(config.gateways.qq.base_url, "https://api.sgroup.qq.com");
+    assert_eq!(
+        config.gateways.weixin.cdn_base_url,
+        "https://novac2c.cdn.weixin.qq.com/c2c"
+    );
+    assert_eq!(config.gateways.weixin.bot_type, "3");
+}
+
+#[test]
+fn gateway_validation_rejects_invalid_qq_transport() {
+    let mut config = AppConfig::default();
+    config.gateways.qq.transport = "polling".to_string();
+
+    let err = config.validate().unwrap_err();
+
+    assert!(err.to_string().contains("gateways.qq.transport"));
+}
+
+#[test]
+fn gateway_validation_rejects_invalid_listen_address() {
+    let mut config = AppConfig::default();
+    config.gateways.qq.listen = "not-a-socket".to_string();
+
+    let err = config.validate().unwrap_err();
+
+    assert!(err.to_string().contains("gateways.qq.listen"));
+}
+
+#[test]
+fn gateway_validation_rejects_invalid_qq_token() {
+    let mut config = AppConfig::default();
+    config.gateways.qq.token = "missing-secret".to_string();
+
+    let err = config.validate().unwrap_err();
+
+    assert!(err.to_string().contains("gateways.qq.token"));
+}
+
+#[test]
 fn meme_library_defaults_follow_persona() {
     let memes = MemesPluginConfig::default();
     assert_eq!(memes.library_for_persona(""), "miyu");

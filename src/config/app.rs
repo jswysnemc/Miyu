@@ -5,6 +5,7 @@ use crate::default_models::OPENCODE_PROVIDER_ID;
 use crate::paths::MiyuPaths;
 use crate::prompts::default_system_prompt;
 use anyhow::{bail, Context, Result};
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 impl AppConfig {
@@ -157,6 +158,7 @@ impl AppConfig {
         if self.tools.background_command_stop_grace_seconds == 0 {
             bail!("tools.background_command_stop_grace_seconds must be greater than 0");
         }
+        self.validate_gateways()?;
         if !(0.1..=1.0).contains(&self.context.trim_at_ratio) {
             bail!("context.trim_at_ratio must be between 0.1 and 1.0");
         }
@@ -224,6 +226,54 @@ impl AppConfig {
             bail!("plugins.knowledge_base.embedding_timeout_seconds must be greater than 0");
         }
         self.provider(None)?;
+        Ok(())
+    }
+
+    /// 校验渠道接入配置。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 配置是否合法
+    fn validate_gateways(&self) -> Result<()> {
+        match self
+            .gateways
+            .qq
+            .transport
+            .trim()
+            .to_ascii_lowercase()
+            .as_str()
+        {
+            "" | "websocket" | "ws" | "webhook" | "http" => {}
+            value => bail!("gateways.qq.transport is invalid: {value}"),
+        }
+        if !self.gateways.qq.listen.trim().is_empty() {
+            self.gateways
+                .qq
+                .listen
+                .parse::<SocketAddr>()
+                .with_context(|| "gateways.qq.listen is invalid")?;
+        }
+        if self.gateways.qq.base_url.trim().is_empty() {
+            bail!("gateways.qq.base_url cannot be empty");
+        }
+        if let Some((app_id, client_secret)) = self.gateways.qq.token.trim().split_once(':') {
+            if app_id.trim().is_empty() || client_secret.trim().is_empty() {
+                bail!("gateways.qq.token must use AppID:AppSecret format");
+            }
+        } else if !self.gateways.qq.token.trim().is_empty() {
+            bail!("gateways.qq.token must use AppID:AppSecret format");
+        }
+        if self.gateways.weixin.base_url.trim().is_empty() {
+            bail!("gateways.weixin.base_url cannot be empty");
+        }
+        if self.gateways.weixin.cdn_base_url.trim().is_empty() {
+            bail!("gateways.weixin.cdn_base_url cannot be empty");
+        }
+        if self.gateways.weixin.bot_type.trim().is_empty() {
+            bail!("gateways.weixin.bot_type cannot be empty");
+        }
         Ok(())
     }
 

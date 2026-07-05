@@ -2,10 +2,11 @@ use super::client::WeixinBotClient;
 use super::event::{parse_weixin_message, WeixinInboundMediaKind, WeixinMessageEvent};
 use super::inbound_media::{image_mime, save_inbound_media, SavedInboundMedia};
 use super::prompt::channel_prompt;
-use super::tools as weixin_tools;
 use crate::agent::{Agent, AgentMode};
 use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
+use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
+use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChannelTarget};
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
@@ -140,8 +141,10 @@ async fn process_message_event(
     event: WeixinMessageEvent,
 ) -> Result<()> {
     let _guard = agent_lock.lock().await;
+    let context = ChannelContext::weixin(event.from_user_id.clone(), event.context_token.clone());
+    save_latest_channel_context(paths, &context)?;
     let (prompt, image_url) = prepare_agent_input(paths, client, http_client, &event).await?;
-    let reply = run_agent(paths, client, &event, prompt, image_url).await?;
+    let reply = run_agent(paths, client, &event, &context, prompt, image_url).await?;
     if reply.trim().is_empty() {
         return Ok(());
     }
@@ -237,6 +240,7 @@ fn inbound_media_label(kind: WeixinInboundMediaKind) -> &'static str {
 /// - `paths`: Miyu 路径
 /// - `weixin_client`: 微信 iLink 客户端
 /// - `event`: 微信消息事件
+/// - `context`: 渠道上下文
 /// - `prompt`: Agent 输入文本
 /// - `image_url`: 可选图片 data URL
 ///
@@ -246,6 +250,7 @@ async fn run_agent(
     paths: &MiyuPaths,
     weixin_client: &WeixinBotClient,
     event: &WeixinMessageEvent,
+    context: &ChannelContext,
     prompt: String,
     image_url: Option<String>,
 ) -> Result<String> {
@@ -255,13 +260,18 @@ async fn run_agent(
     state.init_files()?;
     let client = OpenAiCompatibleClient::from_config(&config, paths)?;
     let mut registry = build_tool_registry(&config, paths, AgentMode::Yolo)?;
-    weixin_tools::register_channel_tools(
+    register_channel_message_tool(
         &mut registry,
-        weixin_client.clone(),
-        event.from_user_id.clone(),
-        event.context_token.clone(),
+        paths.clone(),
+        config.clone(),
+        ActiveChannelTarget::Weixin {
+            client: weixin_client.clone(),
+            to_user_id: event.from_user_id.clone(),
+            context_token: event.context_token.clone(),
+        },
     );
     let progressive_loading_enabled = config.tools.progressive_loading_enabled;
+    let prompt = format!("{}\n\n{}", context.inbound_marker(), prompt);
     let mut agent = Agent::new_with_extra_system_prompt(
         config,
         paths,
@@ -273,11 +283,7 @@ async fn run_agent(
     )?;
     if progressive_loading_enabled {
         let mut loaded_tools = state.load_loaded_tools()?;
-        loaded_tools.extend([
-            "send_channel_image".to_string(),
-            "send_channel_file".to_string(),
-            "send_channel_video".to_string(),
-        ]);
+        loaded_tools.push("send_channel_message".to_string());
         agent.restore_loaded_tools(&loaded_tools);
     }
     let result = agent

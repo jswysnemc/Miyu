@@ -1,5 +1,6 @@
 mod custom_prompts;
 mod form;
+mod gateways;
 mod input;
 mod plugin_fields;
 mod plugins;

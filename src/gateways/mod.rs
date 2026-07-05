@@ -1,4 +1,7 @@
+mod channel_context;
+mod channel_tools;
 pub(crate) mod cli;
+pub(crate) mod manager;
 mod media;
 mod message;
 mod onebot;
@@ -6,5 +9,6 @@ mod onebot_event;
 mod onebot_server;
 mod qq_bot;
 mod qq_official;
+mod supervisor;
 mod wecom_webhook;
 mod weixin_bot;

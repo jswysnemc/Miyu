@@ -3,14 +3,14 @@ use crate::default_models::{OPENCODE_DEFAULT_VISION_MODEL, OPENCODE_PROVIDER_ID}
 use crate::i18n::text as t;
 use anyhow::{bail, Result};
 use crossterm::cursor::{Hide, MoveTo, Show};
-use crossterm::event::KeyCode;
+use crossterm::event::{KeyCode, KeyModifiers};
 use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{self, Clear, ClearType, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{execute, queue};
 use std::io::{self, Write};
 use std::process::Command;
 
-use super::input::read_key;
+use super::input::{read_key, read_key_event};
 use super::ui::{display_width, draw_box, draw_menu, pad, truncate};
 
 struct FcitxState {
@@ -54,9 +54,19 @@ pub(crate) fn run_form(stdout: &mut io::Stdout, title: &str, fields: &mut [Field
         .iter()
         .map(|field| field.value.chars().count())
         .collect::<Vec<_>>();
+    let mut revealed_secrets = vec![false; fields.len()];
     loop {
-        draw_form(stdout, title, fields, selected, editing, &cursors)?;
-        match read_key()? {
+        draw_form(
+            stdout,
+            title,
+            fields,
+            selected,
+            editing,
+            &cursors,
+            &revealed_secrets,
+        )?;
+        let key = read_key_event()?;
+        match key.code {
             KeyCode::Esc if editing => {
                 fcitx.leave_editing();
                 editing = false;
@@ -123,7 +133,14 @@ pub(crate) fn run_form(stdout: &mut io::Stdout, title: &str, fields: &mut [Field
             KeyCode::Delete if editing => {
                 remove_char_at_cursor(&mut fields[selected].value, cursors[selected])
             }
-            KeyCode::Char(char) if editing => {
+            KeyCode::Char('r')
+                if editing
+                    && fields[selected].secret
+                    && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                revealed_secrets[selected] = !revealed_secrets[selected];
+            }
+            KeyCode::Char(char) if editing && !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 insert_char_at_cursor(&mut fields[selected].value, &mut cursors[selected], char)
             }
             _ => {}
@@ -280,6 +297,7 @@ fn draw_form(
     selected: usize,
     editing: bool,
     cursors: &[usize],
+    revealed_secrets: &[bool],
 ) -> Result<()> {
     let (cols, rows) = terminal::size()?;
     let width = cols.saturating_sub(8).min(96).max(48);
@@ -294,8 +312,8 @@ fn draw_form(
         stdout,
         MoveTo(x + 2, y + 1),
         Print(t(
-            "[j/k] move [Enter] edit/open editor [s] confirm [q] cancel",
-            "[j/k]移动 [Enter]编辑/打开编辑器 [s]确认 [q]取消",
+            "[j/k] move [Enter] edit/open editor [Ctrl+R] reveal secret [s] confirm [q] cancel",
+            "[j/k]移动 [Enter]编辑/打开编辑器 [Ctrl+R]显示密钥 [s]确认 [q]取消",
         ))
     )?;
     let mut cursor = None;
@@ -303,15 +321,7 @@ fn draw_form(
         let row_y = y + index as u16 + 3;
         queue!(stdout, MoveTo(x + 2, row_y))?;
         let marker = if index == selected { ">" } else { " " };
-        let value = if field.textarea && field.value.is_empty() {
-            t("(Enter opens $EDITOR)", "(Enter 打开 $EDITOR)").to_string()
-        } else if !field.choices.is_empty() && field.value.is_empty() {
-            field.empty_choice_label.to_string()
-        } else if !field.choices.is_empty() {
-            choice_label(&field.value, field.empty_choice_label)
-        } else {
-            truncate(&field.value.replace('\n', " "), 70)
-        };
+        let value = field_display_value(field, revealed_secrets[index]);
         let prefix = format!("{marker} {}: ", field.label);
         let line = truncate(
             &format!("{prefix}{value}"),
@@ -328,7 +338,8 @@ fn draw_form(
             queue!(stdout, Print(pad(&line, width.saturating_sub(4) as usize)))?;
         }
         if index == selected && editing {
-            let cursor_text = take_chars(&field.value.replace('\n', " "), cursors[index]);
+            let rendered_value = rendered_text_value(field, revealed_secrets[index]);
+            let cursor_text = take_chars(&rendered_value, cursors[index]);
             let cursor_x = x
                 + 2
                 + display_width(&prefix) as u16
@@ -352,7 +363,17 @@ fn draw_form(
         selected == fields.len() + 1 && !editing,
     )?;
 
-    let mode = if editing {
+    let mode = if editing && fields[selected].secret && revealed_secrets[selected] {
+        t(
+            "Editing secret in plain text, Ctrl+R hides it",
+            "正在明文编辑密钥，Ctrl+R 隐藏",
+        )
+    } else if editing && fields[selected].secret {
+        t(
+            "Editing secret masked, Ctrl+R reveals it",
+            "正在掩码编辑密钥，Ctrl+R 显示明文",
+        )
+    } else if editing {
         t(
             "Editing, Enter/Esc ends editing",
             "编辑中，Enter/Esc 结束编辑",
@@ -375,6 +396,54 @@ fn draw_form(
     }
     stdout.flush()?;
     Ok(())
+}
+
+/// 返回表单字段展示文本。
+///
+/// 参数:
+/// - `field`: 表单字段
+/// - `revealed_secret`: 是否显示密钥明文
+///
+/// 返回:
+/// - 字段展示文本
+fn field_display_value(field: &Field, revealed_secret: bool) -> String {
+    if field.textarea && field.value.is_empty() {
+        t("(Enter opens $EDITOR)", "(Enter 打开 $EDITOR)").to_string()
+    } else if !field.choices.is_empty() && field.value.is_empty() {
+        field.empty_choice_label.to_string()
+    } else if !field.choices.is_empty() {
+        choice_label(&field.value, field.empty_choice_label)
+    } else {
+        truncate(&rendered_text_value(field, revealed_secret), 70)
+    }
+}
+
+/// 返回单行文本字段渲染值。
+///
+/// 参数:
+/// - `field`: 表单字段
+/// - `revealed_secret`: 是否显示密钥明文
+///
+/// 返回:
+/// - 字段单行渲染值
+fn rendered_text_value(field: &Field, revealed_secret: bool) -> String {
+    let value = field.value.replace('\n', " ");
+    if field.secret && !revealed_secret {
+        mask_secret(&value)
+    } else {
+        value
+    }
+}
+
+/// 掩码密钥文本。
+///
+/// 参数:
+/// - `value`: 原始文本
+///
+/// 返回:
+/// - 掩码后文本
+fn mask_secret(value: &str) -> String {
+    "*".repeat(value.chars().count())
 }
 
 fn draw_form_button(
@@ -437,6 +506,7 @@ pub(crate) struct Field {
     pub(crate) value: String,
     pub(crate) textarea: bool,
     pub(crate) boolean: bool,
+    pub(crate) secret: bool,
     pub(crate) choices: Vec<String>,
     pub(crate) empty_choice_label: &'static str,
 }
@@ -448,6 +518,7 @@ impl Field {
             value,
             textarea: false,
             boolean: false,
+            secret: false,
             choices: Vec::new(),
             empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
@@ -459,6 +530,7 @@ impl Field {
             value: value.to_string(),
             textarea: false,
             boolean: true,
+            secret: false,
             choices: Vec::new(),
             empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
@@ -470,9 +542,15 @@ impl Field {
             value,
             textarea: true,
             boolean: false,
+            secret: false,
             choices: Vec::new(),
             empty_choice_label: t("Use current Provider", "使用当前 Provider"),
         }
+    }
+
+    pub(crate) fn secret(mut self) -> Self {
+        self.secret = true;
+        self
     }
 
     pub(crate) fn choices(mut self, choices: &[&str]) -> Self {
@@ -488,5 +566,24 @@ impl Field {
     pub(crate) fn empty_choice_label(mut self, label: &'static str) -> Self {
         self.empty_choice_label = label;
         self
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn secret_field_is_masked_by_default() {
+        let field = Field::new("Token", "secret".to_string()).secret();
+
+        assert_eq!(field_display_value(&field, false), "******");
+    }
+
+    #[test]
+    fn secret_field_can_be_revealed() {
+        let field = Field::new("Token", "secret".to_string()).secret();
+
+        assert_eq!(field_display_value(&field, true), "secret");
     }
 }

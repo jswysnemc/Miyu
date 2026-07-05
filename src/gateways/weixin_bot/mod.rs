@@ -5,4 +5,3 @@ pub(crate) mod login;
 pub(crate) mod media;
 pub(crate) mod prompt;
 pub(crate) mod server;
-pub(crate) mod tools;
