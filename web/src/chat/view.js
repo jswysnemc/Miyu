@@ -6,6 +6,10 @@ import { appState, activeSession, setAutoScroll } from "../state.js";
 import { createMessageNode, buildThoughtProcess } from "./message-node.js";
 import { createStreamRenderer } from "../markdown/stream-renderer.js";
 import { renderFull } from "../markdown/renderer.js";
+import {
+  createToolHost,
+  resetToolHost,
+} from "./tool-inline.js";
 
 const chatContainer = document.getElementById("chatContainer");
 const chatInner = document.getElementById("chatInner");
@@ -58,6 +62,8 @@ export function renderChat() {
     const node = createMessageNode(message, index);
     chatInner.appendChild(node.block);
   });
+  // 3. 重置工具区引用，历史消息不挂载工具卡片
+  resetToolHost();
   currentStream = null;
   if (appState.autoScroll) scrollToBottom();
 }
@@ -95,6 +101,8 @@ export function ensureAssistantMessage() {
     const node = createMessageNode(appState.messages[index], index);
     chatInner.appendChild(node.block);
     welcomeEl.hidden = true;
+    // 1. 为新助手消息挂载工具调用区
+    createToolHost(node.block);
     currentStream = {
       message: appState.messages[index],
       block: node.block,

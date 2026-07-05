@@ -1,11 +1,16 @@
 // ============================================================
-// /api/chat 流事件分发：将后端 NDJSON 事件分发到聊天视图与工具时间线
+// /api/chat 流事件分发：将后端 NDJSON 事件分发到聊天视图与内联工具卡片
 // ============================================================
 
 import { streamChat } from "./api.js";
 import { appState } from "./state.js";
 import { appendAssistantChunk, finishAssistant, showAssistantError } from "./chat/view.js";
-import { addToolEvent } from "./inspector/tool-timeline.js";
+import {
+  addToolCall,
+  addToolCallProgress,
+  addToolProgress,
+  finishToolResult,
+} from "./chat/tool-inline.js";
 import { loadSessions } from "./sessions/list.js";
 import { setResponding } from "./composer/controls.js";
 
@@ -63,7 +68,7 @@ export async function sendCurrentMessage(message, imageUrl) {
 }
 
 /**
- * 处理单条流式事件
+ * 处理单条流式事件，按类型分发到聊天视图或工具卡片
  * @param {Object} event - 事件对象
  * @returns {void}
  */
@@ -78,14 +83,23 @@ function handleStreamEvent(event) {
       appendAssistantChunk(event.kind, event.text || "");
       break;
     case "tool_call":
+      // 3. 工具调用开始：参数完整到达
+      addToolCall(event.name, event.arguments || "");
+      break;
     case "tool_call_progress":
+      // 4. 工具参数流式预览
+      addToolCallProgress(event);
+      break;
     case "tool_progress":
+      // 5. 工具执行进度消息
+      addToolProgress(event);
+      break;
     case "tool_result":
-      // 3. 工具调用事件入时间线
-      addToolEvent(event);
+      // 6. 工具执行完成
+      finishToolResult(event.name, event.ok, event.output || "");
       break;
     case "done":
-      // 4. 完成，用完整内容重渲染
+      // 7. 完成，用完整内容重渲染
       finishAssistant(event.content || "", event.reasoning || "");
       break;
     case "error":

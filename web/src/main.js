@@ -15,7 +15,6 @@ import { setupSessionManage } from "./sessions/manage.js";
 import { setupInspector } from "./inspector/drawer.js";
 import { loadGateways } from "./inspector/gateways.js";
 import { loadTasks } from "./inspector/tasks.js";
-import { clearToolTimeline } from "./inspector/tool-timeline.js";
 import {
   loadConfig,
   openSettings,
@@ -86,7 +85,6 @@ function bindActions() {
   // 5. 检查器刷新
   document.getElementById("refreshGatewaysBtn").addEventListener("click", loadGateways);
   document.getElementById("refreshTasksBtn").addEventListener("click", loadTasks);
-  document.getElementById("clearToolsBtn").addEventListener("click", clearToolTimeline);
 }
 
 /**

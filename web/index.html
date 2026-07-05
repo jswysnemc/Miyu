@@ -21,6 +21,7 @@
   <link rel="stylesheet" href="/assets/styles/sidebar.css">
   <link rel="stylesheet" href="/assets/styles/chat.css">
   <link rel="stylesheet" href="/assets/styles/markdown.css">
+  <link rel="stylesheet" href="/assets/styles/tools.css">
   <link rel="stylesheet" href="/assets/styles/composer.css">
   <link rel="stylesheet" href="/assets/styles/inspector.css">
   <link rel="stylesheet" href="/assets/styles/settings.css">
@@ -93,7 +94,7 @@
             <option value="plan">PLAN</option>
           </select>
           <button class="icon-button" id="themeToggleBtn" title="切换深色模式" data-icon="moon"></button>
-          <button class="icon-button" id="inspectorToggleBtn" title="工具面板" data-icon="panelRight"></button>
+          <button class="icon-button" id="inspectorToggleBtn" title="网关与任务" data-icon="panelRight"></button>
           <button class="ghost-button" id="settingsBtn">配置</button>
         </div>
       </header>
@@ -143,17 +144,10 @@
     <!-- ============ 右侧检查器抽屉 ============ -->
     <aside class="inspector" id="inspector">
       <div class="inspector-header">
-        <h2>工具面板</h2>
+        <h2>面板</h2>
         <button class="icon-button" id="inspectorCloseBtn" title="关闭" data-icon="close"></button>
       </div>
       <div class="inspector-body">
-        <section class="inspector-card">
-          <div class="card-heading">
-            <h3>工具调用</h3>
-            <button class="link-button" id="clearToolsBtn">清空</button>
-          </div>
-          <div class="tool-timeline" id="toolTimeline"></div>
-        </section>
         <section class="inspector-card">
           <div class="card-heading">
             <h3>网关</h3>

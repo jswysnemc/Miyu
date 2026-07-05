@@ -1,0 +1,265 @@
+/* ============================================================
+ * 内联工具调用卡片：codex 风格，按工具类型差异化渲染
+ * 卡片位于助手消息流中，运行中展开、完成后折叠为一行摘要
+ * ============================================================ */
+
+/* ============ 工具区容器 ============ */
+
+.tool-host {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 10px 0;
+  width: 100%;
+}
+
+/* ============ 单个工具卡片 ============ */
+
+.tool-call {
+  border: 1px solid var(--border-light);
+  border-left: 3px solid var(--text-faint);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  overflow: hidden;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.tool-call[data-status="running"] {
+  border-left-color: var(--text-muted);
+  box-shadow: 0 0 0 0 transparent;
+}
+
+.tool-call[data-status="ok"] {
+  border-left-color: var(--accent);
+}
+
+.tool-call[data-status="error"] {
+  border-left-color: var(--danger);
+}
+
+/* ============ 标题栏 ============ */
+
+.tool-call-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  cursor: pointer;
+  user-select: none;
+  transition: background 0.12s;
+}
+
+.tool-call-bar:hover {
+  background: var(--bg-hover);
+}
+
+.tool-call-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+
+.tool-call-icon svg {
+  width: 14px;
+  height: 14px;
+}
+
+.tool-call-name {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  max-width: 160px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-call-summary {
+  flex: 1;
+  min-width: 0;
+  font-size: 13px;
+  color: var(--text-main);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ============ 状态点 ============ */
+
+.tool-call-status {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-faint);
+}
+
+.tool-call-status.running {
+  background: var(--text-muted);
+  animation: tool-pulse 1.4s infinite ease-in-out;
+}
+
+.tool-call-status.ok {
+  background: var(--accent);
+}
+
+.tool-call-status.error {
+  background: var(--danger);
+}
+
+@keyframes tool-pulse {
+  0%, 100% {
+    opacity: 0.4;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* ============ 折叠箭头 ============ */
+
+.tool-call-chevron {
+  display: inline-flex;
+  align-items: center;
+  color: var(--text-faint);
+  transition: transform 0.18s;
+  flex-shrink: 0;
+}
+
+.tool-call-chevron svg {
+  width: 12px;
+  height: 12px;
+}
+
+.tool-call.collapsed .tool-call-chevron {
+  transform: rotate(-90deg);
+}
+
+/* ============ 输出区 ============ */
+
+.tool-call-body {
+  border-top: 1px solid var(--border-light);
+  max-height: 360px;
+  overflow-y: auto;
+  transition: max-height 0.2s ease;
+}
+
+.tool-call.collapsed .tool-call-body {
+  max-height: 0;
+  border-top-color: transparent;
+}
+
+/* ============ 输出内容类型 ============ */
+
+.tool-output-text {
+  margin: 0;
+  padding: 10px 12px;
+  background: var(--code-bg);
+  color: var(--code-fg);
+  font-family: var(--mono);
+  font-size: 12px;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-output-md {
+  padding: 12px 14px;
+  font-size: 13px;
+  line-height: 1.6;
+}
+
+.tool-output-md :first-child {
+  margin-top: 0;
+}
+
+.tool-output-md :last-child {
+  margin-bottom: 0;
+}
+
+.tool-output-error {
+  padding: 10px 12px;
+  color: var(--danger);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.tool-output-empty {
+  padding: 10px 12px;
+  color: var(--text-faint);
+  font-size: 12px;
+}
+
+/* ============ 图片输出 ============ */
+
+.tool-output-image {
+  display: block;
+  max-width: 100%;
+  max-height: 280px;
+  margin: 10px 12px;
+  border-radius: var(--radius-xs);
+  cursor: zoom-in;
+  object-fit: contain;
+  background: var(--bg-gray);
+}
+
+.tool-output-meme {
+  max-height: 220px;
+}
+
+/* ============ 进度行 ============ */
+
+.tool-progress-line {
+  padding: 8px 12px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-family: var(--mono);
+  border-bottom: 1px dashed var(--border-light);
+}
+
+.tool-progress-line:last-child {
+  border-bottom: none;
+}
+
+/* ============ 运行中的微动效 ============ */
+
+.tool-call[data-status="running"] .tool-call-bar {
+  position: relative;
+}
+
+.tool-call[data-status="running"] .tool-call-bar::after {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--text-muted);
+  animation: tool-bar-pulse 1.6s infinite ease-in-out;
+}
+
+@keyframes tool-bar-pulse {
+  0%, 100% {
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.7;
+  }
+}
+
+/* ============ 暗色主题微调 ============ */
+
+[data-theme="dark"] .tool-call {
+  background: var(--bg-surface);
+}
+
+[data-theme="dark"] .tool-output-text {
+  background: var(--code-bg);
+}

@@ -1,8 +1,7 @@
 /* ============================================================
- * 右侧检查器：工具调用时间线、网关列表、后台任务
+ * 右侧检查器：网关列表、后台任务（工具调用已内联到对话流）
  * ============================================================ */
 
-.tool-timeline,
 .gateway-list,
 .task-list {
   display: flex;
@@ -19,9 +18,8 @@
   text-align: center;
 }
 
-/* ============ 工具调用项 ============ */
+/* ============ 网关与任务项 ============ */
 
-.tool-item,
 .gateway-item,
 .task-item {
   border: 1px solid var(--border-light);
@@ -30,7 +28,6 @@
   padding: 10px 12px;
 }
 
-.tool-head,
 .gateway-head,
 .task-head {
   display: flex;
@@ -39,7 +36,6 @@
   gap: 8px;
 }
 
-.tool-name,
 .gateway-name,
 .task-name {
   min-width: 0;
@@ -70,23 +66,6 @@
 .status-pill.error {
   background: var(--danger-soft);
   color: var(--danger);
-}
-
-.tool-body {
-  margin-top: 6px;
-  color: var(--text-muted);
-  font-size: 12px;
-  line-height: 1.5;
-  word-break: break-word;
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.tool-time {
-  margin-top: 4px;
-  color: var(--text-faint);
-  font-family: var(--mono);
-  font-size: 11px;
 }
 
 /* ============ 网关操作 ============ */
