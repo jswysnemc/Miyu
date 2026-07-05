@@ -1,0 +1,10 @@
+pub(crate) mod cli;
+mod media;
+mod message;
+mod onebot;
+mod onebot_event;
+mod onebot_server;
+mod qq_bot;
+mod qq_official;
+mod wecom_webhook;
+mod weixin_bot;

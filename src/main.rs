@@ -6,6 +6,7 @@ mod config;
 mod config_tui;
 mod default_kb;
 mod default_models;
+mod gateways;
 mod i18n;
 mod llm;
 mod memory;

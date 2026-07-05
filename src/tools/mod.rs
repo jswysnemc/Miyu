@@ -122,6 +122,9 @@ pub fn readable_tool_name(name: &str) -> &str {
         "register_deep_research_topic_title" => "注册研究标题",
         "register_deep_research_reference" => "注册引用来源",
         "remove_deep_research_reference" => "移除引用来源",
+        "send_channel_image" => "发送渠道图片",
+        "send_channel_file" => "发送渠道文件",
+        "send_channel_video" => "发送渠道视频",
         _ => name,
     }
 }

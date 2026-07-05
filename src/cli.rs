@@ -1,6 +1,7 @@
 use crate::agent::{Agent, AgentEvent, AgentMode};
 use crate::clipboard;
 use crate::config::AppConfig;
+use crate::gateways::cli::{run_gateway, GatewayArgs};
 use crate::i18n::{is_zh, text as t};
 use crate::llm::OpenAiCompatibleClient;
 use crate::memory::MemoryStore;
@@ -246,6 +247,11 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         ),
         ("skills", "Manage assistant skills", "管理助手 skills"),
         ("commands", "Manage background commands", "管理后台命令"),
+        (
+            "gateway",
+            "Send messages through WeCom, QQ official bot, or OneBot gateways",
+            "通过企业微信、QQ 官方机器人或 OneBot 网关发送消息",
+        ),
         ("set", "Set active configuration values", "设置当前配置项"),
         (
             "reset",
@@ -264,6 +270,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("memory", localize_memory_command)
         .mut_subcommand("skills", localize_skills_command)
         .mut_subcommand("commands", localize_background_commands_command)
+        .mut_subcommand("gateway", localize_gateway_command)
         .mut_subcommand("set", localize_set_command)
         .mut_subcommand("config", localize_config_command)
         .mut_subcommand("reset", localize_reset_command);
@@ -310,6 +317,56 @@ fn localize_background_commands_command(command: clap::Command) -> clap::Command
             subcommand.about(t(
                 "Cleanup finished background commands",
                 "清理已结束后台命令",
+            ))
+        })
+}
+
+fn localize_gateway_command(command: clap::Command) -> clap::Command {
+    command
+        .mut_subcommand("wecom-webhook", |subcommand| {
+            subcommand
+                .about(t(
+                    "Send text, images, or files through a WeCom group webhook",
+                    "通过企业微信群机器人 Webhook 发送文本、图片或文件",
+                ))
+                .mut_arg("webhook_url", |arg| {
+                    arg.help(t("Full WeCom webhook URL", "企业微信 Webhook 完整地址"))
+                })
+        })
+        .mut_subcommand("qq-official", |subcommand| {
+            subcommand.about(t(
+                "Send text, images, or files through QQ Bot OpenAPI",
+                "通过 QQ 官方机器人 OpenAPI 发送文本、图片或文件",
+            ))
+        })
+        .mut_subcommand("qq-bot-webhook", |subcommand| {
+            subcommand.about(t(
+                "Receive QQ Bot webhook events, invoke Miyu, and reply through QQ Bot OpenAPI",
+                "接收 QQ 官方机器人 Webhook 事件，调用 Miyu 后通过 QQ Bot OpenAPI 回复",
+            ))
+        })
+        .mut_subcommand("onebot", |subcommand| {
+            subcommand.about(t(
+                "Send text, images, or files through a OneBot HTTP gateway such as NapCat",
+                "通过 NapCat 等 OneBot HTTP 网关发送文本、图片或文件",
+            ))
+        })
+        .mut_subcommand("onebot-server", |subcommand| {
+            subcommand.about(t(
+                "Receive OneBot HTTP events, invoke Miyu, and reply through OneBot",
+                "接收 OneBot HTTP 事件，调用 Miyu 后通过 OneBot 回复",
+            ))
+        })
+        .mut_subcommand("weixin-login", |subcommand| {
+            subcommand.about(t(
+                "Log in to Weixin iLink by QR code and save the bot token",
+                "通过二维码登录微信 iLink 并保存机器人 token",
+            ))
+        })
+        .mut_subcommand("weixin-server", |subcommand| {
+            subcommand.about(t(
+                "Receive Weixin iLink long-poll events by token or saved account",
+                "通过 token 或已保存账号接收微信 iLink 长轮询事件",
             ))
         })
 }
@@ -505,6 +562,7 @@ pub enum Command {
     Memory(MemoryArgs),
     Skills(SkillsArgs),
     Commands(BackgroundCommandsArgs),
+    Gateway(GatewayArgs),
     Set(SetArgs),
     Reset(ResetArgs),
 }
@@ -782,6 +840,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Memory(args)) => run_memory(&paths, args),
         Some(Command::Skills(args)) => run_skills(&paths, args),
         Some(Command::Commands(args)) => run_background_commands(&paths, args).await,
+        Some(Command::Gateway(args)) => run_gateway(&paths, args).await,
         Some(Command::Set(args)) => run_set(&paths, args),
         Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
@@ -3219,7 +3278,16 @@ fn prepare_clipboard_chat_input(
     Ok(clipboard::apply_clipboard_payload(message, payload))
 }
 
-fn build_tool_registry(
+/// 构建通用工具注册表。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `mode`: 当前 Agent 模式
+///
+/// 返回:
+/// - 工具注册表
+pub(crate) fn build_tool_registry(
     config: &AppConfig,
     paths: &MiyuPaths,
     mode: AgentMode,

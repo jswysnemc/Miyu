@@ -43,7 +43,9 @@ pub(crate) fn group_for_tool(name: &str) -> &'static str {
         | "deepseek_status" => "web",
         "search_web_images" | "analyze_image" | "vision_analyze" | "print_image"
         | "generate_image" | "search_meme" | "show_meme" | "add_meme" | "update_meme"
-        | "delete_meme" => "media",
+        | "delete_meme" | "send_channel_image" | "send_channel_file" | "send_channel_video" => {
+            "media"
+        }
         "deep_research"
         | "register_deep_research_topic_title"
         | "register_deep_research_reference"

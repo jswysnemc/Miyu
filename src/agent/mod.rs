@@ -81,8 +81,33 @@ impl Agent {
         paths: &MiyuPaths,
         state: StateStore,
         client: OpenAiCompatibleClient,
+        tools: ToolRegistry,
+        mode: AgentMode,
+    ) -> Result<Self> {
+        Self::new_with_extra_system_prompt(config, paths, state, client, tools, mode, None)
+    }
+
+    /// 创建带额外系统提示词的 Agent。
+    ///
+    /// 参数:
+    /// - `config`: 应用配置
+    /// - `paths`: Miyu 路径
+    /// - `state`: 状态存储
+    /// - `client`: LLM 客户端
+    /// - `tools`: 工具注册表
+    /// - `mode`: Agent 模式
+    /// - `extra_system_prompt`: 额外系统提示词
+    ///
+    /// 返回:
+    /// - Agent 实例
+    pub fn new_with_extra_system_prompt(
+        config: AppConfig,
+        paths: &MiyuPaths,
+        state: StateStore,
+        client: OpenAiCompatibleClient,
         mut tools: ToolRegistry,
         mode: AgentMode,
+        extra_system_prompt: Option<&str>,
     ) -> Result<Self> {
         let mut base_system_prompt = config.system_prompt(paths)?;
         if config.skills.enabled {
@@ -95,6 +120,13 @@ impl Agent {
                 base_system_prompt.push_str("\n\n");
                 base_system_prompt.push_str(&prompt);
             }
+        }
+        if let Some(prompt) = extra_system_prompt
+            .map(str::trim)
+            .filter(|prompt| !prompt.is_empty())
+        {
+            base_system_prompt.push_str("\n\n");
+            base_system_prompt.push_str(prompt);
         }
         if mode == AgentMode::Yolo {
             state.reset_if_prompt_changed(&base_system_prompt)?;
