@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Miyu Web</title>
+  <link rel="stylesheet" href="/assets/styles/tokens.css">
+  <link rel="stylesheet" href="/assets/styles/layout.css">
+  <link rel="stylesheet" href="/assets/styles/chat.css">
+  <link rel="stylesheet" href="/assets/styles/composer.css">
+  <link rel="stylesheet" href="/assets/styles/tools.css">
+  <link rel="stylesheet" href="/assets/styles/settings.css">
+  <link rel="stylesheet" href="/assets/styles/responsive.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">M</span>
+        <div>
+          <strong>Miyu Web</strong>
+          <span>Agent console</span>
+        </div>
+      </div>
+      <button class="primary-action" id="newSessionBtn">新建会话</button>
+      <div class="section-title">会话</div>
+      <div class="session-list" id="sessionList"></div>
+    </aside>
+
+    <main class="workspace">
+      <header class="topbar">
+        <button class="icon-button mobile-only" id="sidebarToggle" aria-label="切换侧边栏">
+          <svg viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/></svg>
+        </button>
+        <div class="topbar-title">
+          <span id="activeSessionTitle">新会话</span>
+          <small id="connectionState">本地服务</small>
+        </div>
+        <div class="topbar-actions">
+          <select id="modeSelect" class="select-compact" aria-label="模式">
+            <option value="yolo">YOLO</option>
+            <option value="plan">PLAN</option>
+          </select>
+          <select id="thinkingSelect" class="select-compact" aria-label="思考等级">
+            <option value="">思考自动</option>
+            <option value="none">none</option>
+            <option value="low">low</option>
+            <option value="medium">medium</option>
+            <option value="high">high</option>
+            <option value="xhigh">xhigh</option>
+            <option value="max">max</option>
+          </select>
+          <button class="ghost-button" id="settingsBtn">配置</button>
+        </div>
+      </header>
+
+      <section class="content-grid">
+        <section class="chat-panel">
+          <div class="welcome" id="welcome">
+            <div class="welcome-kicker">Miyu Local Agent</div>
+            <h1>在浏览器中使用 Miyu</h1>
+            <p>配置模型、发送对话、查看工具调用和后台网关状态。</p>
+          </div>
+          <div class="messages" id="messages"></div>
+          <form class="composer" id="composer">
+            <div class="attachment-strip" id="attachmentStrip" hidden></div>
+            <textarea id="messageInput" rows="1" placeholder="输入消息，Enter 发送，Shift+Enter 换行"></textarea>
+            <div class="composer-actions">
+              <label class="file-button">
+                <input type="file" id="imageInput" accept="image/*">
+                <span>图片</span>
+              </label>
+              <button type="submit" class="send-button" id="sendBtn">发送</button>
+            </div>
+          </form>
+        </section>
+
+        <aside class="inspector">
+          <section class="inspector-card">
+            <div class="card-heading">
+              <h2>工具调用</h2>
+              <button class="link-button" id="clearToolsBtn">清空</button>
+            </div>
+            <div class="tool-timeline" id="toolTimeline"></div>
+          </section>
+          <section class="inspector-card">
+            <div class="card-heading">
+              <h2>网关</h2>
+              <button class="link-button" id="refreshGatewaysBtn">刷新</button>
+            </div>
+            <div class="gateway-list" id="gatewayList"></div>
+          </section>
+          <section class="inspector-card">
+            <div class="card-heading">
+              <h2>后台命令</h2>
+              <button class="link-button" id="refreshTasksBtn">刷新</button>
+            </div>
+            <div class="task-list" id="taskList"></div>
+          </section>
+        </aside>
+      </section>
+    </main>
+  </div>
+
+  <div class="modal-backdrop" id="settingsModal" hidden>
+    <div class="settings-dialog" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+      <div class="settings-header">
+        <div>
+          <h2 id="settingsTitle">配置</h2>
+          <p>修改 provider、模型、工具和渠道配置。已存在的密钥默认以掩码显示。</p>
+        </div>
+        <button class="icon-button" id="closeSettingsBtn" aria-label="关闭配置">
+          <svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
+      <div class="settings-body">
+        <nav class="settings-tabs">
+          <button class="tab-button active" data-tab="providers">模型</button>
+          <button class="tab-button" data-tab="tools">工具</button>
+          <button class="tab-button" data-tab="gateways">渠道</button>
+        </nav>
+        <div class="settings-pane active" id="settingsProviders"></div>
+        <div class="settings-pane" id="settingsTools"></div>
+        <div class="settings-pane" id="settingsGateways"></div>
+      </div>
+      <div class="settings-footer">
+        <span id="settingsStatus"></span>
+        <button class="ghost-button" id="reloadConfigBtn">重新载入</button>
+        <button class="send-button" id="saveConfigBtn">保存配置</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/assets/src/main.js"></script>
+</body>
+</html>

@@ -10,6 +10,7 @@ use crate::render;
 use crate::shell;
 use crate::state::StateStore;
 use crate::tools;
+use crate::web::{run_web_server, WebArgs};
 use anyhow::{bail, Result};
 use clap::{Arg, ArgAction, Args, CommandFactory, FromArgMatches, Parser, Subcommand};
 use crossterm::cursor::{self, Hide, MoveTo, Show};
@@ -252,6 +253,11 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "Send messages through WeCom, QQ official bot, or OneBot gateways",
             "通过企业微信、QQ 官方机器人或 OneBot 网关发送消息",
         ),
+        (
+            "web",
+            "Start the Miyu Web interface",
+            "启动 Miyu Web 界面",
+        ),
         ("set", "Set active configuration values", "设置当前配置项"),
         (
             "reset",
@@ -271,6 +277,7 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("skills", localize_skills_command)
         .mut_subcommand("commands", localize_background_commands_command)
         .mut_subcommand("gateway", localize_gateway_command)
+        .mut_subcommand("web", localize_web_command)
         .mut_subcommand("set", localize_set_command)
         .mut_subcommand("config", localize_config_command)
         .mut_subcommand("reset", localize_reset_command);
@@ -381,6 +388,15 @@ fn localize_gateway_command(command: clap::Command) -> clap::Command {
                 "通过 token 或已保存账号接收微信 iLink 长轮询事件",
             ))
         })
+}
+
+fn localize_web_command(command: clap::Command) -> clap::Command {
+    command.mut_arg("listen", |arg| {
+        arg.help(t(
+            "Listen address for the Web interface",
+            "Web 界面监听地址",
+        ))
+    })
 }
 
 fn localize_set_command(command: clap::Command) -> clap::Command {
@@ -575,6 +591,7 @@ pub enum Command {
     Skills(SkillsArgs),
     Commands(BackgroundCommandsArgs),
     Gateway(GatewayArgs),
+    Web(WebArgs),
     Set(SetArgs),
     Reset(ResetArgs),
 }
@@ -853,6 +870,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Skills(args)) => run_skills(&paths, args),
         Some(Command::Commands(args)) => run_background_commands(&paths, args).await,
         Some(Command::Gateway(args)) => run_gateway(&paths, args).await,
+        Some(Command::Web(args)) => run_web_server(&paths, args).await,
         Some(Command::Set(args)) => run_set(&paths, args),
         Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
