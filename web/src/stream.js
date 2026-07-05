@@ -4,7 +4,12 @@
 
 import { streamChat } from "./api.js";
 import { appState } from "./state.js";
-import { appendAssistantChunk, finishAssistant, showAssistantError } from "./chat/view.js";
+import {
+  ensureAssistantMessage,
+  appendAssistantChunk,
+  finishAssistant,
+  showAssistantError,
+} from "./chat/view.js";
 import {
   addToolCall,
   addToolCallProgress,
@@ -83,19 +88,23 @@ function handleStreamEvent(event) {
       appendAssistantChunk(event.kind, event.text || "");
       break;
     case "tool_call":
-      // 3. 工具调用开始：参数完整到达
+      // 3. 工具调用开始：参数完整到达。工具事件常早于 chunk，需先确保助手消息存在
+      ensureAssistantMessage();
       addToolCall(event.name, event.arguments || "");
       break;
     case "tool_call_progress":
       // 4. 工具参数流式预览
+      ensureAssistantMessage();
       addToolCallProgress(event);
       break;
     case "tool_progress":
       // 5. 工具执行进度消息
+      ensureAssistantMessage();
       addToolProgress(event);
       break;
     case "tool_result":
       // 6. 工具执行完成
+      ensureAssistantMessage();
       finishToolResult(event.name, event.ok, event.output || "");
       break;
     case "done":

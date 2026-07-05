@@ -23,13 +23,19 @@ import defaultRenderer from "./default.js";
  * @type {Record<string, Object>}
  */
 const registry = {
-  // 文件与代码
-  read: fileTools.read,
-  write: fileTools.write,
-  edit: fileTools.edit,
+  // 文件与目录
+  read_file: fileTools.read,
+  write_file: fileTools.write,
+  edit_file: fileTools.edit,
+  list_directory: fileTools.glob,
+  create_directory: fileTools.write,
+  get_current_directory: fileTools.glob,
+  get_current_time: system.man,
+  find_files: fileTools.glob,
   glob: fileTools.glob,
+  search_text: fileTools.grep,
   grep: fileTools.grep,
-  trash: fileTools.trash,
+  trash_path: fileTools.trash,
 
   // 命令
   run_command: command.run,
@@ -38,48 +44,90 @@ const registry = {
 
   // 网络
   web_search: web.search,
-  search_web: web.search,
   web_fetch: web.fetch,
   search_web_images: web.images,
+  fcitx5_input_method_wiki_qurey: web.fetch,
+  moegirl_query: web.fetch,
 
   // 图像
   analyze_image: image.analyze,
+  vision_analyze: image.analyze,
   print_image: image.print,
   generate_image: image.generate,
-  screenshot: image.print,
+  send_channel_image: image.print,
+  send_channel_file: image.print,
+  send_channel_video: image.print,
 
   // 记忆
   remember_fact: memory.remember,
   recall_memory: memory.recall,
-  search_evicted: memory.evicted,
+  recall_memories: memory.recall,
+  recall_past_events: memory.recall,
+  search_evicted_context: memory.evicted,
+  forget_memory: memory.remember,
+  forget_memories: memory.remember,
+  list_memory: memory.recall,
+  list_memories: memory.recall,
 
   // 知识库
-  upload_kb: kb.upload,
-  read_kb: kb.read,
-  search_kb: kb.search,
+  upload_knowledge_base_file: kb.upload,
+  upload_text_to_knowledge_base: kb.upload,
+  read_knowledge_base_file: kb.read,
+  search_knowledge_base: kb.search,
+  search_knowledge_base_by_name: kb.search,
+  edit_knowledge_base_file: kb.read,
+  remove_knowledge_base_file: fileTools.trash,
+  list_knowledge_base_files: kb.search,
 
   // 表情包
   search_meme: meme.search,
   show_meme: meme.show,
   add_meme: meme.add,
+  update_meme: meme.add,
+  delete_meme: meme.search,
 
   // 玄学
-  tarot: divination.tarot,
-  zhouyi: divination.zhouyi,
-  fortune_lot: divination.fortune,
-  dice: divination.dice,
+  draw_tarot_card: divination.tarot,
+  draw_zhouyi_hexagram: divination.zhouyi,
+  xuanxue_divine: divination.zhouyi,
+  xuanxue_pick: divination.dice,
+  draw_fortune_lot: divination.fortune,
+  roll_dice: divination.dice,
 
   // 系统
-  alarm: system.alarm,
+  set_alarm: system.alarm,
+  list_alarms: system.alarm,
+  cancel_alarm: system.alarm,
   weather: system.weather,
+  get_weather: system.weather,
   exchange_rate: system.exchange,
-  man: system.man,
-  archlinux: system.arch,
+  get_exchange_rate: system.exchange,
+  online_man_search: system.man,
+  online_man_get_page: system.man,
+  man_search: system.man,
+  man_read: system.man,
+  archlinux_official_package_query: system.arch,
+  archwiki_query: system.arch,
+  pacman_search: system.arch,
+  aur_search_packages: system.arch,
+  aur_get_package_info: system.arch,
+  aur_check_status: system.arch,
+  query_deepseek_status: system.arch,
+  check_issue: system.man,
+  check_os_info: system.man,
+  protondb_query: system.arch,
+  calculate: system.man,
+  calculator: system.man,
+  calculate_hash: system.man,
+  decode_encoded_text: system.man,
 
   // 重型与子代理
   deep_research: heavy.research,
-  deep_diagnose: heavy.diagnose,
-  linux_game: heavy.game,
+  deep_diagnose: heavy.research,
+  linux_input_method_diagnose: heavy.research,
+  linux_game_compatibility: heavy.game,
+  gather_linux_game_compatibility_signals: heavy.game,
+  register_linux_game_evidence: heavy.game,
   task: heavy.task,
 
   // 工具加载
