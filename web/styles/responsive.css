@@ -1,46 +1,105 @@
-@media (max-width: 1080px) {
-  .content-grid {
-    grid-template-columns: minmax(0, 1fr);
-  }
+/* ============================================================
+ * 响应式断点适配
+ * ============================================================ */
 
+/* 中等屏幕：检查器改为浮动抽屉，不挤占主区 */
+@media (max-width: 1180px) {
   .inspector {
-    display: none;
+    box-shadow: var(--shadow-lg);
   }
 }
 
-@media (max-width: 820px) {
-  .shell {
-    grid-template-columns: minmax(0, 1fr);
-    padding: 8px;
-  }
-
+/* 平板：侧边栏改为 off-canvas，显示移动端按钮 */
+@media (max-width: 900px) {
   .sidebar {
     position: fixed;
-    inset: 8px auto 8px 8px;
-    width: min(320px, calc(100vw - 16px));
-    z-index: 20;
-    transform: translateX(calc(-100% - 12px));
-    transition: transform 180ms ease;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 40;
+    width: var(--sidebar-width);
+    box-shadow: var(--shadow-lg);
+    transform: translateX(-100%);
+    transition: transform 0.24s ease;
   }
 
   .sidebar.open {
     transform: translateX(0);
   }
 
+  /* 桌面端的 collapsed 在移动端不生效，由 open 控制 */
+  .sidebar.collapsed {
+    width: var(--sidebar-width);
+  }
+
+  .sidebar-overlay {
+    display: block;
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.4);
+    z-index: 35;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+  }
+
+  .sidebar-overlay.show {
+    opacity: 1;
+    visibility: visible;
+  }
+
   .mobile-only {
     display: inline-grid;
   }
 
-  .topbar {
-    gap: 10px;
+  /* 桌面端隐藏按钮在移动端隐藏，用 menu 按钮控制 */
+  #sidebarHideBtn {
+    display: none;
   }
 
-  .topbar-actions {
+  .nav-right {
     gap: 6px;
   }
 
   .select-compact {
-    max-width: 96px;
+    max-width: 100px;
+  }
+
+  .topbar-title span {
+    max-width: 30vw;
+  }
+
+  .scroll-down-btn {
+    right: 20px;
+  }
+}
+
+/* 手机：紧凑布局 */
+@media (max-width: 600px) {
+  .chat-container {
+    padding: 14px 14px 0;
+  }
+
+  .input-area {
+    padding: 12px 14px 18px;
+  }
+
+  .top-nav {
+    padding: 10px 14px;
+    min-height: 54px;
+  }
+
+  .ghost-button {
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .message.user {
+    max-width: 92%;
+  }
+
+  .settings-dialog {
+    border-radius: var(--radius-md);
   }
 
   .settings-body {
@@ -49,12 +108,20 @@
 
   .settings-tabs {
     flex-direction: row;
-    overflow: auto;
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
+    overflow-x: auto;
+    border-right: none;
+    border-bottom: 1px solid var(--border-light);
   }
 
   .form-grid {
     grid-template-columns: 1fr;
+  }
+
+  .welcome h1 {
+    font-size: 24px;
+  }
+
+  .pill-controls .select-compact {
+    max-width: 90px;
   }
 }

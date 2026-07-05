@@ -21,11 +21,17 @@ export async function apiPut(path, body = {}) {
   return readJsonResponse(response);
 }
 
-export async function streamChat(body, onEvent) {
+export async function apiDelete(path) {
+  const response = await fetch(path, { method: "DELETE" });
+  return readJsonResponse(response);
+}
+
+export async function streamChat(body, onEvent, signal) {
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
+    signal,
   });
   if (!response.ok || !response.body) {
     const data = await readJsonResponse(response);

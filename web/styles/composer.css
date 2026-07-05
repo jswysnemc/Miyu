@@ -1,109 +1,153 @@
-.composer {
-  position: absolute;
-  right: clamp(18px, 5vw, 58px);
-  bottom: 20px;
-  left: clamp(18px, 5vw, 58px);
-  max-width: 920px;
-  margin: 0 auto;
-  border: 1px solid var(--line-strong);
-  border-radius: 24px;
-  background: rgba(255, 255, 255, 0.94);
-  box-shadow: 0 16px 44px rgba(39, 35, 27, 0.14);
-  overflow: hidden;
+/* ============================================================
+ * 底部输入区：pill 样式输入框、附件、控件、发送按钮
+ * ============================================================ */
+
+.input-area {
+  padding: 16px 20px 24px;
+  display: flex;
+  justify-content: center;
+  background: linear-gradient(
+    180deg,
+    var(--gradient-fade) 0%,
+    var(--gradient-fade-to) 40%
+  );
 }
 
-.composer textarea {
-  display: block;
+.input-pill {
+  display: flex;
+  flex-direction: column;
   width: 100%;
-  max-height: 180px;
-  min-height: 58px;
-  resize: none;
-  border: 0;
+  max-width: var(--chat-max-width);
+  padding: 12px 16px;
+  gap: 8px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xl);
+  background: var(--bg-gray);
+  transition: border-color 0.15s;
+}
+
+.input-pill:focus-within {
+  border-color: var(--border-strong);
+}
+
+.input-pill textarea {
+  width: 100%;
+  border: none;
   outline: none;
   background: transparent;
-  padding: 16px 18px;
-  color: var(--ink);
-  line-height: 1.55;
+  resize: none;
+  font-size: 15px;
+  line-height: 1.5;
+  min-height: 24px;
+  max-height: 160px;
+  color: var(--text-main);
+  overflow-y: hidden;
+  padding: 0;
 }
 
-.composer-actions {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 10px;
-  padding: 0 12px 12px;
+.input-pill textarea::placeholder {
+  color: var(--text-muted);
+  opacity: 0.5;
 }
+
+/* ============ 附件预览条 ============ */
 
 .attachment-strip {
-  padding: 12px 14px 0;
-  color: var(--muted);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-bottom: 4px;
+}
+
+.attachment-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 8px 4px 4px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
   font-size: 12px;
+  color: var(--text-muted);
+}
+
+.attachment-chip img {
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-xs);
+  object-fit: cover;
+}
+
+.attachment-chip .chip-remove {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.attachment-chip .chip-remove:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
+
+.attachment-chip .chip-remove svg {
+  width: 12px;
+  height: 12px;
+}
+
+/* ============ pill 底栏 ============ */
+
+.pill-bottom {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+}
+
+.pill-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-group {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.file-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: color 0.15s, background 0.15s;
 }
 
 .file-button input {
   display: none;
 }
 
-.file-button span,
-.ghost-button,
-.primary-action,
-.send-button,
-.link-button,
-.select-compact,
-.icon-button {
-  border: 1px solid var(--line);
-  border-radius: 12px;
-  background: var(--surface-strong);
-  color: var(--ink);
+.file-button:hover {
+  color: var(--text-main);
+  background: rgba(128, 128, 128, 0.1);
 }
 
-.file-button span,
-.ghost-button,
-.primary-action,
-.send-button,
-.link-button {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  min-height: 38px;
-  padding: 0 14px;
+.file-button svg {
+  width: 20px;
+  height: 20px;
 }
 
-.primary-action,
-.send-button {
-  border-color: var(--accent);
-  background: var(--accent);
-  color: #fff;
-}
-
-.primary-action:hover,
-.send-button:hover {
-  background: var(--accent-strong);
-}
-
-.ghost-button:hover,
-.file-button span:hover,
-.link-button:hover {
-  border-color: var(--line-strong);
-  background: var(--surface-muted);
-}
-
-.link-button {
-  min-height: 28px;
-  padding: 0 8px;
-  color: var(--muted);
+/* pill 内 select 紧凑化 */
+.pill-controls .select-compact {
+  min-height: 32px;
   font-size: 12px;
-}
-
-.select-compact {
-  min-height: 36px;
-  padding: 0 10px;
-}
-
-.icon-button {
-  display: inline-grid;
-  place-items: center;
-  width: 38px;
-  height: 38px;
-  padding: 0;
+  padding: 0 26px 0 10px;
 }

@@ -1,0 +1,122 @@
+/* ============================================================
+ * 右侧检查器：工具调用时间线、网关列表、后台任务
+ * ============================================================ */
+
+.tool-timeline,
+.gateway-list,
+.task-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.empty-note {
+  border: 1px dashed var(--border-color);
+  border-radius: var(--radius-sm);
+  padding: 14px;
+  color: var(--text-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+/* ============ 工具调用项 ============ */
+
+.tool-item,
+.gateway-item,
+.task-item {
+  border: 1px solid var(--border-light);
+  border-radius: var(--radius-sm);
+  background: var(--bg-surface);
+  padding: 10px 12px;
+}
+
+.tool-head,
+.gateway-head,
+.task-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.tool-name,
+.gateway-name,
+.task-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.status-pill {
+  flex: none;
+  border-radius: var(--radius-pill);
+  background: var(--bg-hover);
+  padding: 2px 8px;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.status-pill.running,
+.status-pill.ok {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.status-pill.error {
+  background: var(--danger-soft);
+  color: var(--danger);
+}
+
+.tool-body {
+  margin-top: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+  word-break: break-word;
+  max-height: 200px;
+  overflow-y: auto;
+}
+
+.tool-time {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+/* ============ 网关操作 ============ */
+
+.gateway-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.gateway-actions button {
+  flex: 1;
+  min-height: 28px;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  background: var(--bg-hover);
+  color: var(--text-main);
+  font-size: 12px;
+  transition: border-color 0.15s, background 0.15s;
+}
+
+.gateway-actions button:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-surface);
+}
+
+.gateway-meta,
+.task-meta {
+  margin-top: 4px;
+  color: var(--text-faint);
+  font-family: var(--mono);
+  font-size: 11px;
+}
