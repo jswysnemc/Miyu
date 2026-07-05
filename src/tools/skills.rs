@@ -39,7 +39,7 @@ pub fn skills_catalog_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<St
         return Ok(String::new());
     }
     Ok(format!(
-        "<available-skills>\n这些是已安装的 skills 目录。默认只提供名称和简介；需要使用某个 skill 的完整流程时，先调用 load_skill 读取完整 SKILL.md。\n{}\n</available-skills>",
+        "<available-skills>\n这些是已安装的 skills 目录。默认只提供名称和简介；需要使用某个 skill 的完整流程时，先调用 load 并传入 skill_name 读取完整 SKILL.md。\n{}\n</available-skills>",
         entries.join("\n")
     ))
 }
@@ -51,7 +51,6 @@ pub fn register_skills(
     allow_command_execution: bool,
 ) -> Result<()> {
     let mut seen = BTreeSet::new();
-    register_load_skill(registry, config.clone(), paths.clone());
     for skills_dir in skill_search_dirs(config, paths) {
         if !skills_dir.exists() {
             continue;
@@ -80,38 +79,6 @@ pub fn register_skills(
         }
     }
     Ok(())
-}
-
-/// 注册按名称加载完整 skill 文档的工具。
-///
-/// 参数:
-/// - `registry`: 工具注册表
-/// - `config`: 当前应用配置
-/// - `paths`: 应用目录路径集合
-///
-/// 返回:
-/// - 无
-fn register_load_skill(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths) {
-    registry.register(ToolSpec::new(
-        "load_skill",
-        "Load the full SKILL.md content for an installed skill by name. Use this after reading the available-skills catalog and before following a skill-specific workflow.",
-        json!({
-            "type": "object",
-            "properties": {
-                "name": {
-                    "type": "string",
-                    "description": "Skill name to load, for example yce or smart-search-cli."
-                }
-            },
-            "required": ["name"],
-            "additionalProperties": false
-        }),
-        move |args| {
-            let config = config.clone();
-            let paths = paths.clone();
-            async move { load_skill(args, &config, &paths) }
-        },
-    ));
 }
 
 fn skill_search_dirs(config: &AppConfig, paths: &MiyuPaths) -> Vec<PathBuf> {
@@ -191,19 +158,21 @@ fn skill_name(raw: &str, fallback: &str) -> String {
 /// 按名称读取完整 skill 文档。
 ///
 /// 参数:
-/// - `args`: 工具调用参数
+/// - `name`: skill 名称
 /// - `config`: 当前应用配置
 /// - `paths`: 应用目录路径集合
 ///
 /// 返回:
 /// - 完整 `SKILL.md` 文本
-fn load_skill(args: Value, config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
-    let name = args
-        .get("name")
-        .and_then(Value::as_str)
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("load_skill requires a non-empty name"))?;
+pub(crate) fn load_installed_skill(
+    name: &str,
+    config: &AppConfig,
+    paths: &MiyuPaths,
+) -> Result<String> {
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("load requires a non-empty skill_name");
+    }
     for entry in skill_entries(config, paths)? {
         if entry.name == name {
             return Ok(format!(
@@ -447,7 +416,7 @@ mod tests {
     }
 
     #[test]
-    fn load_skill_returns_full_skill_file() {
+    fn load_installed_skill_returns_full_skill_file() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path());
         let skill_dir = paths.skills_dir.join("gpu-passthrough");
@@ -458,7 +427,7 @@ mod tests {
         )
         .unwrap();
         let config = AppConfig::default();
-        let output = load_skill(json!({"name":"gpu-passthrough"}), &config, &paths).unwrap();
+        let output = load_installed_skill("gpu-passthrough", &config, &paths).unwrap();
 
         assert!(output.contains("<loaded-skill"));
         assert!(output.contains("Skill directory:"));

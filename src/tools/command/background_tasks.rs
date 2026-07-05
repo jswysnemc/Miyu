@@ -1,3 +1,4 @@
+use super::background_timeout::{is_unlimited, timeout_seconds_from_args};
 use super::process::{process_exists, spawn_background_shell, terminate_process};
 use super::store::{unix_seconds, BackgroundCommandStore, BackgroundCommandTask};
 use crate::config::AppConfig;
@@ -57,11 +58,8 @@ pub(super) fn start_background_task(
         .filter(|value| !value.is_empty())
         .unwrap_or("background command")
         .to_string();
-    let timeout_seconds = args
-        .get("timeout_seconds")
-        .and_then(Value::as_u64)
-        .unwrap_or(config.tools.background_command_timeout_seconds)
-        .clamp(1, config.tools.background_command_timeout_seconds.max(1));
+    let timeout_seconds =
+        timeout_seconds_from_args(&args, config.tools.background_command_timeout_seconds);
     let store = BackgroundCommandStore::new(paths.state_dir.clone());
     store.init()?;
     let now = unix_seconds();
@@ -267,7 +265,9 @@ async fn refresh_task_statuses(tasks: &mut [BackgroundCommandTask], config: &App
             task.updated_at = now;
             continue;
         }
-        if task.timeout_seconds > 0 && now.saturating_sub(task.started_at) >= task.timeout_seconds {
+        if !is_unlimited(task.timeout_seconds)
+            && now.saturating_sub(task.started_at) >= task.timeout_seconds
+        {
             terminate_process(task.pid, task.pgid, false).await;
             tokio::time::sleep(Duration::from_secs(
                 config.tools.background_command_stop_grace_seconds,
@@ -407,5 +407,27 @@ mod tests {
     #[test]
     fn sanitize_id_keeps_safe_subset() {
         assert_eq!(sanitize_id("Dev Server 01!"), "dev-server-01");
+    }
+
+    #[tokio::test]
+    async fn refresh_keeps_unlimited_running_task() {
+        let mut tasks = vec![BackgroundCommandTask {
+            id: "task-1".to_string(),
+            label: "server".to_string(),
+            command: "sleep 9999".to_string(),
+            cwd: ".".to_string(),
+            pid: std::process::id(),
+            pgid: None,
+            status: "running".to_string(),
+            stdout_log: "stdout.log".to_string(),
+            stderr_log: "stderr.log".to_string(),
+            started_at: 0,
+            updated_at: 0,
+            timeout_seconds: 0,
+        }];
+
+        refresh_task_statuses(&mut tasks, &AppConfig::default()).await;
+
+        assert_eq!(tasks[0].status, "running");
     }
 }

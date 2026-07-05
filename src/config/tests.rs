@@ -56,7 +56,7 @@ fn progressive_tool_loading_defaults_disabled() {
 fn background_command_defaults_are_enabled() {
     let config = AppConfig::default();
     assert!(config.tools.background_commands_enabled);
-    assert!(config.tools.background_command_timeout_seconds > 0);
+    assert_eq!(config.tools.background_command_timeout_seconds, 0);
     assert!(config.tools.background_command_log_max_bytes > 0);
     assert!(config.tools.background_command_stop_grace_seconds > 0);
 }

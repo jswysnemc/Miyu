@@ -89,7 +89,7 @@ pub(crate) async fn list_background_tasks_for_user(
 /// - `command`: shell 命令
 /// - `cwd`: 可选工作目录
 /// - `label`: 可选标签
-/// - `timeout_seconds`: 可选超时元数据
+/// - `timeout_seconds`: 可选超时时间，0 表示不自动超时
 ///
 /// 返回:
 /// - JSON 格式任务信息

@@ -86,7 +86,6 @@ pub(crate) fn group_for_tool(name: &str) -> &'static str {
         | "draw_fortune_lot"
         | "roll_dice" => "utilities",
         "set_alarm" | "list_alarms" | "cancel_alarm" => "personal",
-        "load_skill" => "skills",
         _ if is_base_tool(name) => "base",
         _ => "other",
     }
@@ -112,7 +111,6 @@ pub(crate) fn group_description(group: &str) -> &'static str {
         "knowledge" => "本地知识库检索和维护",
         "utilities" => "计算、编码、哈希和趣味工具",
         "personal" => "闹钟等个人助手工具",
-        "skills" => "Codex/Miyu 技能加载",
         _ => "其他工具",
     }
 }

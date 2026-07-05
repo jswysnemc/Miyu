@@ -151,9 +151,6 @@ impl AppConfig {
         if self.context.default_max_chars == 0 {
             bail!("context.default_max_chars must be greater than 0");
         }
-        if self.tools.background_command_timeout_seconds == 0 {
-            bail!("tools.background_command_timeout_seconds must be greater than 0");
-        }
         if self.tools.background_command_log_max_bytes == 0 {
             bail!("tools.background_command_log_max_bytes must be greater than 0");
         }

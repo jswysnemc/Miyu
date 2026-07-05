@@ -1,4 +1,5 @@
 mod asset_block;
+mod background_command_event;
 mod code_block;
 mod command_output;
 mod error;

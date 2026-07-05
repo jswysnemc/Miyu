@@ -15,8 +15,8 @@ pub(crate) fn background_tool_name() -> &'static str {
 /// - 支持启动、查看、读取、停止和清理的工具说明
 pub(super) fn writable_description() -> &'static str {
     t(
-        "Manage long-running shell commands as background tasks. Use action=start to launch a command, list to inspect tasks, output to read logs, stop to terminate a task, and cleanup to remove finished records.",
-        "以后台任务方式管理长时间运行的 shell 命令。使用 action=start 启动命令，list 查看任务，output 读取日志，stop 停止任务，cleanup 清理结束记录。",
+        "Manage long-running shell commands as background tasks. Use action=start to launch a command, list to inspect tasks, output to read logs, stop to terminate a task, and cleanup to remove finished records. Set timeout_seconds=0 for a true background task with no automatic timeout.",
+        "以后台任务方式管理长时间运行的 shell 命令。使用 action=start 启动命令，list 查看任务，output 读取日志，stop 停止任务，cleanup 清理结束记录。设置 timeout_seconds=0 可创建不会自动超时的真后台任务。",
     )
 }
 
@@ -77,7 +77,8 @@ fn schema(actions: &[&str]) -> Value {
             },
             "timeout_seconds": {
                 "type": "integer",
-                "description": t("Optional task timeout metadata for action=start.", "action=start 的可选任务超时元数据。"),
+                "minimum": 0,
+                "description": t("Optional task timeout in seconds for action=start. Use 0 to disable automatic timeout.", "action=start 的可选任务超时时间，单位秒。使用 0 表示不自动超时。"),
             },
             "task_id": {
                 "type": "string",

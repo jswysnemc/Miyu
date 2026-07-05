@@ -34,9 +34,10 @@ mod xuanxue;
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 
-pub(crate) use progressive::{register_loader as register_progressive_loader, LOAD_TOOLS_NAME};
+pub(crate) use progressive::{register_loader as register_progressive_loader, LOAD_NAME};
 #[allow(unused_imports)]
 pub use registry::{empty_parameters, ToolPermission, ToolProgress, ToolRegistry, ToolSpec};
+pub(crate) use skills::load_installed_skill;
 pub use skills::{register_skills, skills_catalog_prompt, skills_prompt};
 
 pub fn readable_tool_name(name: &str) -> &str {
@@ -108,7 +109,7 @@ pub fn readable_tool_name(name: &str) -> &str {
         "draw_tarot_card" => "抽塔罗牌",
         "draw_fortune_lot" => "吉凶占",
         "roll_dice" => "掷骰子",
-        "load_skill" => "加载技能",
+        "load" => "加载",
         "review_aur_package" => "审查 AUR 包",
         "install_aur_package" => "安装 AUR 包",
         "review_pkgbuild_directory" => "审查 PKGBUILD 目录",

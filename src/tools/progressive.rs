@@ -1,9 +1,9 @@
 use super::groups::{group_description, group_for_tool, is_base_tool};
 use super::{ToolPermission, ToolRegistry, ToolSpec};
 use serde_json::json;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-pub(crate) const LOAD_TOOLS_NAME: &str = "load_tools";
+pub(crate) const LOAD_NAME: &str = "load";
 
 /// 注册渐进式工具加载器。
 ///
@@ -13,22 +13,31 @@ pub(crate) const LOAD_TOOLS_NAME: &str = "load_tools";
 /// 返回:
 /// - 无
 pub(crate) fn register_loader(registry: &mut ToolRegistry) {
-    let description = loader_description(registry);
+    let description = loader_description(registry, &BTreeSet::new());
     registry.register(ToolSpec::new(
-        LOAD_TOOLS_NAME,
+        LOAD_NAME,
         description,
         json!({
             "type": "object",
             "properties": {
                 "tool_name": {
                     "type": "string",
-                    "description": "Name of one tool to load. Use either tool_name or group_name."
+                    "description": "Name of one tool to load. Use exactly one of tool_name, group_name, or skill_name."
                 },
                 "group_name": {
                     "type": "string",
-                    "description": "Name of one tool group to load. Use either tool_name or group_name."
+                    "description": "Name of one tool group to load. Use exactly one of tool_name, group_name, or skill_name."
+                },
+                "skill_name": {
+                    "type": "string",
+                    "description": "Name of one installed skill whose full SKILL.md should be loaded. Use exactly one of tool_name, group_name, or skill_name."
                 }
             },
+            "oneOf": [
+                { "required": ["tool_name"] },
+                { "required": ["group_name"] },
+                { "required": ["skill_name"] }
+            ],
             "additionalProperties": false
         }),
         |_| async move {
@@ -45,7 +54,7 @@ pub(crate) fn register_loader(registry: &mut ToolRegistry) {
 /// 返回:
 /// - 是否为默认可见工具
 pub(crate) fn is_initial_tool(name: &str) -> bool {
-    name == LOAD_TOOLS_NAME || name == "load_skill" || is_base_tool(name)
+    name == LOAD_NAME || is_base_tool(name)
 }
 
 /// 获取工具所属用途分组。
@@ -66,10 +75,20 @@ pub(crate) fn tool_group(name: &str) -> &'static str {
 ///
 /// 返回:
 /// - 包含可加载工具名和分组的工具描述
-fn loader_description(registry: &ToolRegistry) -> String {
+pub(crate) fn loader_description(registry: &ToolRegistry, loaded: &BTreeSet<String>) -> String {
     let mut groups: BTreeMap<&'static str, Vec<String>> = BTreeMap::new();
+    let mut group_totals = BTreeMap::<&'static str, usize>::new();
+    let mut group_loaded = BTreeMap::<&'static str, usize>::new();
+    let mut loaded_tools = Vec::new();
     for info in registry.tool_infos() {
-        if is_base_tool(&info.name) || info.name == LOAD_TOOLS_NAME {
+        if is_initial_tool(&info.name) {
+            continue;
+        }
+        let group = group_for_tool(&info.name);
+        *group_totals.entry(group).or_default() += 1;
+        if loaded.contains(&info.name) {
+            *group_loaded.entry(group).or_default() += 1;
+            loaded_tools.push(info.name);
             continue;
         }
         let permission = match info.permission {
@@ -84,13 +103,27 @@ fn loader_description(registry: &ToolRegistry) -> String {
             .filter(|value| !value.is_empty())
             .unwrap_or("no description");
         groups
-            .entry(group_for_tool(&info.name))
+            .entry(group)
             .or_default()
             .push(format!("{} ({permission}) - {summary}", info.name));
     }
     let mut text = String::from(
-        "Load additional tools before using them. Use tool_name to load one tool, or group_name to load an entire group. Initial tools are limited to base tools and this loader.\n\nAvailable groups:\n",
+        "Load additional tools or full skill documents before using them. Use tool_name to load one tool, group_name to load an entire group, or skill_name to load one installed skill's full SKILL.md. Initial tools are limited to base tools and this loader. Do not call load for already loaded tools or groups; call the loaded tool directly. If a loaded tool returns an error, treat it as a tool execution or workflow error, not as a loading error.\n",
     );
+    if !loaded_tools.is_empty() {
+        let loaded_groups = fully_loaded_groups(&group_totals, &group_loaded);
+        text.push_str("\nAlready loaded tools:\n");
+        text.push_str(&format!("- {}\n", loaded_tools.join(", ")));
+        if !loaded_groups.is_empty() {
+            text.push_str("Already loaded groups:\n");
+            text.push_str(&format!("- {}\n", loaded_groups.join(", ")));
+        }
+    }
+    text.push_str("\nAvailable groups:\n");
+    if groups.is_empty() {
+        text.push_str("- none. All additional tools are already loaded.\n");
+        return text;
+    }
     for (group, names) in groups {
         text.push_str(&format!(
             "- {group}: {}. Tools: {}\n",
@@ -99,4 +132,25 @@ fn loader_description(registry: &ToolRegistry) -> String {
         ));
     }
     text
+}
+
+/// 计算已经完整载入的工具分组。
+///
+/// 参数:
+/// - `group_totals`: 每个分组的工具总数
+/// - `group_loaded`: 每个分组已经载入的工具数量
+///
+/// 返回:
+/// - 已经完整载入的分组名称
+fn fully_loaded_groups(
+    group_totals: &BTreeMap<&'static str, usize>,
+    group_loaded: &BTreeMap<&'static str, usize>,
+) -> Vec<&'static str> {
+    group_totals
+        .iter()
+        .filter_map(|(group, total)| {
+            let loaded = group_loaded.get(group).copied().unwrap_or_default();
+            (*total > 0 && loaded == *total).then_some(*group)
+        })
+        .collect()
 }

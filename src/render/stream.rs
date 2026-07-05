@@ -1,5 +1,8 @@
 use crate::i18n::text as t;
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
+use crate::render::background_command_event::{
+    background_command_block_action, background_command_result_label, is_background_command_start,
+};
 use crate::render::command_output::{
     write_command_block_with_action, write_command_error_block, write_command_result_blocks,
     write_edit_file_diff_block, write_tool_payload, write_write_file_diff_block,
@@ -16,7 +19,6 @@ pub(crate) use crate::render::stream_text::{
 use crate::render::style::TOOL_BULLET;
 use crate::render::tool_event_line::{tool_event_label, tool_event_text};
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
-use crate::tools::command::background_render::is_background_command_start;
 use anyhow::Result;
 use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
@@ -175,7 +177,12 @@ impl StreamRenderer {
             self.summary.clear_live_lines()?;
             self.command_block_tools.insert(name.to_string());
             let mut stdout = io::stdout();
-            write_command_block_with_action(&mut stdout, arguments, &event_label)?;
+            let command_block_action = if background_command_start {
+                background_command_block_action()
+            } else {
+                &event_label
+            };
+            write_command_block_with_action(&mut stdout, arguments, command_block_action)?;
             stdout.flush()?;
             return Ok(());
         }
@@ -283,6 +290,11 @@ impl StreamRenderer {
             .get(name)
             .cloned()
             .unwrap_or_else(|| tool_event_label(name, None));
+        let background_result_label = if name == "background_command" && ok {
+            background_command_result_label(output)
+        } else {
+            None
+        };
         let command_block_result = self.command_block_tools.remove(name);
         if self.tool_call_mode == ToolCallDisplayMode::Summary {
             if tool_call_has_visible_block(name) || command_block_result {
@@ -293,6 +305,10 @@ impl StreamRenderer {
                     return Ok(());
                 }
                 if command_block_result {
+                    if let Some(label) = background_result_label {
+                        self.write_custom_tool_event_line(&label, status)?;
+                        return Ok(());
+                    }
                     if !ok {
                         self.write_tool_event_line(name, status)?;
                     }
@@ -303,7 +319,11 @@ impl StreamRenderer {
                 }
                 return Ok(());
             }
-            self.write_live_tool_status(&event_label, status, true)?;
+            self.write_live_tool_status(
+                background_result_label.as_deref().unwrap_or(&event_label),
+                status,
+                true,
+            )?;
             return Ok(());
         }
         self.finish_live_tool_status()?;
@@ -316,6 +336,14 @@ impl StreamRenderer {
             }
         }
         if command_block_result && ok {
+            if let Some(label) = background_result_label {
+                let mut stdout = io::stdout();
+                writeln!(stdout, "{}", tool_event_text(&label, status))?;
+                if self.tool_call_mode == ToolCallDisplayMode::Full {
+                    write_tool_payload(&mut stdout, t("output", "输出"), output)?;
+                }
+                stdout.flush()?;
+            }
             return Ok(());
         }
         if tool_call_has_visible_block(name) && ok {
@@ -323,13 +351,24 @@ impl StreamRenderer {
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             let mut stdout = io::stdout();
-            writeln!(stdout, "{}", tool_event_text(&event_label, status))?;
+            writeln!(
+                stdout,
+                "{}",
+                tool_event_text(
+                    background_result_label.as_deref().unwrap_or(&event_label),
+                    status
+                )
+            )?;
             write_tool_payload(&mut stdout, t("output", "输出"), output)?;
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_result(name, ok);
             if !tool_call_has_visible_block(name) {
-                self.write_tool_event_line(name, status)?;
+                if let Some(label) = background_result_label {
+                    self.write_custom_tool_event_line(&label, status)?;
+                } else {
+                    self.write_tool_event_line(name, status)?;
+                }
             }
         }
         Ok(())
@@ -652,18 +691,25 @@ impl StreamRenderer {
     /// 返回:
     /// - 写入是否成功
     fn write_tool_event_line(&self, name: &str, status: &str) -> Result<()> {
+        let label = self
+            .tool_event_labels
+            .get(name)
+            .map(String::as_str)
+            .unwrap_or_else(|| self.summary.display_tool_name(name));
+        self.write_custom_tool_event_line(label, status)
+    }
+
+    /// 追加写入自定义工具状态事件。
+    ///
+    /// 参数:
+    /// - `label`: 工具展示标签
+    /// - `status`: 工具状态文本
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_custom_tool_event_line(&self, label: &str, status: &str) -> Result<()> {
         let mut stdout = io::stdout();
-        writeln!(
-            stdout,
-            "{}",
-            tool_event_text(
-                self.tool_event_labels
-                    .get(name)
-                    .map(String::as_str)
-                    .unwrap_or_else(|| self.summary.display_tool_name(name)),
-                status,
-            )
-        )?;
+        writeln!(stdout, "{}", tool_event_text(label, status))?;
         stdout.flush()?;
         Ok(())
     }

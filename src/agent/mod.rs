@@ -306,10 +306,12 @@ impl Agent {
                     );
                 }
                 if self.tool_visibility.is_loader_call(&call.function.name) {
-                    let output = match self
-                        .tool_visibility
-                        .load_from_arguments(&self.tools, &call.function.arguments)
-                    {
+                    let output = match self.tool_visibility.load_from_arguments(
+                        &self.tools,
+                        &call.function.arguments,
+                        &self.config,
+                        &self.paths,
+                    ) {
                         Ok(output) => {
                             on_event(AgentEvent::ToolResult {
                                 name: call.function.name.clone(),
@@ -333,7 +335,7 @@ impl Agent {
                 }
                 if !self.tool_visibility.is_visible(&call.function.name) {
                     let output = format!(
-                        "tool error: tool {} is not loaded; call load_tools with tool_name or group_name first",
+                        "tool error: tool {} is not loaded in the current visible tool set; call load with tool_name or group_name first. If this tool was loaded in a previous conversation, the loaded-tool session state was reset or is unavailable.",
                         call.function.name
                     );
                     on_event(AgentEvent::ToolResult {
@@ -347,7 +349,7 @@ impl Agent {
                 if call.function.name == "install_aur_package"
                     && used_tools.iter().any(|name| name == "review_aur_package")
                 {
-                    let output = "tool error: install_aur_package cannot run in the same turn as review_aur_package; ask the user to confirm installation first".to_string();
+                    let output = "tool error: install_aur_package cannot run in the same turn as review_aur_package. This is a workflow confirmation error, not a tool loading error. Do not call load again; ask the user to confirm installation in a new turn first.".to_string();
                     on_event(AgentEvent::ToolResult {
                         name: call.function.name.clone(),
                         ok: false,
@@ -419,6 +421,9 @@ impl Agent {
 
     fn chat_messages(&self, exclude_turn_id: Option<&str>) -> Result<Vec<ChatMessage>> {
         let mut messages = vec![ChatMessage::system(self.system_prompt.clone())];
+        if let Some(prompt) = self.tool_visibility.loaded_context_prompt(&self.tools) {
+            messages.push(ChatMessage::system(prompt));
+        }
         if let Some(summary) = memes::last_auto_meme_reminder(&self.config, &self.paths)? {
             messages.push(ChatMessage::system(summary));
         }

@@ -1618,7 +1618,12 @@ async fn run_chat_with_options(
         render::ToolCallDisplayMode::from_config(&config.display.tool_calls)
     };
     let render_options = stream_render_options(&config);
-    let mut agent = Agent::new(config, paths, state, client, registry, mode)?;
+    let progressive_loading_enabled = config.tools.progressive_loading_enabled;
+    let mut agent = Agent::new(config, paths, state.clone(), client, registry, mode)?;
+    if progressive_loading_enabled {
+        let loaded_tools = state.load_loaded_tools()?;
+        agent.restore_loaded_tools(&loaded_tools);
+    }
     let mut renderer =
         render::StreamRenderer::new(reasoning_mode, tool_call_mode, plain, render_options);
     renderer.start_waiting()?;
@@ -1628,6 +1633,9 @@ async fn run_chat_with_options(
         })
         .await;
     renderer.finish()?;
+    if progressive_loading_enabled {
+        state.save_loaded_tools(&agent.loaded_tools())?;
+    }
     if let Err(err) = result {
         render::write_chat_error(&err, plain)?;
         return Err(err);
@@ -1649,7 +1657,6 @@ async fn run_repl(
     let mut mode = initial_mode;
     let mut input_history = load_repl_input_history(&state)?;
     let mut prefill = None::<String>;
-    let mut loaded_tools = Vec::<String>::new();
 
     println!(
         "\x1b[2m{}\x1b[0m",
@@ -1723,13 +1730,11 @@ async fn run_repl(
         if input.eq_ignore_ascii_case("/reset") {
             run_reset(paths, None)?;
             input_history.clear();
-            loaded_tools.clear();
             continue;
         }
         if input.eq_ignore_ascii_case("/reset all") {
             run_reset(paths, Some("all"))?;
             input_history.clear();
-            loaded_tools.clear();
             continue;
         }
         if let Some(rest) = repl_command_rest(input, "/thinking") {
@@ -1774,7 +1779,10 @@ async fn run_repl(
             registry,
             mode,
         )?;
-        agent.restore_loaded_tools(&loaded_tools);
+        if config.tools.progressive_loading_enabled {
+            let loaded_tools = state.load_loaded_tools()?;
+            agent.restore_loaded_tools(&loaded_tools);
+        }
         let reasoning_mode = render::ReasoningDisplayMode::from_config(&config.display.reasoning);
         let tool_call_mode = render::ToolCallDisplayMode::from_config(&config.display.tool_calls);
         let mut renderer = render::StreamRenderer::new(
@@ -1814,7 +1822,9 @@ async fn run_repl(
             }
         };
         renderer.finish()?;
-        loaded_tools = agent.loaded_tools();
+        if config.tools.progressive_loading_enabled {
+            state.save_loaded_tools(&agent.loaded_tools())?;
+        }
         if interrupted {
             prefill = Some(submitted_input);
             continue;

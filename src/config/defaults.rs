@@ -338,7 +338,7 @@ pub(super) fn default_timeout() -> u64 {
 }
 
 pub(super) fn default_background_command_timeout_seconds() -> u64 {
-    86_400
+    0
 }
 
 pub(super) fn default_background_command_log_max_bytes() -> u64 {

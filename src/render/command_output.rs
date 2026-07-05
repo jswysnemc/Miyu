@@ -563,6 +563,16 @@ mod tests {
     }
 
     #[test]
+    fn renders_background_command_block_with_distinct_header() {
+        let output = render_command_block_with_action(r#"{"command":"sleep 1"}"#, "Background");
+        let plain = strip_ansi_for_test(&output);
+
+        assert!(plain.contains("── • Background command "));
+        assert!(plain.contains("sleep 1"));
+        assert!(!plain.contains("Run command"));
+    }
+
+    #[test]
     fn renders_edit_file_arguments_as_diff_block() {
         let temp = tempfile::NamedTempFile::new().unwrap();
         std::fs::write(temp.path(), "one\nold line\nthree\n").unwrap();

@@ -22,8 +22,8 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         ),
         Field::new(
             t(
-                "Background command default timeout seconds",
-                "后台命令默认超时秒数",
+                "Background command default timeout seconds, 0 means no timeout",
+                "后台命令默认超时秒数，0 表示不超时",
             ),
             config.tools.background_command_timeout_seconds.to_string(),
         ),

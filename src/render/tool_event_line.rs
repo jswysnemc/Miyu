@@ -1,3 +1,4 @@
+use crate::render::background_command_event::background_command_call_label;
 use crate::render::status_style::color_status;
 use crate::render::style::TOOL_BULLET;
 use serde_json::Value;
@@ -12,6 +13,9 @@ use std::path::Path;
 /// 返回:
 /// - 面向终端展示的短标签
 pub(crate) fn tool_event_label(name: &str, arguments: Option<&str>) -> String {
+    if name == "background_command" {
+        return background_command_call_label(arguments);
+    }
     let action = tool_action(name);
     let suffix = arguments.and_then(|arguments| tool_suffix_from_text(name, arguments));
     match suffix {
@@ -54,7 +58,7 @@ pub(crate) fn tool_call_status_text(label: &str, status: &str) -> String {
 /// - 动作短名
 fn tool_action(name: &str) -> &'static str {
     match name {
-        "run_command" | "background_command" => "Run",
+        "run_command" => "Run",
         "write_file" => "Write",
         "edit_file" => "Edit",
         "read_file" => "Read",
@@ -63,7 +67,7 @@ fn tool_action(name: &str) -> &'static str {
         "grep" | "search_text" => "Search",
         "task_agent" => "Task",
         "check_os_info" => "Check",
-        "load_tools" | "load_skill" => "Load",
+        "load" => "Load",
         "create_directory" => "Create",
         "list_directory" => "List",
         _ => "Tool",
@@ -112,10 +116,7 @@ fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field(arguments, &["include", "pattern"]).map(compact_text)
         }
-        "load_skill" => string_field(arguments, &["name"])
-            .map(compact_text)
-            .map(|value| format!("skill {value}")),
-        "load_tools" => load_tools_suffix(arguments),
+        "load" => load_suffix(arguments),
         _ => None,
     }
 }
@@ -137,10 +138,7 @@ fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> 
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field_from_partial(arguments, &["include", "pattern"]).map(compact_text)
         }
-        "load_skill" => string_field_from_partial(arguments, &["name"])
-            .map(compact_text)
-            .map(|value| format!("skill {value}")),
-        "load_tools" => load_tools_suffix_from_partial(arguments),
+        "load" => load_suffix_from_partial(arguments),
         _ => None,
     }
 }
@@ -188,36 +186,42 @@ fn read_file_suffix_from_partial(arguments: &str) -> Option<String> {
     string_field_from_partial(arguments, &["path"]).map(file_basename)
 }
 
-/// 提取加载工具的展示对象。
+/// 提取加载请求的展示对象。
 ///
 /// 参数:
 /// - `arguments`: 工具参数
 ///
 /// 返回:
 /// - 加载对象文本
-fn load_tools_suffix(arguments: &Value) -> Option<String> {
+fn load_suffix(arguments: &Value) -> Option<String> {
     if let Some(tool) = string_field(arguments, &["tool_name"]).map(compact_text) {
         return Some(format!("tool {tool}"));
     }
-    string_field(arguments, &["group_name"])
+    if let Some(group) = string_field(arguments, &["group_name"]).map(compact_text) {
+        return Some(format!("group {group}"));
+    }
+    string_field(arguments, &["skill_name"])
         .map(compact_text)
-        .map(|group| format!("group {group}"))
+        .map(|skill| format!("skill {skill}"))
 }
 
-/// 从不完整参数文本中提取加载工具的展示对象。
+/// 从不完整参数文本中提取加载请求的展示对象。
 ///
 /// 参数:
 /// - `arguments`: 可能尚未闭合的 JSON 参数文本
 ///
 /// 返回:
 /// - 加载对象文本
-fn load_tools_suffix_from_partial(arguments: &str) -> Option<String> {
+fn load_suffix_from_partial(arguments: &str) -> Option<String> {
     if let Some(tool) = string_field_from_partial(arguments, &["tool_name"]).map(compact_text) {
         return Some(format!("tool {tool}"));
     }
-    string_field_from_partial(arguments, &["group_name"])
+    if let Some(group) = string_field_from_partial(arguments, &["group_name"]).map(compact_text) {
+        return Some(format!("group {group}"));
+    }
+    string_field_from_partial(arguments, &["skill_name"])
         .map(compact_text)
-        .map(|group| format!("group {group}"))
+        .map(|skill| format!("skill {skill}"))
 }
 
 /// 从 JSON 中读取第一个非空字符串字段。
@@ -346,7 +350,11 @@ mod tests {
                 "background_command",
                 Some(r#"{"action":"start","command":"sleep 1"}"#)
             ),
-            "Run"
+            "Background start sleep 1"
+        );
+        assert_eq!(
+            tool_event_label("background_command", Some(r#"{"action":"list"}"#)),
+            "Background list"
         );
     }
 
@@ -379,23 +387,23 @@ mod tests {
             "Write main.rs"
         );
         assert_eq!(
-            tool_event_label("load_tools", Some(r#"{"group_name":"web","#)),
+            tool_event_label("load", Some(r#"{"group_name":"web","#)),
             "Load group web"
         );
     }
 
     #[test]
-    fn load_tools_use_load_label() {
+    fn load_uses_load_label() {
         assert_eq!(
-            tool_event_label("load_tools", Some(r#"{"group_name":"web"}"#)),
+            tool_event_label("load", Some(r#"{"group_name":"web"}"#)),
             "Load group web"
         );
         assert_eq!(
-            tool_event_label("load_tools", Some(r#"{"tool_name":"web_fetch"}"#)),
+            tool_event_label("load", Some(r#"{"tool_name":"web_fetch"}"#)),
             "Load tool web_fetch"
         );
         assert_eq!(
-            tool_event_label("load_skill", Some(r#"{"name":"yce"}"#)),
+            tool_event_label("load", Some(r#"{"skill_name":"yce"}"#)),
             "Load skill yce"
         );
     }

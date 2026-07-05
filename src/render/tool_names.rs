@@ -90,7 +90,7 @@ fn readable_tool_name_for_locale(name: &str, locale: Locale) -> &str {
         "draw_zhouyi_hexagram" => localized(locale, "Draw Zhouyi hexagram", "周易起卦"),
         "draw_tarot_card" => localized(locale, "Draw tarot card", "抽塔罗牌"),
         "draw_fortune_lot" => localized(locale, "Draw fortune lot", "抽签"),
-        "load_skill" => localized(locale, "Load skill", "加载技能"),
+        "load" => localized(locale, "Load", "加载"),
         "review_aur_package" => localized(locale, "Review AUR package", "审查 AUR 包"),
         "install_aur_package" => localized(locale, "Install AUR package", "安装 AUR 包"),
         "review_pkgbuild_directory" => {

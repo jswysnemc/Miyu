@@ -1,9 +1,9 @@
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 use crate::tools::command::{
-    cleanup_background_tasks_for_user, list_background_tasks_for_user,
-    read_background_task_output_for_user, start_background_task_for_user,
-    stop_background_task_for_user,
+    background_timeout::timeout_seconds_from_cli, cleanup_background_tasks_for_user,
+    list_background_tasks_for_user, read_background_task_output_for_user,
+    start_background_task_for_user, stop_background_task_for_user,
 };
 use anyhow::Result;
 use clap::{Args, Subcommand};
@@ -31,6 +31,8 @@ pub struct BackgroundCommandStartArgs {
     pub label: Option<String>,
     #[arg(long)]
     pub timeout_seconds: Option<u64>,
+    #[arg(long)]
+    pub no_timeout: bool,
     #[arg(trailing_var_arg = true, allow_hyphen_values = true, required = true)]
     pub command: Vec<String>,
 }
@@ -73,6 +75,7 @@ pub async fn run_background_commands(
         BackgroundCommand::Start(args) => {
             AppConfig::init_files(paths)?;
             let config = AppConfig::load_or_default(paths)?;
+            let timeout_seconds = timeout_seconds_from_cli(args.timeout_seconds, args.no_timeout)?;
             println!(
                 "{}",
                 start_background_task_for_user(
@@ -81,7 +84,7 @@ pub async fn run_background_commands(
                     &args.command.join(" "),
                     args.cwd.as_deref(),
                     args.label.as_deref(),
-                    args.timeout_seconds,
+                    timeout_seconds,
                 )?
             );
         }

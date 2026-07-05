@@ -1,3 +1,4 @@
+mod loaded_tools;
 mod pending_turn;
 mod turns;
 mod usage;
@@ -69,6 +70,7 @@ impl StateStore {
         let previous = std::fs::read_to_string(&file).unwrap_or_default();
         if previous.trim() != fingerprint {
             self.conv_db.reset()?;
+            self.clear_loaded_tools()?;
             std::fs::write(file, format!("{fingerprint}\n"))?;
         }
         Ok(())
@@ -242,7 +244,41 @@ impl StateStore {
     /// 返回:
     /// - 清空是否成功
     pub fn reset_conversation(&self) -> Result<()> {
-        self.conv_db.reset()
+        self.conv_db.reset()?;
+        self.clear_loaded_tools()
+    }
+
+    /// 读取当前会话已经载入的工具集合。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 已载入工具名称列表
+    pub fn load_loaded_tools(&self) -> Result<Vec<String>> {
+        loaded_tools::load(&self.loaded_tools_file())
+    }
+
+    /// 保存当前会话已经载入的工具集合。
+    ///
+    /// 参数:
+    /// - `names`: 已载入工具名称列表
+    ///
+    /// 返回:
+    /// - 保存是否成功
+    pub fn save_loaded_tools(&self, names: &[String]) -> Result<()> {
+        loaded_tools::save(&self.loaded_tools_file(), names)
+    }
+
+    /// 清空当前会话已经载入的工具集合。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 清空是否成功
+    pub fn clear_loaded_tools(&self) -> Result<()> {
+        loaded_tools::clear(&self.loaded_tools_file())
     }
 
     /// 撤销最后一轮对话。
@@ -327,6 +363,10 @@ impl StateStore {
 
     fn usage_file(&self) -> PathBuf {
         self.state_dir.join("usage.json")
+    }
+
+    fn loaded_tools_file(&self) -> PathBuf {
+        self.state_dir.join("loaded-tools.json")
     }
 
     fn log_file(&self) -> PathBuf {
@@ -443,5 +483,23 @@ mod tests {
         assert_eq!(removed, 1);
         assert_eq!(prompt.as_deref(), Some("bye"));
         assert_eq!(store.load_turns().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn reset_conversation_clears_loaded_tools() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+
+        store
+            .save_loaded_tools(&["web_search".to_string(), "web_fetch".to_string()])
+            .unwrap();
+        assert_eq!(
+            store.load_loaded_tools().unwrap(),
+            vec!["web_fetch".to_string(), "web_search".to_string()]
+        );
+
+        store.reset_conversation().unwrap();
+
+        assert!(store.load_loaded_tools().unwrap().is_empty());
     }
 }
