@@ -1770,7 +1770,7 @@ async fn run_repl(
             input_history.push(input.to_string());
         }
         render_repl_submitted_input(mode, input)?;
-        let registry = build_tool_registry(&config, paths, mode)?;
+        let registry = build_repl_tool_registry(&config, paths, mode)?;
         let mut agent = Agent::new(
             config.clone(),
             paths,
@@ -3234,6 +3234,27 @@ fn build_tool_registry(
     };
     if mode == AgentMode::Yolo && config.tools.enabled && config.skills.enabled {
         tools::register_skills(&mut registry, config, paths, true)?;
+    }
+    Ok(registry)
+}
+
+/// 构建 REPL 专用工具注册表。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `mode`: 当前 Agent 模式
+///
+/// 返回:
+/// - REPL 工具注册表
+fn build_repl_tool_registry(
+    config: &AppConfig,
+    paths: &MiyuPaths,
+    mode: AgentMode,
+) -> Result<tools::ToolRegistry> {
+    let mut registry = build_tool_registry(config, paths, mode)?;
+    if mode == AgentMode::Yolo && config.tools.enabled {
+        tools::register_repl_task_tool(&mut registry, config, paths);
     }
     Ok(registry)
 }

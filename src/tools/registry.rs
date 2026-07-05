@@ -164,6 +164,23 @@ impl ToolRegistry {
         infos
     }
 
+    /// 克隆指定名称集合中的工具。
+    ///
+    /// 参数:
+    /// - `allowed`: 允许复制到新注册表的工具名称
+    ///
+    /// 返回:
+    /// - 仅包含允许工具的新注册表
+    pub fn clone_filtered(&self, allowed: &[&str]) -> ToolRegistry {
+        let mut registry = ToolRegistry::new();
+        for name in allowed {
+            if let Some(tool) = self.tools.get(*name) {
+                registry.register(tool.clone());
+            }
+        }
+        registry
+    }
+
     pub fn permission(&self, name: &str) -> Result<ToolPermission> {
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");

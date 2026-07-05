@@ -13,12 +13,6 @@ const SEARCH_TIMEOUT_SECONDS: u64 = 30;
 pub fn register(registry: &mut ToolRegistry) {
     register_readonly(registry);
     registry.register(ToolSpec::new(
-        "task_agent",
-        t("Create a focused subtask plan for a complex task. Current implementation returns a structured handoff prompt for the main agent.", "为复杂任务创建聚焦的子任务计划。当前实现会返回给主 agent 使用的结构化交接提示。"),
-        json!({"type":"object","properties":{"description":{"type":"string","description": t("Short task description.", "简短任务描述。")},"prompt":{"type":"string","description": t("Detailed subtask prompt.", "详细子任务提示。")}},"required":["prompt"],"additionalProperties":false}),
-        |args| async move { task_agent(args) },
-    ).writes());
-    registry.register(ToolSpec::new(
         "write_file",
         t("Create or overwrite a UTF-8 text file. Use this for new files or full-file replacement instead of run_command with cat, tee, heredoc, or shell redirection.", "创建或覆盖 UTF-8 文本文件。新建文件或整文件替换时使用它，不要用 run_command 执行 cat、tee、heredoc 或 shell 重定向写文件。"),
         json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"content":{"type":"string","description": t("Full UTF-8 file content.", "完整 UTF-8 文件内容。")}},"required":["path","content"],"additionalProperties":false}),
@@ -351,17 +345,6 @@ async fn grep_text(args: Value) -> Result<String> {
     )
     .await??;
     search_output_limited(output, max_results)
-}
-
-fn task_agent(args: Value) -> Result<String> {
-    let prompt = required(&args, "prompt")?;
-    let description = args
-        .get("description")
-        .and_then(Value::as_str)
-        .unwrap_or("subtask");
-    Ok(serde_json::to_string_pretty(
-        &json!({"description": description, "prompt": prompt, "note": t("Subagent execution is not implemented yet; use this as a structured handoff.", "子 agent 执行尚未实现；请把它作为结构化交接内容使用。")}),
-    )?)
 }
 
 fn command_output_limited(output: std::process::Output, max_lines: usize) -> Result<String> {

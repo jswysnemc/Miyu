@@ -65,7 +65,7 @@ fn tool_action(name: &str) -> &'static str {
         "trash_path" => "Trash",
         "glob" | "find_files" => "Find",
         "grep" | "search_text" => "Search",
-        "task_agent" => "Task",
+        "task" => "Task",
         "check_os_info" => "Check",
         "load" => "Load",
         "create_directory" => "Create",
@@ -116,6 +116,7 @@ fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field(arguments, &["include", "pattern"]).map(compact_text)
         }
+        "task" => task_suffix(arguments),
         "load" => load_suffix(arguments),
         _ => None,
     }
@@ -138,6 +139,7 @@ fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> 
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field_from_partial(arguments, &["include", "pattern"]).map(compact_text)
         }
+        "task" => task_suffix_from_partial(arguments),
         "load" => load_suffix_from_partial(arguments),
         _ => None,
     }
@@ -184,6 +186,43 @@ fn read_file_suffix(arguments: &Value) -> Option<String> {
 /// - 读取对象文本
 fn read_file_suffix_from_partial(arguments: &str) -> Option<String> {
     string_field_from_partial(arguments, &["path"]).map(file_basename)
+}
+
+/// 提取子代理任务展示对象。
+///
+/// 参数:
+/// - `arguments`: 工具参数
+///
+/// 返回:
+/// - 子代理任务展示文本
+fn task_suffix(arguments: &Value) -> Option<String> {
+    let action = string_field(arguments, &["action"]).unwrap_or_else(|| "start".to_string());
+    if action == "start" {
+        return string_field(arguments, &["description"]).map(compact_text);
+    }
+    let target = string_field(arguments, &["task_id"])
+        .map(compact_text)
+        .unwrap_or_else(|| action.clone());
+    Some(format!("{action} {target}"))
+}
+
+/// 从不完整参数文本中提取子代理任务展示对象。
+///
+/// 参数:
+/// - `arguments`: 可能尚未闭合的 JSON 参数文本
+///
+/// 返回:
+/// - 子代理任务展示文本
+fn task_suffix_from_partial(arguments: &str) -> Option<String> {
+    let action =
+        string_field_from_partial(arguments, &["action"]).unwrap_or_else(|| "start".to_string());
+    if action == "start" {
+        return string_field_from_partial(arguments, &["description"]).map(compact_text);
+    }
+    let target = string_field_from_partial(arguments, &["task_id"])
+        .map(compact_text)
+        .unwrap_or_else(|| action.clone());
+    Some(format!("{action} {target}"))
 }
 
 /// 提取加载请求的展示对象。
@@ -405,6 +444,18 @@ mod tests {
         assert_eq!(
             tool_event_label("load", Some(r#"{"skill_name":"yce"}"#)),
             "Load skill yce"
+        );
+    }
+
+    #[test]
+    fn task_uses_description_label() {
+        assert_eq!(
+            tool_event_label("task", Some(r#"{"description":"scan code"}"#)),
+            "Task scan code"
+        );
+        assert_eq!(
+            tool_event_label("task", Some(r#"{"action":"status","task_id":"task_1"}"#)),
+            "Task status task_1"
         );
     }
 

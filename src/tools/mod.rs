@@ -24,6 +24,9 @@ pub(crate) mod progressive;
 mod protondb_query;
 mod registry;
 mod skills;
+mod subagent_runner;
+mod task;
+mod task_state;
 mod trash_path;
 mod vision;
 mod weather;
@@ -44,7 +47,7 @@ pub fn readable_tool_name(name: &str) -> &str {
     match name {
         "run_command" => "运行命令",
         "background_command" => "后台命令",
-        "task_agent" => "创建子任务",
+        "task" => "子代理任务",
         "read_file" => "读取文件",
         "write_file" => "写入文件",
         "edit_file" => "编辑文件",
@@ -195,6 +198,24 @@ pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
         memory::register(&mut registry, config.clone(), paths.clone());
     }
     registry
+}
+
+/// 注册仅限 REPL 使用的子代理任务工具。
+///
+/// 参数:
+/// - `registry`: 当前 REPL 工具注册表
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+///
+/// 返回:
+/// - 无
+pub(crate) fn register_repl_task_tool(
+    registry: &mut ToolRegistry,
+    config: &AppConfig,
+    paths: &MiyuPaths,
+) {
+    let task_tools = registry.clone();
+    task::register(registry, config.clone(), paths.clone(), task_tools);
 }
 
 pub fn readonly_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
