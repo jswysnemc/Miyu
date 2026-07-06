@@ -8,7 +8,7 @@ import { appState } from "../state.js";
 import { renderProviders } from "./providers.js";
 import { renderTools } from "./tools.js";
 import { renderGateways } from "./gateways.js";
-import { setByPath, capitalize } from "./form-utils.js";
+import { setByPath, capitalize, syncFormValues } from "./form-utils.js";
 import { showToast } from "../components/toast.js";
 
 const wsEl = document.getElementById("settingsWorkspace");
@@ -98,15 +98,5 @@ function renderSettings() {
  * @returns {void}
  */
 function syncConfigFromForm() {
-  document.querySelectorAll("[data-config-path]").forEach((input) => {
-    const path = input.dataset.configPath;
-    let value = input.type === "checkbox" ? input.checked : input.value;
-    if (input.type === "number") {
-      value = input.value.includes(".")
-        ? Number.parseFloat(input.value)
-        : Number.parseInt(input.value, 10);
-      if (Number.isNaN(value)) value = 0;
-    }
-    setByPath(appState.config, path, value);
-  });
+  syncFormValues(wsEl || document.body, appState.config);
 }

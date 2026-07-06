@@ -468,3 +468,170 @@
   font-size: 15px;
   color: var(--text-main);
 }
+
+/* ============================================================
+ * 现代高阶表单与自研交互组件 (No Native UI)
+ * ============================================================ */
+
+.form-grid {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.custom-field-wrap,
+.custom-toggle-wrap {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 10px 14px;
+  background: var(--bg-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-sm);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
+}
+
+.custom-field-wrap:hover,
+.custom-toggle-wrap:hover {
+  border-color: var(--border-strong);
+  background: var(--bg-hover);
+}
+
+.custom-field-wrap.full {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 8px;
+}
+
+/* 左侧标题与描述 */
+.field-label-row,
+.toggle-text {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+
+.field-title,
+.toggle-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-main);
+}
+
+.field-hint,
+.toggle-desc {
+  font-size: 12px;
+  color: var(--text-muted);
+  line-height: 1.4;
+}
+
+/* 沉浸式文本/密码输入盒 */
+.custom-input-container {
+  display: flex;
+  align-items: center;
+  min-width: 200px;
+  max-width: 320px;
+  flex: 1;
+}
+
+.custom-field-wrap.full .custom-input-container {
+  max-width: none;
+  width: 100%;
+}
+
+.custom-input-field {
+  width: 100%;
+  height: 36px;
+  padding: 0 12px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  color: var(--text-main);
+  font-size: 13px;
+  font-family: var(--mono);
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.custom-input-field:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.custom-input-field::placeholder {
+  color: var(--text-faint);
+}
+
+/* 自研滑动开关 (Custom Toggle Switch Slider) */
+.custom-toggle-btn {
+  position: relative;
+  width: 44px;
+  height: 24px;
+  background-color: var(--border-strong);
+  border-radius: 12px;
+  cursor: pointer;
+  outline: none;
+  transition: background-color 0.25s ease, box-shadow 0.15s ease;
+  flex-shrink: 0;
+  user-select: none;
+}
+
+.custom-toggle-btn:focus-visible {
+  box-shadow: 0 0 0 2px var(--accent-soft);
+}
+
+.custom-toggle-btn.active {
+  background-color: var(--accent);
+}
+
+.toggle-slider {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 20px;
+  height: 20px;
+  background-color: #ffffff;
+  border-radius: 50%;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.2);
+  transition: transform 0.25s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+.custom-toggle-btn.active .toggle-slider {
+  transform: translateX(20px);
+}
+
+/* 自研芯片选择控制组 (Choice Pills) */
+.custom-choice-group {
+  display: flex;
+  align-items: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  padding: 3px;
+  gap: 2px;
+}
+
+.choice-pill {
+  padding: 4px 12px;
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-muted);
+  border-radius: calc(var(--radius-xs) - 2px);
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  user-select: none;
+}
+
+.choice-pill:hover {
+  color: var(--text-main);
+}
+
+.choice-pill.selected {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  font-weight: 600;
+}
+

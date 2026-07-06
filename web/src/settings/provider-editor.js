@@ -72,49 +72,49 @@ export function openProviderEditor(provider, index, onSave) {
     <div class="form-section">
       <h4>连接设置</h4>
       <div class="form-grid">
-        <div class="field">
-          <label>名称 (Display Name)</label>
-          <input type="text" id="editDisplayName" value="${escapeHtml(provider.display_name || "")}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">名称 (Display Name)</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="text" id="editDisplayName" value="${escapeHtml(provider.display_name || "")}"></div>
         </div>
-        <div class="field">
-          <label>Base URL</label>
-          <input type="text" id="editBaseUrl" value="${escapeHtml(provider.base_url || "")}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">Base URL</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="text" id="editBaseUrl" value="${escapeHtml(provider.base_url || "")}"></div>
         </div>
-        <div class="field">
-          <label>API Key</label>
-          <input type="password" id="editApiKey" placeholder="留空则保持原密钥" value="${escapeHtml(provider.api_key || "")}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">API Key</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="password" id="editApiKey" placeholder="留空则保持原密钥" value="${escapeHtml(provider.api_key || "")}"></div>
         </div>
       </div>
     </div>
     <div class="form-section">
       <h4>行为与推理配置</h4>
       <div class="form-grid" id="behaviorGrid">
-        <div class="field" id="fieldProtocol">
-          <label>传输协议 (Protocol)</label>
+        <div class="custom-field-wrap" id="fieldProtocol">
+          <div class="field-label-row"><span class="field-title">传输协议 (Protocol)</span></div>
         </div>
-        <div class="field" id="fieldThinkingLevel">
-          <label>思考等级 (Thinking Level)</label>
+        <div class="custom-field-wrap" id="fieldThinkingLevel">
+          <div class="field-label-row"><span class="field-title">思考等级 (Thinking Level)</span></div>
         </div>
-        <div class="field" id="fieldThinkingFormat">
-          <label>思考解析格式 (Thinking Format)</label>
+        <div class="custom-field-wrap" id="fieldThinkingFormat">
+          <div class="field-label-row"><span class="field-title">思考解析格式 (Thinking Format)</span></div>
         </div>
-        <div class="field">
-          <label>超时时间 (秒)</label>
-          <input type="number" id="editTimeout" value="${provider.timeout_seconds || 120}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">超时时间 (秒)</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="number" id="editTimeout" value="${provider.timeout_seconds || 120}"></div>
         </div>
-        <div class="field">
-          <label>默认温度 (Temperature)</label>
-          <input type="number" step="0.1" id="editTemperature" value="${provider.temperature ?? 0.7}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">默认温度 (Temperature)</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="number" step="0.1" id="editTemperature" value="${provider.temperature ?? 0.7}"></div>
         </div>
-        <div class="field">
-          <label>默认选定模型</label>
-          <input type="text" id="editDefaultModel" value="${escapeHtml(provider.default_model || "")}">
+        <div class="custom-field-wrap">
+          <div class="field-label-row"><span class="field-title">默认选定模型</span></div>
+          <div class="custom-input-container"><input class="custom-input-field" type="text" id="editDefaultModel" value="${escapeHtml(provider.default_model || "")}"></div>
         </div>
       </div>
     </div>
     <div class="form-section">
       <h4>支持模型阵列管理 (Tag Chips)</h4>
-      <div class="field full" id="fieldModels"></div>
+      <div class="custom-field-wrap full" id="fieldModels"></div>
     </div>
   `;
 
