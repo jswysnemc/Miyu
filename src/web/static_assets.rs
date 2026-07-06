@@ -37,6 +37,11 @@ pub(crate) async fn asset(Path(path): Path<String>) -> Response {
         "styles/settings.css" => css(include_str!("../../web/styles/settings.css")),
         "styles/overlays.css" => css(include_str!("../../web/styles/overlays.css")),
         "styles/responsive.css" => css(include_str!("../../web/styles/responsive.css")),
+        "styles/toast.css" => css(include_str!("../../web/styles/toast.css")),
+        "styles/custom-select.css" => css(include_str!("../../web/styles/custom-select.css")),
+        "styles/tag-editor.css" => css(include_str!("../../web/styles/tag-editor.css")),
+        "styles/diff.css" => css(include_str!("../../web/styles/diff.css")),
+        "styles/terminal.css" => css(include_str!("../../web/styles/terminal.css")),
         // 根模块
         "src/main.js" => js(include_str!("../../web/src/main.js")),
         "src/state.js" => js(include_str!("../../web/src/state.js")),
@@ -45,6 +50,14 @@ pub(crate) async fn asset(Path(path): Path<String>) -> Response {
         "src/dom.js" => js(include_str!("../../web/src/dom.js")),
         "src/theme.js" => js(include_str!("../../web/src/theme.js")),
         "src/stream.js" => js(include_str!("../../web/src/stream.js")),
+        // components 自研组件模块
+        "src/components/toast.js" => js(include_str!("../../web/src/components/toast.js")),
+        "src/components/custom-select.js" => {
+            js(include_str!("../../web/src/components/custom-select.js"))
+        }
+        "src/components/tag-editor.js" => {
+            js(include_str!("../../web/src/components/tag-editor.js"))
+        }
         // markdown 模块
         "src/markdown/math.js" => js(include_str!("../../web/src/markdown/math.js")),
         "src/markdown/code.js" => js(include_str!("../../web/src/markdown/code.js")),
@@ -73,6 +86,10 @@ pub(crate) async fn asset(Path(path): Path<String>) -> Response {
         "src/tools/system.js" => js(include_str!("../../web/src/tools/system.js")),
         "src/tools/heavy.js" => js(include_str!("../../web/src/tools/heavy.js")),
         "src/tools/load.js" => js(include_str!("../../web/src/tools/load.js")),
+        "src/tools/diff-viewer.js" => js(include_str!("../../web/src/tools/diff-viewer.js")),
+        "src/tools/terminal-viewer.js" => {
+            js(include_str!("../../web/src/tools/terminal-viewer.js"))
+        }
         // composer 模块
         "src/composer/input.js" => js(include_str!("../../web/src/composer/input.js")),
         "src/composer/attachments.js" => js(include_str!("../../web/src/composer/attachments.js")),
@@ -91,6 +108,9 @@ pub(crate) async fn asset(Path(path): Path<String>) -> Response {
         "src/settings/tools.js" => js(include_str!("../../web/src/settings/tools.js")),
         "src/settings/gateways.js" => js(include_str!("../../web/src/settings/gateways.js")),
         "src/settings/form-utils.js" => js(include_str!("../../web/src/settings/form-utils.js")),
+        "src/settings/provider-editor.js" => {
+            js(include_str!("../../web/src/settings/provider-editor.js"))
+        }
         // overlays 模块
         "src/overlays/lightbox.js" => js(include_str!("../../web/src/overlays/lightbox.js")),
         "src/overlays/mermaid-viewer.js" => {
