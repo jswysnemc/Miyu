@@ -27,6 +27,8 @@ export async function loadSessions() {
   }
   await loadActiveSessionHistory();
   renderSessions();
+  renderChat();
+  focusMessageInput();
 }
 
 /**
@@ -40,6 +42,7 @@ export async function createSession() {
   appState.messages = [];
   renderSessions();
   renderChat();
+  focusMessageInput();
 }
 
 /**
@@ -53,6 +56,18 @@ export async function selectSession(id) {
   await loadActiveSessionHistory();
   renderSessions();
   renderChat();
+  focusMessageInput();
+}
+
+/**
+ * 聚焦到底部会话输入区域
+ * @returns {void}
+ */
+function focusMessageInput() {
+  requestAnimationFrame(() => {
+    const inputEl = document.getElementById("messageInput");
+    if (inputEl) inputEl.focus();
+  });
 }
 
 /**

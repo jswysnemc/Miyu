@@ -1,0 +1,83 @@
+/* ============================================================
+ * 终端模拟器卡片样式（Terminal Viewer）
+ * 模拟真实终端，拥有深色极简顶栏与排版回显
+ * ============================================================ */
+
+.terminal-viewer-box {
+  margin: 10px 0;
+  border: 1px solid #262b33;
+  border-radius: 6px;
+  background-color: #0b0d10;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+}
+
+.terminal-viewer-box.term-err {
+  border-color: #7f1d1d;
+}
+
+.terminal-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 12px;
+  background-color: #16191f;
+  border-bottom: 1px solid #262b33;
+  color: #cbd5e1;
+}
+
+.term-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.term-icon {
+  color: #10b981;
+  display: flex;
+  align-items: center;
+}
+
+.term-status {
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.status-ok {
+  background-color: #064e3b;
+  color: #6ee7b7;
+}
+
+.status-err {
+  background-color: #7f1d1d;
+  color: #fca5a5;
+}
+
+.terminal-cmd-bar {
+  padding: 8px 12px;
+  background-color: #11141a;
+  border-bottom: 1px solid #1e232d;
+  color: #38bdf8;
+  font-weight: 600;
+  word-break: break-all;
+}
+
+.term-prompt {
+  color: #10b981;
+  margin-right: 6px;
+}
+
+.terminal-body {
+  margin: 0;
+  padding: 12px;
+  color: #e2e8f0;
+  overflow-x: auto;
+  max-height: 400px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-all;
+}

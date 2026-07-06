@@ -1,5 +1,6 @@
 // ============================================================
-// 设置弹窗：加载、开关、保存、标签页切换
+// 设置工作区主控视图（兼容导出原有 openSettings 等方法名）
+// 实现由常规 Modal 改造为应用内全屏 / 分栏视图，控制子面板路由
 // ============================================================
 
 import { apiGet, apiPut } from "../api.js";
@@ -7,36 +8,45 @@ import { appState } from "../state.js";
 import { renderProviders } from "./providers.js";
 import { renderTools } from "./tools.js";
 import { renderGateways } from "./gateways.js";
-import { setByPath } from "./form-utils.js";
+import { setByPath, capitalize } from "./form-utils.js";
+import { showToast } from "../components/toast.js";
 
-const modalEl = document.getElementById("settingsModal");
-const statusEl = document.getElementById("settingsStatus");
+const wsEl = document.getElementById("settingsWorkspace");
 
 /**
  * 加载配置并渲染
  * @returns {Promise<void>}
  */
 export async function loadConfig() {
-  const data = await apiGet("/api/config");
-  appState.config = data.config;
-  renderSettings();
+  try {
+    const data = await apiGet("/api/config");
+    appState.config = data.config;
+    renderSettings();
+    showToast("配置同步完成", "success", 2000);
+  } catch (error) {
+    showToast(`配置加载失败: ${error.message}`, "error", 4000);
+  }
 }
 
 /**
- * 打开设置弹窗
+ * 打开设置控制台工作区
  * @returns {void}
  */
 export function openSettings() {
   renderSettings();
-  modalEl.hidden = false;
+  if (wsEl) {
+    wsEl.classList.add("show");
+  }
 }
 
 /**
- * 关闭设置弹窗
+ * 关闭设置控制台工作区
  * @returns {void}
  */
 export function closeSettings() {
-  modalEl.hidden = true;
+  if (wsEl) {
+    wsEl.classList.remove("show");
+  }
 }
 
 /**
@@ -45,21 +55,25 @@ export function closeSettings() {
  */
 export async function saveConfig() {
   syncConfigFromForm();
-  statusEl.textContent = "保存中";
-  const data = await apiPut("/api/config", { config: appState.config });
-  appState.config = data.config;
-  statusEl.textContent = "已保存";
-  renderSettings();
+  showToast("正在保存设置...", "info", 1500);
+  try {
+    const data = await apiPut("/api/config", { config: appState.config });
+    appState.config = data.config;
+    renderSettings();
+    showToast("配置已成功保存更新", "success", 3000);
+  } catch (error) {
+    showToast(`保存配置失败: ${error.message}`, "error", 4000);
+  }
 }
 
 /**
- * 初始化标签页切换
+ * 初始化设置侧边导航分类点击路由
  * @returns {void}
  */
 export function setupSettingsTabs() {
-  document.querySelectorAll(".tab-button").forEach((button) => {
+  document.querySelectorAll(".settings-nav .nav-item").forEach((button) => {
     button.addEventListener("click", () => {
-      document.querySelectorAll(".tab-button").forEach((item) => item.classList.remove("active"));
+      document.querySelectorAll(".settings-nav .nav-item").forEach((item) => item.classList.remove("active"));
       document.querySelectorAll(".settings-pane").forEach((item) => item.classList.remove("active"));
       button.classList.add("active");
       const target = document.getElementById(`settings${capitalize(button.dataset.tab)}`);
@@ -80,21 +94,14 @@ function renderSettings() {
 }
 
 /**
- * 从表单输入同步配置回 appState.config
+ * 从常规表单项同步基础配置值（自研复杂组件已在组件交互时同步更新 appState.config）
  * @returns {void}
  */
 function syncConfigFromForm() {
   document.querySelectorAll("[data-config-path]").forEach((input) => {
     const path = input.dataset.configPath;
     let value = input.type === "checkbox" ? input.checked : input.value;
-    // 1. 模型列表按逗号拆分
-    if (path.endsWith(".models")) {
-      value = input.value
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
-    } else if (input.type === "number") {
-      // 2. 数字解析
+    if (input.type === "number") {
       value = input.value.includes(".")
         ? Number.parseFloat(input.value)
         : Number.parseInt(input.value, 10);
@@ -102,13 +109,4 @@ function syncConfigFromForm() {
     }
     setByPath(appState.config, path, value);
   });
-  // 3. 同步当前 provider
-  const activeProvider = document.getElementById("activeProviderField");
-  if (activeProvider) {
-    appState.config.active_provider = activeProvider.value;
-  }
-}
-
-function capitalize(value) {
-  return value.slice(0, 1).toUpperCase() + value.slice(1);
 }

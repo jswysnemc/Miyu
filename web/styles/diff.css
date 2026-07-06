@@ -1,0 +1,117 @@
+/* ============================================================
+ * Diff 差异对比视图样式规范
+ * 仿 Codex Desktop 高阶代码审查视图，带有双行列号与色彩高亮
+ * ============================================================ */
+
+.diff-viewer-box {
+  margin: 10px 0;
+  border: 1px solid #262b33;
+  border-radius: 6px;
+  background-color: #0d0f12;
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+}
+
+.diff-viewer-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 8px 12px;
+  background-color: #16191f;
+  border-bottom: 1px solid #262b33;
+  color: #cbd5e1;
+}
+
+.diff-title-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.diff-icon {
+  color: #3b82f6;
+  display: flex;
+  align-items: center;
+}
+
+.diff-badge {
+  padding: 2px 6px;
+  background-color: #1e293b;
+  color: #94a3b8;
+  border-radius: 4px;
+  font-size: 11px;
+}
+
+.diff-viewer-body {
+  overflow-x: auto;
+  padding: 4px 0;
+}
+
+.diff-line-row {
+  display: flex;
+  align-items: baseline;
+  line-height: 1.6;
+  white-space: pre;
+  min-width: fit-content;
+}
+
+.diff-line-num {
+  width: 40px;
+  min-width: 40px;
+  padding: 0 6px;
+  text-align: right;
+  color: #475569;
+  user-select: none;
+  border-right: 1px solid #1e293b;
+  flex-shrink: 0;
+}
+
+.diff-line-code {
+  padding-left: 12px;
+  padding-right: 16px;
+  color: #e2e8f0;
+  flex: 1;
+}
+
+/* 行类型特殊着色 */
+.diff-add {
+  background-color: rgba(16, 185, 129, 0.12);
+}
+
+.diff-add .diff-line-num {
+  background-color: rgba(16, 185, 129, 0.2);
+  color: #10b981;
+}
+
+.diff-add .diff-line-code {
+  color: #6ee7b7;
+}
+
+.diff-remove {
+  background-color: rgba(239, 68, 68, 0.12);
+}
+
+.diff-remove .diff-line-num {
+  background-color: rgba(239, 68, 68, 0.2);
+  color: #ef4444;
+}
+
+.diff-remove .diff-line-code {
+  color: #fca5a5;
+  text-decoration: line-through;
+}
+
+.diff-meta {
+  background-color: #1e293b;
+  color: #94a3b8;
+  font-weight: bold;
+}
+
+.diff-hunk {
+  background-color: #0f172a;
+  color: #60a5fa;
+  font-style: italic;
+  padding: 2px 0;
+}

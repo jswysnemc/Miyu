@@ -25,13 +25,15 @@ import {
 import { setupLightbox } from "./overlays/lightbox.js";
 import { setupMermaidViewer } from "./overlays/mermaid-viewer.js";
 import { abortCurrentStream } from "./stream.js";
+import { createCustomSelect } from "./components/custom-select.js";
 
 /**
  * 初始化应用
  * @returns {Promise<void>}
  */
 async function init() {
-  // 1. 注入图标 + 主题
+  // 1. 注入自研选框与图标、主题
+  initCustomSelects();
   injectIcons();
   initTheme();
   // 2. 健康检查
@@ -110,6 +112,45 @@ function toggleSidebar() {
 function closeMobileSidebar() {
   document.getElementById("sidebar").classList.remove("open");
   document.getElementById("sidebarOverlay").classList.remove("show");
+}
+
+/**
+ * 初始化并挂载定制下拉选择器（取替原生 HTML select）
+ * @returns {void}
+ */
+function initCustomSelects() {
+  const modeWrap = document.getElementById("modeSelectWrap");
+  if (modeWrap) {
+    const modeSelect = createCustomSelect({
+      options: [
+        { value: "yolo", label: "YOLO (全自动)" },
+        { value: "plan", label: "PLAN (需确认)" },
+      ],
+      value: "yolo",
+      ariaLabel: "智能执行模式",
+    });
+    modeSelect.id = "modeSelect";
+    modeWrap.appendChild(modeSelect);
+  }
+
+  const thinkingWrap = document.getElementById("thinkingSelectWrap");
+  if (thinkingWrap) {
+    const thinkingSelect = createCustomSelect({
+      options: [
+        { value: "", label: "思考: 自动" },
+        { value: "none", label: "关闭思考" },
+        { value: "low", label: "轻度思考" },
+        { value: "medium", label: "中度思考" },
+        { value: "high", label: "深度思考" },
+        { value: "xhigh", label: "极深推理" },
+        { value: "max", label: "最大算力" },
+      ],
+      value: "",
+      ariaLabel: "推理算力等级",
+    });
+    thinkingSelect.id = "thinkingSelect";
+    thinkingWrap.appendChild(thinkingSelect);
+  }
 }
 
 init().catch((error) => {

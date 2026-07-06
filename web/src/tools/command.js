@@ -10,6 +10,7 @@ import {
   renderErrorOutput,
   clipSummary,
 } from "./common.js";
+import { renderTerminalView } from "./terminal-viewer.js";
 
 /**
  * 提取命令文本，兼容 command/cmd 等字段
@@ -32,13 +33,13 @@ const run = {
     return cmd ? `$ ${clipSummary(cmd, 100)}` : "执行命令";
   },
   /**
-   * 渲染输出：终端风格纯文本
+   * 渲染输出：终端风格卡片
    * @param {Object} ctx - 渲染上下文
    * @returns {void}
    */
   renderBody(ctx) {
-    if (!ctx.ok) return renderErrorOutput(ctx.bodyEl, ctx.output);
-    renderTextOutput(ctx.bodyEl, ctx.output, 8000);
+    const cmd = pickCommand(ctx.args);
+    renderTerminalView(ctx.bodyEl, cmd, ctx.output, ctx.ok);
   },
 };
 
@@ -54,13 +55,13 @@ const background = {
     return cmd ? `后台 $ ${clipSummary(cmd, 90)}` : "后台命令";
   },
   /**
-   * 渲染输出：后台命令信息
+   * 渲染输出：后台任务终端卡片
    * @param {Object} ctx - 渲染上下文
    * @returns {void}
    */
   renderBody(ctx) {
-    if (!ctx.ok) return renderErrorOutput(ctx.bodyEl, ctx.output);
-    renderTextOutput(ctx.bodyEl, ctx.output, 4000);
+    const cmd = pickCommand(ctx.args);
+    renderTerminalView(ctx.bodyEl, `[BACKGROUND TASK] ${cmd}`, ctx.output, ctx.ok);
   },
 };
 

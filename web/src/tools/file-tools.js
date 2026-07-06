@@ -10,6 +10,7 @@ import {
   renderErrorOutput,
   clipSummary,
 } from "./common.js";
+import { isDiffText, renderDiffView } from "./diff-viewer.js";
 
 /**
  * 提取路径参数，兼容 path/file/file_path 等字段名
@@ -54,13 +55,17 @@ const write = {
     return p ? `写入 ${clipSummary(p, 90)}` : "写入文件";
   },
   /**
-   * 渲染输出：写入内容预览
+   * 渲染输出：写入内容预览或 Diff 对比
    * @param {Object} ctx - 渲染上下文
    * @returns {void}
    */
   renderBody(ctx) {
     if (!ctx.ok) return renderErrorOutput(ctx.bodyEl, ctx.output);
-    renderTextOutput(ctx.bodyEl, ctx.output, 4000);
+    if (isDiffText(ctx.output)) {
+      renderDiffView(ctx.bodyEl, ctx.output, `写入变更比对: ${pickPath(ctx.args)}`);
+    } else {
+      renderTextOutput(ctx.bodyEl, ctx.output, 4000);
+    }
   },
 };
 
@@ -76,13 +81,17 @@ const edit = {
     return p ? `编辑 ${clipSummary(p, 90)}` : "编辑文件";
   },
   /**
-   * 渲染输出：编辑结果
+   * 渲染输出：编辑差异 Diff 结果
    * @param {Object} ctx - 渲染上下文
    * @returns {void}
    */
   renderBody(ctx) {
     if (!ctx.ok) return renderErrorOutput(ctx.bodyEl, ctx.output);
-    renderTextOutput(ctx.bodyEl, ctx.output, 4000);
+    if (isDiffText(ctx.output)) {
+      renderDiffView(ctx.bodyEl, ctx.output, `代码重构差异: ${pickPath(ctx.args)}`);
+    } else {
+      renderTextOutput(ctx.bodyEl, ctx.output, 4000);
+    }
   },
 };
 
