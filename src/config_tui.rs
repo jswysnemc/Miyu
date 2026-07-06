@@ -2,6 +2,7 @@ mod custom_prompts;
 mod form;
 mod gateways;
 mod input;
+mod model_metadata_form;
 mod plugin_fields;
 mod plugins;
 mod provider_fetch;

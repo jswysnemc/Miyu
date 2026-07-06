@@ -586,4 +586,11 @@ mod tests {
 
         assert_eq!(field_display_value(&field, true), "secret");
     }
+
+    #[test]
+    fn secret_textarea_is_masked_by_default() {
+        let field = Field::textarea("Tokens", "first\nsecond".to_string()).secret();
+
+        assert_eq!(field_display_value(&field, false), "************");
+    }
 }

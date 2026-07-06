@@ -5,6 +5,9 @@ use serde_json::Value;
 use std::io;
 
 use super::form::{parse_bool_field, run_form, Field};
+use super::model_metadata_form::{
+    apply_context_chars_field, apply_tags_field, context_chars_field_value, tags_field_value,
+};
 
 /// 编辑 provider 配置表单。
 ///
@@ -18,11 +21,8 @@ pub(super) fn edit_provider_form(
     stdout: &mut io::Stdout,
     provider: ProviderConfig,
 ) -> Result<Option<ProviderConfig>> {
-    let current_context_chars = provider
-        .model_context_chars
-        .get(&provider.default_model)
-        .copied()
-        .unwrap_or_default();
+    let current_context_chars = context_chars_field_value(&provider, &provider.default_model);
+    let current_tags = tags_field_value(&provider, &provider.default_model);
     let mut fields = vec![
         Field::new(t("Config ID", "配置 ID"), provider.id.clone()),
         Field::new(t("Display name", "显示名称"), provider.display_name.clone()),
@@ -36,15 +36,17 @@ pub(super) fn edit_provider_form(
         Field::new(
             "API Key or $env:NAME",
             provider.api_key.clone().unwrap_or_default(),
-        ),
+        )
+        .secret(),
         Field::new(
             t("Current model", "当前模型"),
             provider.default_model.clone(),
         ),
         Field::new(
             t("Model context chars", "模型上下文字符数"),
-            current_context_chars.to_string(),
+            current_context_chars,
         ),
+        Field::new(t("Model tags", "模型标签"), current_tags),
         Field::new(
             t("Timeout seconds", "超时秒数"),
             provider.timeout_seconds.to_string(),
@@ -78,35 +80,31 @@ pub(super) fn edit_provider_form(
         return Ok(None);
     }
     let default_model = fields[5].value.trim().to_string();
-    let mut model_context_chars = provider.model_context_chars.clone();
-    match fields[6].value.trim().parse::<usize>().unwrap_or_default() {
-        0 => {
-            model_context_chars.remove(&default_model);
-        }
-        value => {
-            model_context_chars.insert(default_model.clone(), value);
-        }
-    }
     let mut models = provider.models.clone();
     if !default_model.trim().is_empty() && !models.iter().any(|item| item == &default_model) {
         models.push(default_model.clone());
     }
-    let extra_body = normalize_extra_body(&fields[11].value)?;
-    Ok(Some(ProviderConfig {
+    let extra_body = normalize_extra_body(&fields[12].value)?;
+    let mut updated = ProviderConfig {
         id: fields[0].value.trim().to_string(),
         display_name: fields[1].value.trim().to_string(),
         base_url: normalize_base_url(&fields[2].value),
         protocol: fields[3].value.trim().to_string(),
         api_key: Some(fields[4].value.trim().to_string()).filter(|value| !value.is_empty()),
         models,
-        model_context_chars,
+        model_context_chars: provider.model_context_chars.clone(),
+        model_metadata: provider.model_metadata.clone(),
         default_model,
-        timeout_seconds: fields[7].value.trim().parse().unwrap_or(60),
-        temperature: fields[8].value.trim().parse().unwrap_or(0.7),
-        thinking_level: fields[9].value.trim().to_string(),
-        thinking_format: fields[10].value.trim().to_string(),
+        timeout_seconds: fields[8].value.trim().parse().unwrap_or(60),
+        temperature: fields[9].value.trim().parse().unwrap_or(0.7),
+        thinking_level: fields[10].value.trim().to_string(),
+        thinking_format: fields[11].value.trim().to_string(),
         extra_body,
-    }))
+    };
+    let default_model = updated.default_model.clone();
+    apply_context_chars_field(&mut updated, &default_model, &fields[6].value)?;
+    apply_tags_field(&mut updated, &default_model, &fields[7].value)?;
+    Ok(Some(updated))
 }
 
 /// 规范化并校验自定义 Body JSON。
@@ -150,18 +148,13 @@ pub(super) fn edit_model_form(
 ) -> Result<bool> {
     let active = provider.models.iter().any(|item| item == model);
     let current = provider.default_model == model;
-    let context_chars = provider
-        .model_context_chars
-        .get(model)
-        .copied()
-        .unwrap_or_default();
+    let context_chars = context_chars_field_value(provider, model);
+    let tags = tags_field_value(provider, model);
     let mut fields = vec![
         Field::boolean(t("Activate model", "激活模型"), active),
         Field::boolean(t("Set as current model", "设为当前模型"), current),
-        Field::new(
-            t("Model context chars", "模型上下文字符数"),
-            context_chars.to_string(),
-        ),
+        Field::new(t("Model context chars", "模型上下文字符数"), context_chars),
+        Field::new(t("Model tags", "模型标签"), tags),
     ];
     if !run_form(stdout, t(" EDIT MODEL ", " 编辑模型 "), &mut fields)? {
         return Ok(false);
@@ -190,16 +183,8 @@ pub(super) fn edit_model_form(
             provider.models.push(provider.default_model.clone());
         }
     }
-    match fields[2].value.trim().parse::<usize>().unwrap_or_default() {
-        0 => {
-            provider.model_context_chars.remove(model);
-        }
-        value => {
-            provider
-                .model_context_chars
-                .insert(model.to_string(), value);
-        }
-    }
+    apply_context_chars_field(provider, model, &fields[2].value)?;
+    apply_tags_field(provider, model, &fields[3].value)?;
     Ok(true)
 }
 

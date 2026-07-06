@@ -1,4 +1,4 @@
-use super::{readable_tool_name, ToolProgress, ToolRegistry, ToolSpec};
+use super::{readable_tool_name, tool_output_for_context, ToolProgress, ToolRegistry, ToolSpec};
 use crate::config::{AppConfig, DeepResearchPluginConfig};
 use crate::i18n::{is_zh, text as t};
 use crate::llm::{
@@ -580,7 +580,10 @@ async fn chat_with_tools(
                     "output": output,
                 })
             ));
-            messages.push(ChatMessage::tool(call.id, output));
+            messages.push(ChatMessage::tool(
+                call.id,
+                tool_output_for_context(&call.function.name, &output),
+            ));
         }
     }
 }

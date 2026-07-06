@@ -1,6 +1,7 @@
 mod channel_context;
 mod channel_tools;
 pub(crate) mod cli;
+mod command_intercept;
 pub(crate) mod manager;
 mod media;
 mod message;

@@ -1,4 +1,5 @@
 use super::model::*;
+use super::model_metadata::is_valid_model_tag;
 use super::paths::{config_relative_path, persona_scope_name};
 use super::secrets::set_private_permissions;
 use crate::default_models::OPENCODE_PROVIDER_ID;
@@ -148,6 +149,7 @@ impl AppConfig {
                     bail!("provider {} extra_body must be a JSON object", provider.id);
                 }
             }
+            validate_provider_model_metadata(provider)?;
         }
         if self.context.default_max_chars == 0 {
             bail!("context.default_max_chars must be greater than 0");
@@ -328,9 +330,7 @@ impl AppConfig {
     pub fn active_context_chars(&self) -> Result<usize> {
         let provider = self.provider(None)?;
         Ok(provider
-            .model_context_chars
-            .get(&provider.default_model)
-            .copied()
+            .model_context_chars_for(&provider.default_model)
             .unwrap_or(self.context.default_max_chars))
     }
 
@@ -488,4 +488,56 @@ impl AppConfig {
             None => self.providers.push(provider),
         }
     }
+}
+
+/// 校验 Provider 的模型元数据。
+///
+/// 参数:
+/// - `provider`: Provider 配置
+///
+/// 返回:
+/// - 配置是否合法
+fn validate_provider_model_metadata(provider: &ProviderConfig) -> Result<()> {
+    for (model, context_chars) in &provider.model_context_chars {
+        if model.trim().is_empty() {
+            bail!(
+                "provider {} model_context_chars key cannot be empty",
+                provider.id
+            );
+        }
+        if *context_chars == 0 {
+            bail!(
+                "provider {} model_context_chars for {} must be greater than 0",
+                provider.id,
+                model
+            );
+        }
+    }
+
+    for (model, metadata) in &provider.model_metadata {
+        if model.trim().is_empty() {
+            bail!(
+                "provider {} model_metadata key cannot be empty",
+                provider.id
+            );
+        }
+        if metadata.context_chars == Some(0) {
+            bail!(
+                "provider {} model_metadata context_chars for {} must be greater than 0",
+                provider.id,
+                model
+            );
+        }
+        for tag in &metadata.tags {
+            if !is_valid_model_tag(tag) {
+                bail!(
+                    "provider {} model_metadata tag for {} is invalid: {}",
+                    provider.id,
+                    model,
+                    tag
+                );
+            }
+        }
+    }
+    Ok(())
 }

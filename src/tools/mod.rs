@@ -2,6 +2,7 @@ mod alarm;
 mod archlinux;
 mod calculator;
 pub(crate) mod command;
+mod context;
 mod deep_diagnose;
 mod deep_research;
 mod deepseek_status;
@@ -37,6 +38,7 @@ mod xuanxue;
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 
+pub(crate) use context::tool_output_for_context;
 pub(crate) use progressive::{register_loader as register_progressive_loader, LOAD_NAME};
 #[allow(unused_imports)]
 pub use registry::{empty_parameters, ToolPermission, ToolProgress, ToolRegistry, ToolSpec};

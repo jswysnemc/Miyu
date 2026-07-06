@@ -1,5 +1,7 @@
+mod compaction;
 mod loaded_tools;
 mod pending_turn;
+mod sessions;
 mod turns;
 mod usage;
 
@@ -13,13 +15,20 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+pub use compaction::CompactionRequest;
 pub use pending_turn::PendingTurnGuard;
+pub use sessions::{
+    create_session, delete_session, ensure_active_session as active_session, list_sessions,
+    rename_session, switch_session,
+};
 pub use turns::{
     turn_chars, turns_to_entries, ConversationDb, StoredConversationEntry, Turn, TurnStatus,
 };
 
 #[derive(Debug, Clone)]
 pub struct StateStore {
+    base_state_dir: PathBuf,
+    session_id: String,
     state_dir: PathBuf,
     conv_db: Arc<ConversationDb>,
 }
@@ -33,9 +42,16 @@ impl StateStore {
     /// 返回:
     /// - 状态存储
     pub fn new(paths: &MiyuPaths) -> Result<Self> {
-        let state_dir = paths.state_dir.clone();
+        let session = sessions::ensure_active_session(paths)?;
+        let base_state_dir = paths.state_dir.clone();
+        let state_dir = sessions::active_state_dir(paths)?;
         let conv_db = Arc::new(ConversationDb::open(&state_dir)?);
-        let store = Self { state_dir, conv_db };
+        let store = Self {
+            base_state_dir,
+            session_id: session.id,
+            state_dir,
+            conv_db,
+        };
         store.migrate_from_jsonl()?;
         Ok(store)
     }
@@ -71,6 +87,7 @@ impl StateStore {
         if previous.trim() != fingerprint {
             self.conv_db.reset()?;
             self.clear_loaded_tools()?;
+            self.clear_compaction_summary()?;
             std::fs::write(file, format!("{fingerprint}\n"))?;
         }
         Ok(())
@@ -85,7 +102,8 @@ impl StateStore {
     /// 返回:
     /// - 写入是否成功
     pub fn start_turn(&self, turn_id: &str, user_content: &str) -> Result<()> {
-        self.conv_db.start_turn(turn_id, user_content)
+        self.conv_db.start_turn(turn_id, user_content)?;
+        sessions::touch_session_with_message(&self.base_state_dir, &self.session_id, user_content)
     }
 
     /// 完成对话轮次。
@@ -239,13 +257,104 @@ impl StateStore {
         ))
     }
 
+    /// 选择需要自动压缩的旧会话轮次。
+    ///
+    /// 参数:
+    /// - `max_chars`: 最大上下文字符数
+    /// - `trim_at_ratio`: 触发压缩比例
+    /// - `trim_batch_ratio`: 压缩目标批量比例
+    ///
+    /// 返回:
+    /// - 压缩请求，未超过阈值时返回空
+    pub fn select_compaction(
+        &self,
+        max_chars: usize,
+        trim_at_ratio: f32,
+        trim_batch_ratio: f32,
+    ) -> Result<Option<compaction::CompactionRequest>> {
+        let turns = self.conv_db.load_turns()?;
+        let previous_summary = self
+            .load_compaction_summary()?
+            .map(|summary| summary.summary);
+        Ok(compaction::select_compaction(
+            &turns,
+            previous_summary,
+            max_chars,
+            trim_at_ratio,
+            trim_batch_ratio,
+        ))
+    }
+
+    /// 应用自动压缩结果。
+    ///
+    /// 参数:
+    /// - `request`: 压缩请求
+    /// - `summary`: 模型生成的摘要正文
+    ///
+    /// 返回:
+    /// - 应用是否成功
+    pub fn apply_compaction(
+        &self,
+        request: &compaction::CompactionRequest,
+        summary: &str,
+    ) -> Result<()> {
+        let previous_count = self
+            .load_compaction_summary()?
+            .map(|summary| summary.compacted_turns)
+            .unwrap_or_default();
+        compaction::save_summary(
+            &self.compaction_summary_file(),
+            summary,
+            previous_count + request.turn_count(),
+        )?;
+        self.conv_db
+            .delete_turns_by_ids(&request.compact_turn_ids)?;
+        Ok(())
+    }
+
+    /// 读取可注入上下文的压缩摘要消息。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 压缩摘要上下文消息
+    pub fn compaction_summary_context(&self) -> Result<Option<String>> {
+        Ok(self
+            .load_compaction_summary()?
+            .map(|summary| compaction::summary_context_message(&summary.summary)))
+    }
+
+    /// 读取压缩摘要。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 压缩摘要
+    fn load_compaction_summary(&self) -> Result<Option<compaction::CompactionSummary>> {
+        compaction::load_summary(&self.compaction_summary_file())
+    }
+
+    /// 清理压缩摘要。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 清理是否成功
+    pub fn clear_compaction_summary(&self) -> Result<()> {
+        compaction::clear_summary(&self.compaction_summary_file())
+    }
+
     /// 清空对话历史。
     ///
     /// 返回:
     /// - 清空是否成功
     pub fn reset_conversation(&self) -> Result<()> {
         self.conv_db.reset()?;
-        self.clear_loaded_tools()
+        self.clear_loaded_tools()?;
+        self.clear_compaction_summary()
     }
 
     /// 读取当前会话已经载入的工具集合。
@@ -377,6 +486,10 @@ impl StateStore {
         self.state_dir.join("profile.md")
     }
 
+    fn compaction_summary_file(&self) -> PathBuf {
+        self.state_dir.join("compaction-summary.json")
+    }
+
     fn prompt_fingerprint_file(&self) -> PathBuf {
         self.state_dir.join("prompt.sha256")
     }
@@ -501,5 +614,89 @@ mod tests {
         store.reset_conversation().unwrap();
 
         assert!(store.load_loaded_tools().unwrap().is_empty());
+    }
+
+    #[test]
+    fn compaction_summary_is_applied_and_injected() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        for index in 1..=4 {
+            let turn_id = format!("turn_{index}");
+            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
+            store
+                .complete_turn(&turn_id, &"a".repeat(200), None)
+                .unwrap();
+        }
+
+        let request = store
+            .select_compaction(1000, 0.5, 0.2)
+            .unwrap()
+            .expect("compaction request");
+        store
+            .apply_compaction(&request, "## Goal\n- keep context")
+            .unwrap();
+
+        let turns = store.load_turns().unwrap();
+        let context = store.compaction_summary_context().unwrap().unwrap();
+
+        assert_eq!(turns.len(), 2);
+        assert!(context.contains("<conversation-summary>"));
+        assert!(context.contains("keep context"));
+    }
+
+    #[test]
+    fn reset_conversation_clears_compaction_summary() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        for index in 1..=4 {
+            let turn_id = format!("turn_{index}");
+            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
+            store
+                .complete_turn(&turn_id, &"a".repeat(200), None)
+                .unwrap();
+        }
+        let request = store
+            .select_compaction(1000, 0.5, 0.2)
+            .unwrap()
+            .expect("compaction request");
+        store.apply_compaction(&request, "summary").unwrap();
+
+        store.reset_conversation().unwrap();
+
+        assert!(store.compaction_summary_context().unwrap().is_none());
+    }
+
+    #[test]
+    fn sessions_have_isolated_conversations() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let default_store = StateStore::new(&paths).unwrap();
+        default_store.start_turn("turn_default", "default").unwrap();
+        default_store
+            .complete_turn("turn_default", "default reply", None)
+            .unwrap();
+
+        let session = create_session(&paths, Some("work")).unwrap();
+        let work_store = StateStore::new(&paths).unwrap();
+        assert!(work_store.load_conversation().unwrap().is_empty());
+        work_store.start_turn("turn_work", "work").unwrap();
+        work_store
+            .complete_turn("turn_work", "work reply", None)
+            .unwrap();
+
+        switch_session(&paths, "default").unwrap();
+        let default_store = StateStore::new(&paths).unwrap();
+        let default_history = default_store.load_conversation().unwrap();
+
+        switch_session(&paths, &session.id).unwrap();
+        let work_store = StateStore::new(&paths).unwrap();
+        let work_history = work_store.load_conversation().unwrap();
+
+        assert!(default_history
+            .iter()
+            .any(|entry| entry.content == "default"));
+        assert!(!default_history.iter().any(|entry| entry.content == "work"));
+        assert!(work_history.iter().any(|entry| entry.content == "work"));
+        assert!(!work_history.iter().any(|entry| entry.content == "default"));
     }
 }

@@ -5,8 +5,8 @@ use serde_json::{json, Value};
 use std::{env, time::Duration};
 
 const MAX_RESPONSE_SIZE: usize = 5 * 1024 * 1024;
-const DEFAULT_FETCH_MAX_CHARS: usize = 40_000;
-const MAX_FETCH_CHARS: usize = 200_000;
+const DEFAULT_FETCH_MAX_CHARS: usize = 24_000;
+const MAX_FETCH_CHARS: usize = 80_000;
 
 pub fn register(registry: &mut ToolRegistry, config: WebPluginConfig) {
     register_search_tool(registry, "web_search", config.clone());
@@ -22,7 +22,7 @@ pub fn register_fetch(registry: &mut ToolRegistry) {
                 "url": { "type": "string", "description": "Fully-qualified http or https URL." },
                 "format": { "type": "string", "enum": ["markdown", "text", "html"], "description": "Output format. Defaults to markdown." },
                 "timeout": { "type": "integer", "description": "Timeout seconds, max 120." },
-                "max_chars": { "type": "integer", "description": "Maximum characters to return. Defaults to 40000, max 200000." }
+                "max_chars": { "type": "integer", "description": "Maximum characters to return. Defaults to 24000, max 80000." }
             },
             "required": ["url"],
             "additionalProperties": false

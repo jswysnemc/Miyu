@@ -200,6 +200,27 @@ impl ConversationDb {
         Ok(to_remove)
     }
 
+    /// 按轮次标识删除对话轮次。
+    ///
+    /// 参数:
+    /// - `turn_ids`: 轮次标识列表
+    ///
+    /// 返回:
+    /// - 删除是否成功
+    pub fn delete_turns_by_ids(&self, turn_ids: &[String]) -> Result<()> {
+        if turn_ids.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock().unwrap();
+        for turn_id in turn_ids {
+            conn.execute(
+                "DELETE FROM turns WHERE turn_id = ?1 AND status != 'running'",
+                params![turn_id],
+            )?;
+        }
+        Ok(())
+    }
+
     /// 清空对话轮次。
     ///
     /// 返回:

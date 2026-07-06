@@ -8,9 +8,9 @@ use crate::llm::{
 };
 use crate::memory::{EvictedTurn, MemoryStore};
 use crate::paths::MiyuPaths;
-use crate::state::{PendingTurnGuard, StateStore};
+use crate::state::{CompactionRequest, PendingTurnGuard, StateStore};
 use crate::tools::{self, memes, ToolPermission, ToolRegistry};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use chrono::Local;
 use std::io::IsTerminal;
 use tokio::sync::mpsc;
@@ -132,7 +132,7 @@ impl Agent {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
         }
-        let system_prompt = with_current_time(base_system_prompt, mode);
+        let system_prompt = with_mode_reminder(base_system_prompt, mode);
         let context_chars = config.active_context_chars()?;
         let tools_enabled = config.tools.enabled;
         let max_tool_rounds = config.tools.max_rounds;
@@ -208,6 +208,7 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
+        self.compact_conversation_if_needed().await?;
         let evicted = self.state.trim_conversation_to_budget(
             self.context_chars,
             self.trim_at_ratio,
@@ -226,24 +227,23 @@ impl Agent {
         let turn_id = new_turn_id();
         self.state.start_turn(&turn_id, &input)?;
         let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        let auto_meme_plan =
+            memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
+                .await?;
         let mut messages = self.chat_messages(Some(&turn_id))?;
+        if let Some(association) = self.memory.association(&input)? {
+            messages.push(ChatMessage::system(
+                self.memory.format_association(&association),
+            ));
+        }
+        if let Some(plan) = &auto_meme_plan {
+            messages.push(ChatMessage::system(plan.reminder.clone()));
+        }
         messages.push(ChatMessage::plain("user", input.clone()));
         if let Some(image_url) = image_url {
             if let Some(message) = messages.last_mut().filter(|message| message.role == "user") {
                 *message = ChatMessage::user_with_image(&input, image_url);
             }
-        }
-        if let Some(association) = self.memory.association(&input)? {
-            messages.insert(
-                1,
-                ChatMessage::system(self.memory.format_association(&association)),
-            );
-        }
-        let auto_meme_plan =
-            memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
-                .await?;
-        if let Some(plan) = &auto_meme_plan {
-            messages.push(ChatMessage::system(plan.reminder.clone()));
         }
         let mut on_event = on_event;
         let mut used_tools = Vec::new();
@@ -271,6 +271,55 @@ impl Agent {
             self.state.add_usage(usage)?;
         }
         Ok(result)
+    }
+
+    /// 按当前上下文预算自动压缩旧会话。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 压缩是否成功
+    async fn compact_conversation_if_needed(&self) -> Result<()> {
+        let Some(request) = self.state.select_compaction(
+            self.context_chars,
+            self.trim_at_ratio,
+            self.trim_batch_ratio,
+        )?
+        else {
+            return Ok(());
+        };
+        let summary = self
+            .create_compaction_summary(&request)
+            .await
+            .context("failed to compact conversation")?;
+        self.state.apply_compaction(&request, &summary)?;
+        Ok(())
+    }
+
+    /// 使用当前模型生成会话压缩摘要。
+    ///
+    /// 参数:
+    /// - `request`: 压缩请求
+    ///
+    /// 返回:
+    /// - 压缩摘要正文
+    async fn create_compaction_summary(&self, request: &CompactionRequest) -> Result<String> {
+        let messages = vec![
+            ChatMessage::system(
+                "You are a conversation compaction worker. Produce a concise, faithful Markdown summary for future turns. Do not answer the user task.",
+            ),
+            ChatMessage::plain("user", request.prompt()),
+        ];
+        let result = self
+            .client
+            .chat_stream_events(messages, Vec::new(), |_| Ok(()))
+            .await?;
+        let summary = result.content.trim();
+        if summary.is_empty() {
+            bail!("compaction summary is empty");
+        }
+        Ok(summary.to_string())
     }
 
     async fn chat_with_tools<F>(
@@ -362,7 +411,10 @@ impl Agent {
                             output
                         }
                     };
-                    messages.push(ChatMessage::tool(call.id, output));
+                    messages.push(ChatMessage::tool(
+                        call.id,
+                        tools::tool_output_for_context(&call.function.name, &output),
+                    ));
                     continue;
                 }
                 if !self.tool_visibility.is_visible(&call.function.name) {
@@ -375,7 +427,10 @@ impl Agent {
                         ok: false,
                         output: output.clone(),
                     })?;
-                    messages.push(ChatMessage::tool(call.id, output));
+                    messages.push(ChatMessage::tool(
+                        call.id,
+                        tools::tool_output_for_context(&call.function.name, &output),
+                    ));
                     continue;
                 }
                 if call.function.name == "install_aur_package"
@@ -387,7 +442,10 @@ impl Agent {
                         ok: false,
                         output: output.clone(),
                     })?;
-                    messages.push(ChatMessage::tool(call.id, output));
+                    messages.push(ChatMessage::tool(
+                        call.id,
+                        tools::tool_output_for_context(&call.function.name, &output),
+                    ));
                     continue;
                 }
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
@@ -446,7 +504,10 @@ impl Agent {
                         }
                     }
                 };
-                messages.push(ChatMessage::tool(call.id, output));
+                messages.push(ChatMessage::tool(
+                    call.id,
+                    tools::tool_output_for_context(&call.function.name, &output),
+                ));
             }
         }
     }
@@ -456,7 +517,7 @@ impl Agent {
         if let Some(prompt) = self.tool_visibility.loaded_context_prompt(&self.tools) {
             messages.push(ChatMessage::system(prompt));
         }
-        if let Some(summary) = memes::last_auto_meme_reminder(&self.config, &self.paths)? {
+        if let Some(summary) = self.state.compaction_summary_context()? {
             messages.push(ChatMessage::system(summary));
         }
         let entries = match exclude_turn_id {
@@ -470,6 +531,10 @@ impl Agent {
                 messages.push(ChatMessage::plain(entry.role, entry.content));
             }
         }
+        if let Some(summary) = memes::last_auto_meme_reminder(&self.config, &self.paths)? {
+            messages.push(ChatMessage::system(summary));
+        }
+        messages.push(ChatMessage::system(runtime_context_message()));
         Ok(messages)
     }
 }
@@ -504,15 +569,31 @@ fn extract_persistable_tool_report(tool_name: &str, output: &str) -> Option<Stri
         .filter(|report| !report.is_empty())
 }
 
-fn with_current_time(system_prompt: String, mode: AgentMode) -> String {
+/// 追加稳定模式提醒。
+///
+/// 参数:
+/// - `system_prompt`: 基础系统提示
+/// - `mode`: Agent 模式
+///
+/// 返回:
+/// - 稳定系统提示
+fn with_mode_reminder(system_prompt: String, mode: AgentMode) -> String {
+    format!("{system_prompt}\n\n{}", mode.reminder())
+}
+
+/// 构造动态运行时上下文消息。
+///
+/// 参数:
+/// 返回:
+/// - 当前轮运行时上下文
+fn runtime_context_message() -> String {
     let cwd = std::env::current_dir()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
     let runtime = terminal_runtime_context();
     format!(
-        "{system_prompt}\n\n<system-reminder>\n当前系统时间：{}。用户询问当前时间时，优先使用这里的时间，不需要调用命令查询。\n当前工作目录：{cwd}。涉及相对路径、当前项目、文件操作时优先以此为准。\n{runtime}\n</system-reminder>\n\n{}",
-        Local::now().format("%Y年%m月%d日 %H:%M"),
-        mode.reminder()
+        "<system-reminder>\n当前系统时间：{}。用户询问当前时间时，优先使用这里的时间，不需要调用命令查询。\n当前工作目录：{cwd}。涉及相对路径、当前项目、文件操作时优先以此为准。\n{runtime}\n</system-reminder>",
+        Local::now().format("%Y年%m月%d日 %H:%M")
     )
 }
 
@@ -593,5 +674,14 @@ mod tests {
         let input = "继续<system_reminder>hidden";
 
         assert_eq!(clean_user_visible_text(input), "继续");
+    }
+
+    #[test]
+    fn stable_prompt_does_not_include_runtime_context() {
+        let prompt = with_mode_reminder("base".to_string(), AgentMode::Yolo);
+
+        assert!(prompt.contains("base"));
+        assert!(!prompt.contains("当前系统时间"));
+        assert!(runtime_context_message().contains("当前系统时间"));
     }
 }

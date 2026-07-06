@@ -16,7 +16,6 @@ mod render;
 mod shell;
 mod state;
 mod tools;
-mod web;
 
 use anyhow::Result;
 

@@ -326,7 +326,7 @@ fn edit_weixin_gateway(stdout: &mut io::Stdout, config: &mut AppConfig) -> Resul
             weixin.bot_type.clone(),
         ),
         Field::new(t("Token", "Token"), weixin.token.clone()).secret(),
-        Field::new(t("Saved account", "已保存账号"), weixin.account.clone()),
+        Field::new(t("Saved account", "已保存账号"), weixin.account.clone()).secret(),
         Field::new(t("Bot agent", "Bot Agent"), weixin.bot_agent.clone()),
     ];
     if run_form(

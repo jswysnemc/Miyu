@@ -2326,6 +2326,7 @@ mod tests {
             api_key: None,
             models: Vec::new(),
             model_context_chars: std::collections::HashMap::new(),
+            model_metadata: std::collections::HashMap::new(),
             default_model: String::new(),
             timeout_seconds: 60,
             temperature: 0.7,

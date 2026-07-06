@@ -7,6 +7,7 @@ use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
 use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
 use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChannelTarget};
+use crate::gateways::command_intercept::handle_gateway_command;
 use crate::gateways::message::OutboundMessage;
 use crate::gateways::qq_official::{QqOfficialClient, QqTargetKind};
 use crate::llm::OpenAiCompatibleClient;
@@ -79,7 +80,6 @@ impl QqBotProcessor {
             Some(event.msg_id.clone()),
         );
         save_latest_channel_context(&self.paths, &context)?;
-        let (prompt, image_url) = self.prepare_agent_input(&event).await?;
         let authorization = self.authenticator.lock().await.authorization().await?;
         let client = QqOfficialClient::new(
             self.base_url.clone(),
@@ -87,6 +87,15 @@ impl QqBotProcessor {
             event.target_kind,
             event.target_id.clone(),
         );
+        if let Some(reply) = handle_gateway_command(&self.paths, &event.prompt)? {
+            let message = OutboundMessage {
+                text: Some(reply),
+                media: Vec::new(),
+            };
+            client.send(&message, Some(&event.msg_id)).await?;
+            return Ok(());
+        }
+        let (prompt, image_url) = self.prepare_agent_input(&event).await?;
         let reply = self
             .run_agent(client.clone(), &event, &context, prompt, image_url)
             .await?;

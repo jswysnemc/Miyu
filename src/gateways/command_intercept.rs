@@ -1,0 +1,99 @@
+use crate::config::AppConfig;
+use crate::i18n::text as t;
+use crate::memory::MemoryStore;
+use crate::paths::MiyuPaths;
+use crate::state::StateStore;
+use crate::tools;
+use anyhow::Result;
+
+/// 处理 gateway 入站控制命令。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `prompt`: 入站消息文本
+///
+/// 返回:
+/// - 已处理时返回需要发送的回复文本，否则返回空
+pub(crate) fn handle_gateway_command(paths: &MiyuPaths, prompt: &str) -> Result<Option<String>> {
+    if !is_gateway_reset_all_command(prompt) {
+        return Ok(None);
+    }
+    AppConfig::init_files(paths)?;
+    let config = AppConfig::load_or_default(paths)?;
+    StateStore::new(paths)?.reset_conversation()?;
+    MemoryStore::new(&config, paths).reset_all(false)?;
+    tools::clear_aur_review_state(paths)?;
+    Ok(Some(
+        t(
+            "cleared current conversation history and all memory; gateway is still running",
+            "已清空当前会话历史与全部记忆，gateway 仍在运行",
+        )
+        .to_string(),
+    ))
+}
+
+/// 判断入站消息是否是 gateway 安全重置命令。
+///
+/// 参数:
+/// - `prompt`: 入站消息文本
+///
+/// 返回:
+/// - 是否是 `miyu reset all`
+fn is_gateway_reset_all_command(prompt: &str) -> bool {
+    let words = prompt.split_whitespace().collect::<Vec<_>>();
+    if words.len() != 3 {
+        return false;
+    }
+    let executable = words[0].trim_matches(['`', '"', '\'']);
+    let command = words[1].trim_matches(['`', '"', '\'']);
+    let scope = words[2].trim_matches(['`', '"', '\'']);
+    executable.ends_with("miyu") && command == "reset" && scope == "all"
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::MiyuPaths;
+    use std::path::PathBuf;
+
+    fn test_paths(root: PathBuf) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: root.join("config"),
+            config_file: root.join("config/config.jsonc"),
+            secrets_file: root.join("config/secrets.jsonc"),
+            skills_dir: root.join("config/skills"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            state_dir: root.join("state"),
+            pictures_dir: root.join("pictures"),
+            fish_hook_file: root.join("fish/miyu.fish"),
+            bash_hook_file: root.join("shell/bash-hook.sh"),
+            zsh_hook_file: root.join("shell/zsh-hook.zsh"),
+            powershell_hook_file: root.join("shell/powershell-hook.ps1"),
+        }
+    }
+
+    #[test]
+    fn detects_reset_all_command() {
+        assert!(is_gateway_reset_all_command("miyu reset all"));
+        assert!(is_gateway_reset_all_command("`miyu` `reset` `all`"));
+        assert!(is_gateway_reset_all_command("/usr/bin/miyu reset all"));
+        assert!(!is_gateway_reset_all_command("miyu reset"));
+        assert!(!is_gateway_reset_all_command("please miyu reset all"));
+    }
+
+    #[test]
+    fn gateway_reset_all_clears_state_without_agent_turn() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        AppConfig::init_files(&paths).unwrap();
+        let state = StateStore::new(&paths).unwrap();
+        state.start_turn("turn_1", "hello").unwrap();
+        state.complete_turn("turn_1", "hi", None).unwrap();
+
+        let reply = handle_gateway_command(&paths, "miyu reset all").unwrap();
+
+        assert!(reply.unwrap().contains("gateway"));
+        assert!(state.load_conversation().unwrap().is_empty());
+    }
+}

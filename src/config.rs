@@ -1,6 +1,8 @@
 mod app;
 mod defaults;
 mod model;
+mod model_metadata;
+mod model_units;
 mod paths;
 mod provider;
 mod secrets;
@@ -9,3 +11,5 @@ mod secrets;
 mod tests;
 
 pub use model::*;
+pub use model_metadata::*;
+pub use model_units::*;

@@ -6,6 +6,7 @@ use super::onebot_event::{
 use crate::agent::{Agent, AgentMode};
 use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
+use crate::gateways::command_intercept::handle_gateway_command;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
@@ -108,6 +109,20 @@ async fn process_message_event(
     event: OneBotMessageEvent,
 ) -> Result<()> {
     let _guard = state.agent_lock.lock().await;
+    let client = OneBotClient::new(
+        state.onebot_base_url.clone(),
+        state.access_token.clone(),
+        event.target_kind,
+        event.target_id,
+    );
+    if let Some(reply) = handle_gateway_command(&state.paths, &event.prompt)? {
+        let message = OutboundMessage {
+            text: Some(reply),
+            media: Vec::new(),
+        };
+        client.send(&message).await?;
+        return Ok(());
+    }
     let (prompt, image_url) = prepare_agent_input(&state, &event).await?;
     let reply = run_agent(&state.paths, prompt, image_url).await?;
     if reply.trim().is_empty() {
@@ -117,12 +132,6 @@ async fn process_message_event(
         text: Some(reply),
         media: Vec::new(),
     };
-    let client = OneBotClient::new(
-        state.onebot_base_url.clone(),
-        state.access_token.clone(),
-        event.target_kind,
-        event.target_id,
-    );
     client.send(&message).await?;
     Ok(())
 }

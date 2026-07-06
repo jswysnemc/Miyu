@@ -7,6 +7,7 @@ use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
 use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
 use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChannelTarget};
+use crate::gateways::command_intercept::handle_gateway_command;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
@@ -143,6 +144,12 @@ async fn process_message_event(
     let _guard = agent_lock.lock().await;
     let context = ChannelContext::weixin(event.from_user_id.clone(), event.context_token.clone());
     save_latest_channel_context(paths, &context)?;
+    if let Some(reply) = handle_gateway_command(paths, &event.prompt)? {
+        client
+            .send_text(&event.from_user_id, &reply, event.context_token.as_deref())
+            .await?;
+        return Ok(());
+    }
     let (prompt, image_url) = prepare_agent_input(paths, client, http_client, &event).await?;
     let reply = run_agent(paths, client, &event, &context, prompt, image_url).await?;
     if reply.trim().is_empty() {

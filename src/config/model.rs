@@ -1,4 +1,5 @@
 use super::defaults::*;
+use super::model_metadata::ModelMetadata;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
@@ -108,6 +109,8 @@ pub struct ProviderConfig {
     pub models: Vec<String>,
     #[serde(default, skip_serializing_if = "HashMap::is_empty")]
     pub model_context_chars: HashMap<String, usize>,
+    #[serde(default, skip_serializing_if = "HashMap::is_empty")]
+    pub model_metadata: HashMap<String, ModelMetadata>,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub default_model: String,
     #[serde(

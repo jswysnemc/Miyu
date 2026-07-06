@@ -1,4 +1,4 @@
-use super::{readable_tool_name, ToolProgress, ToolRegistry};
+use super::{readable_tool_name, tool_output_for_context, ToolProgress, ToolRegistry};
 use crate::i18n::is_zh;
 use crate::llm::{
     ChatMessage, ChatResult, ChatStreamChunk, ChatStreamKind, OpenAiCompatibleClient, Usage,
@@ -514,7 +514,10 @@ impl SubagentRunner {
                 }
                 self.progress
                     .tool_end(steps, &call.function.name, ok, &output);
-                messages.push(ChatMessage::tool(call.id, output));
+                messages.push(ChatMessage::tool(
+                    call.id,
+                    tool_output_for_context(&call.function.name, &output),
+                ));
             }
         }
     }

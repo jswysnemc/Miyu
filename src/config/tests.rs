@@ -53,6 +53,53 @@ fn progressive_tool_loading_defaults_disabled() {
 }
 
 #[test]
+fn active_context_chars_prefers_model_metadata() {
+    let mut config = AppConfig::default();
+    let model = config.providers[0].default_model.clone();
+    config.providers[0]
+        .model_context_chars
+        .insert(model.clone(), 32_000);
+    config.providers[0].model_metadata.insert(
+        model,
+        ModelMetadata {
+            context_chars: Some(128_000),
+            tags: Vec::new(),
+        },
+    );
+
+    assert_eq!(config.active_context_chars().unwrap(), 128_000);
+}
+
+#[test]
+fn model_metadata_context_accepts_unit_strings() {
+    let metadata: ModelMetadata = serde_json::from_str(r#"{"context_chars":"128k"}"#).unwrap();
+
+    assert_eq!(metadata.context_chars, Some(128_000));
+}
+
+#[test]
+fn provider_validation_rejects_invalid_model_tag() {
+    let mut config = AppConfig::default();
+    let model = config.providers[0].default_model.clone();
+    config.providers[0].set_model_tags_for(&model, vec!["unknown".to_string()]);
+
+    let err = config.validate().unwrap_err();
+
+    assert!(err.to_string().contains("model_metadata tag"));
+}
+
+#[test]
+fn provider_validation_rejects_zero_legacy_context() {
+    let mut config = AppConfig::default();
+    let model = config.providers[0].default_model.clone();
+    config.providers[0].model_context_chars.insert(model, 0);
+
+    let err = config.validate().unwrap_err();
+
+    assert!(err.to_string().contains("model_context_chars"));
+}
+
+#[test]
 fn background_command_defaults_are_enabled() {
     let config = AppConfig::default();
     assert!(config.tools.background_commands_enabled);

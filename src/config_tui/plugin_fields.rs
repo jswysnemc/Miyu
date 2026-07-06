@@ -23,19 +23,23 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
             Field::textarea(
                 "TinyFish API Keys",
                 config.plugins.web.tinyfish_api_keys.join("\n"),
-            ),
+            )
+            .secret(),
             Field::textarea(
                 "Tavily API Keys",
                 config.plugins.web.tavily_api_keys.join("\n"),
-            ),
+            )
+            .secret(),
             Field::textarea(
                 "Firecrawl API Keys",
                 config.plugins.web.firecrawl_api_keys.join("\n"),
-            ),
+            )
+            .secret(),
             Field::textarea(
                 "AnySearch API Keys",
                 config.plugins.web.anysearch_api_keys.join("\n"),
-            ),
+            )
+            .secret(),
             Field::new("SearXNG URL", config.plugins.web.searxng_base_url.clone()),
         ],
         1 => vec![
@@ -112,7 +116,8 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
             Field::textarea(
                 "API Keys",
                 config.plugins.image_generation.api_keys.join("\n"),
-            ),
+            )
+            .secret(),
             Field::new(
                 t("Model", "模型"),
                 config.plugins.image_generation.model.clone(),
