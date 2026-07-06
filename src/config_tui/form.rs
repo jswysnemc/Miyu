@@ -79,12 +79,8 @@ pub(crate) fn run_form(stdout: &mut io::Stdout, title: &str, fields: &mut [Field
             KeyCode::Enter if !editing && selected == fields.len() => return Ok(true),
             KeyCode::Enter if !editing && selected == fields.len() + 1 => return Ok(false),
             KeyCode::Enter if !editing && fields[selected].boolean => {
-                let value = select_bool(
-                    stdout,
-                    fields[selected].label,
-                    parse_bool_field(&fields[selected].value)?,
-                )?;
-                fields[selected].value = value.to_string();
+                let value = parse_bool_field(&fields[selected].value)?;
+                fields[selected].value = (!value).to_string();
                 cursors[selected] = fields[selected].value.chars().count();
             }
             KeyCode::Enter if !editing && !fields[selected].choices.is_empty() => {
@@ -143,21 +139,6 @@ pub(crate) fn run_form(stdout: &mut io::Stdout, title: &str, fields: &mut [Field
             KeyCode::Char(char) if editing && !key.modifiers.contains(KeyModifiers::CONTROL) => {
                 insert_char_at_cursor(&mut fields[selected].value, &mut cursors[selected], char)
             }
-            _ => {}
-        }
-    }
-}
-
-fn select_bool(stdout: &mut io::Stdout, label: &str, current: bool) -> Result<bool> {
-    let mut selected: usize = if current { 0 } else { 1 };
-    let options = ["true".to_string(), "false".to_string()];
-    loop {
-        draw_menu(stdout, label, &options, selected, "")?;
-        match read_key()? {
-            KeyCode::Esc | KeyCode::Char('q') => return Ok(current),
-            KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
-            KeyCode::Down | KeyCode::Char('j') => selected = (selected + 1).min(options.len() - 1),
-            KeyCode::Enter => return Ok(selected == 0),
             _ => {}
         }
     }
@@ -312,8 +293,8 @@ fn draw_form(
         stdout,
         MoveTo(x + 2, y + 1),
         Print(t(
-            "[j/k] move [Enter] edit/open editor [Ctrl+R] reveal secret [s] confirm [q] cancel",
-            "[j/k]移动 [Enter]编辑/打开编辑器 [Ctrl+R]显示密钥 [s]确认 [q]取消",
+            "[j/k] move [Enter] edit/toggle/open editor [Ctrl+R] reveal secret [s] confirm [q] cancel",
+            "[j/k]移动 [Enter]编辑/勾选/打开编辑器 [Ctrl+R]显示密钥 [s]确认 [q]取消",
         ))
     )?;
     let mut cursor = None;
@@ -407,7 +388,13 @@ fn draw_form(
 /// 返回:
 /// - 字段展示文本
 fn field_display_value(field: &Field, revealed_secret: bool) -> String {
-    if field.textarea && field.value.is_empty() {
+    if field.boolean {
+        match parse_bool_field(&field.value) {
+            Ok(true) => "[x]".to_string(),
+            Ok(false) => "[ ]".to_string(),
+            Err(_) => rendered_text_value(field, revealed_secret),
+        }
+    } else if field.textarea && field.value.is_empty() {
         t("(Enter opens $EDITOR)", "(Enter 打开 $EDITOR)").to_string()
     } else if !field.choices.is_empty() && field.value.is_empty() {
         field.empty_choice_label.to_string()

@@ -1,5 +1,6 @@
 use super::args::Cli;
 use super::chat::drain_stdin;
+use super::input_flags::parse_message_input_flags;
 use super::repl::load_repl_input_history;
 use super::repl_input_render::*;
 use super::repl_text::*;
@@ -30,17 +31,76 @@ fn cursor_position_wraps_at_terminal_width() {
 #[test]
 fn cli_parses_trailing_clipboard_flag_as_message_part() {
     let cli = Cli::try_parse_from(["miyu", "总结", "-c"]).unwrap();
-    let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
-    assert!(input.clipb);
-    assert_eq!(input.message, "总结");
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+    assert!(!input.clipb);
+    assert_eq!(input.message, "总结 -c");
 }
 
 #[test]
 fn cli_parses_leading_clipboard_flag_as_option() {
     let cli = Cli::try_parse_from(["miyu", "-c", "总结"]).unwrap();
-    let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
     assert!(input.clipb);
     assert_eq!(input.message, "总结");
+}
+
+#[test]
+fn cli_parses_leading_web_search_flag_as_option() {
+    let cli = Cli::try_parse_from(["miyu", "-w", "搜索"]).unwrap();
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+    assert!(input.web_search);
+    assert_eq!(input.message, "搜索");
+}
+
+#[test]
+fn shell_intercept_parses_leading_clipboard_flag_after_separator() {
+    let cli = Cli::try_parse_from([
+        "miyu",
+        "--shell-intercept",
+        "--shell",
+        "zsh",
+        "--",
+        "-c",
+        "总结",
+    ])
+    .unwrap();
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+    assert!(input.clipb);
+    assert_eq!(input.message, "总结");
+}
+
+#[test]
+fn shell_intercept_parses_trailing_clipboard_flag_after_separator() {
+    let cli = Cli::try_parse_from([
+        "miyu",
+        "--shell-intercept",
+        "--shell",
+        "zsh",
+        "--",
+        "总结",
+        "-c",
+    ])
+    .unwrap();
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+    assert!(!input.clipb);
+    assert_eq!(input.message, "总结 -c");
+}
+
+#[test]
+fn shell_intercept_parses_leading_web_search_flag_after_separator() {
+    let cli = Cli::try_parse_from([
+        "miyu",
+        "--shell-intercept",
+        "--shell",
+        "zsh",
+        "--",
+        "-w",
+        "搜索",
+    ])
+    .unwrap();
+    let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+    assert!(input.web_search);
+    assert_eq!(input.message, "搜索");
 }
 
 #[test]

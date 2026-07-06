@@ -1,7 +1,8 @@
 mod model;
 mod repository;
+mod workspace;
 
 pub use repository::{
     active_state_dir, create_session, delete_session, ensure_active_session, list_sessions,
-    rename_session, switch_session, touch_session_with_message,
+    rename_session, session_scope_dir, switch_session, touch_session_with_message,
 };

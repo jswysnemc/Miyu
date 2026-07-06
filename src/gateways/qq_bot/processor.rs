@@ -87,7 +87,7 @@ impl QqBotProcessor {
             event.target_kind,
             event.target_id.clone(),
         );
-        if let Some(reply) = handle_gateway_command(&self.paths, &event.prompt)? {
+        if let Some(reply) = handle_gateway_command(&self.paths, &event.prompt).await? {
             let message = OutboundMessage {
                 text: Some(reply),
                 media: Vec::new(),

@@ -21,9 +21,9 @@ pub use sessions::{
     create_session, delete_session, ensure_active_session as active_session, list_sessions,
     rename_session, switch_session,
 };
-pub use turns::{
-    turn_chars, turns_to_entries, ConversationDb, StoredConversationEntry, Turn, TurnStatus,
-};
+#[cfg(test)]
+pub use turns::TurnStatus;
+pub use turns::{turns_to_entries, ConversationDb, StoredConversationEntry, Turn};
 
 #[derive(Debug, Clone)]
 pub struct StateStore {
@@ -43,7 +43,7 @@ impl StateStore {
     /// - 状态存储
     pub fn new(paths: &MiyuPaths) -> Result<Self> {
         let session = sessions::ensure_active_session(paths)?;
-        let base_state_dir = paths.state_dir.clone();
+        let base_state_dir = sessions::session_scope_dir(paths)?;
         let state_dir = sessions::active_state_dir(paths)?;
         let conv_db = Arc::new(ConversationDb::open(&state_dir)?);
         let store = Self {
@@ -88,6 +88,7 @@ impl StateStore {
             self.conv_db.reset()?;
             self.clear_loaded_tools()?;
             self.clear_compaction_summary()?;
+            self.clear_last_usage()?;
             std::fs::write(file, format!("{fingerprint}\n"))?;
         }
         Ok(())
@@ -218,135 +219,6 @@ impl StateStore {
         self.conv_db.load_turns_excluding(exclude_turn_id)
     }
 
-    /// 按上下文预算裁剪旧轮次。
-    ///
-    /// 参数:
-    /// - `max_chars`: 最大上下文字符数
-    /// - `trim_at_ratio`: 触发裁剪比例
-    /// - `trim_batch_ratio`: 批量裁剪比例
-    ///
-    /// 返回:
-    /// - 被裁剪的旧消息入口
-    pub fn trim_conversation_to_budget(
-        &self,
-        max_chars: usize,
-        trim_at_ratio: f32,
-        trim_batch_ratio: f32,
-    ) -> Result<Vec<StoredConversationEntry>> {
-        let turns = self.conv_db.load_turns()?;
-        let trigger = (max_chars as f32 * trim_at_ratio).max(1.0) as usize;
-        let mut total = turns.iter().map(turn_chars).sum::<usize>();
-        if total <= trigger {
-            return Ok(Vec::new());
-        }
-        let target =
-            max_chars.saturating_sub((max_chars as f32 * trim_batch_ratio).max(1.0) as usize);
-        let mut remove_count = 0usize;
-        for turn in &turns {
-            if total <= target {
-                break;
-            }
-            if turn.status == TurnStatus::Running {
-                continue;
-            }
-            total = total.saturating_sub(turn_chars(turn));
-            remove_count += 1;
-        }
-        Ok(turns_to_entries(
-            self.conv_db.trim_oldest_non_running_turns(remove_count)?,
-        ))
-    }
-
-    /// 选择需要自动压缩的旧会话轮次。
-    ///
-    /// 参数:
-    /// - `max_chars`: 最大上下文字符数
-    /// - `trim_at_ratio`: 触发压缩比例
-    /// - `trim_batch_ratio`: 压缩目标批量比例
-    ///
-    /// 返回:
-    /// - 压缩请求，未超过阈值时返回空
-    pub fn select_compaction(
-        &self,
-        max_chars: usize,
-        trim_at_ratio: f32,
-        trim_batch_ratio: f32,
-    ) -> Result<Option<compaction::CompactionRequest>> {
-        let turns = self.conv_db.load_turns()?;
-        let previous_summary = self
-            .load_compaction_summary()?
-            .map(|summary| summary.summary);
-        Ok(compaction::select_compaction(
-            &turns,
-            previous_summary,
-            max_chars,
-            trim_at_ratio,
-            trim_batch_ratio,
-        ))
-    }
-
-    /// 应用自动压缩结果。
-    ///
-    /// 参数:
-    /// - `request`: 压缩请求
-    /// - `summary`: 模型生成的摘要正文
-    ///
-    /// 返回:
-    /// - 应用是否成功
-    pub fn apply_compaction(
-        &self,
-        request: &compaction::CompactionRequest,
-        summary: &str,
-    ) -> Result<()> {
-        let previous_count = self
-            .load_compaction_summary()?
-            .map(|summary| summary.compacted_turns)
-            .unwrap_or_default();
-        compaction::save_summary(
-            &self.compaction_summary_file(),
-            summary,
-            previous_count + request.turn_count(),
-        )?;
-        self.conv_db
-            .delete_turns_by_ids(&request.compact_turn_ids)?;
-        Ok(())
-    }
-
-    /// 读取可注入上下文的压缩摘要消息。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 压缩摘要上下文消息
-    pub fn compaction_summary_context(&self) -> Result<Option<String>> {
-        Ok(self
-            .load_compaction_summary()?
-            .map(|summary| compaction::summary_context_message(&summary.summary)))
-    }
-
-    /// 读取压缩摘要。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 压缩摘要
-    fn load_compaction_summary(&self) -> Result<Option<compaction::CompactionSummary>> {
-        compaction::load_summary(&self.compaction_summary_file())
-    }
-
-    /// 清理压缩摘要。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 清理是否成功
-    pub fn clear_compaction_summary(&self) -> Result<()> {
-        compaction::clear_summary(&self.compaction_summary_file())
-    }
-
     /// 清空对话历史。
     ///
     /// 返回:
@@ -354,7 +226,8 @@ impl StateStore {
     pub fn reset_conversation(&self) -> Result<()> {
         self.conv_db.reset()?;
         self.clear_loaded_tools()?;
-        self.clear_compaction_summary()
+        self.clear_compaction_summary()?;
+        self.clear_last_usage()
     }
 
     /// 读取当前会话已经载入的工具集合。
@@ -408,6 +281,28 @@ impl StateStore {
     pub fn add_usage(&self, usage: &Usage) -> Result<()> {
         self.init_files()?;
         usage::add_usage(&self.usage_file(), usage)
+    }
+
+    /// 读取最近一次 provider usage。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 最近一次 provider usage
+    fn last_usage(&self) -> Result<Option<Usage>> {
+        usage::last_usage(&self.usage_file())
+    }
+
+    /// 清空最近一次 provider usage。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 清空是否成功
+    fn clear_last_usage(&self) -> Result<()> {
+        usage::clear_last_usage(&self.usage_file())
     }
 
     /// 是否存在运行中轮次。
@@ -627,9 +522,16 @@ mod tests {
                 .complete_turn(&turn_id, &"a".repeat(200), None)
                 .unwrap();
         }
+        store
+            .add_usage(&Usage {
+                prompt_tokens: 900,
+                completion_tokens: 20,
+                total_tokens: 920,
+            })
+            .unwrap();
 
         let request = store
-            .select_compaction(1000, 0.5, 0.2)
+            .select_compaction(1000, 0.5)
             .unwrap()
             .expect("compaction request");
         store
@@ -655,8 +557,15 @@ mod tests {
                 .complete_turn(&turn_id, &"a".repeat(200), None)
                 .unwrap();
         }
+        store
+            .add_usage(&Usage {
+                prompt_tokens: 900,
+                completion_tokens: 20,
+                total_tokens: 920,
+            })
+            .unwrap();
         let request = store
-            .select_compaction(1000, 0.5, 0.2)
+            .select_compaction(1000, 0.5)
             .unwrap()
             .expect("compaction request");
         store.apply_compaction(&request, "summary").unwrap();
@@ -664,6 +573,43 @@ mod tests {
         store.reset_conversation().unwrap();
 
         assert!(store.compaction_summary_context().unwrap().is_none());
+    }
+
+    #[test]
+    fn compaction_skips_without_provider_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        for index in 1..=4 {
+            let turn_id = format!("turn_{index}");
+            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
+            store
+                .complete_turn(&turn_id, &"a".repeat(200), None)
+                .unwrap();
+        }
+
+        assert!(store.select_compaction(1000, 0.5).unwrap().is_none());
+    }
+
+    #[test]
+    fn compaction_skips_when_provider_usage_is_under_threshold() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        for index in 1..=4 {
+            let turn_id = format!("turn_{index}");
+            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
+            store
+                .complete_turn(&turn_id, &"a".repeat(200), None)
+                .unwrap();
+        }
+        store
+            .add_usage(&Usage {
+                prompt_tokens: 200,
+                completion_tokens: 20,
+                total_tokens: 220,
+            })
+            .unwrap();
+
+        assert!(store.select_compaction(1000, 0.5).unwrap().is_none());
     }
 
     #[test]

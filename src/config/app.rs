@@ -327,6 +327,87 @@ impl AppConfig {
         Ok(())
     }
 
+    /// 按模型标签选择当前 provider 和模型。
+    ///
+    /// 参数:
+    /// - `tag`: 模型标签
+    ///
+    /// 返回:
+    /// - 被选中的 provider/model
+    pub fn select_active_provider_model_with_tag(
+        &mut self,
+        tag: &str,
+    ) -> Result<ProviderModelChoice> {
+        let tag = tag.trim();
+        if tag.is_empty() {
+            bail!("model tag cannot be empty");
+        }
+        let choices = self.provider_model_choices_with_tag(tag);
+        let choice = choices
+            .iter()
+            .find(|choice| {
+                self.active_provider == choice.provider_id
+                    && self
+                        .provider(Some(&choice.provider_id))
+                        .map(|provider| provider.default_model == choice.model)
+                        .unwrap_or(false)
+            })
+            .or_else(|| choices.first())
+            .cloned()
+            .with_context(|| format!("no active provider model has tag: {tag}"))?;
+        self.set_active_provider_model(&choice.provider_id, &choice.model)?;
+        Ok(choice)
+    }
+
+    /// 返回拥有指定标签的 provider/model 列表。
+    ///
+    /// 参数:
+    /// - `tag`: 模型标签
+    ///
+    /// 返回:
+    /// - 匹配的 provider/model 列表
+    pub fn provider_model_choices_with_tag(&self, tag: &str) -> Vec<ProviderModelChoice> {
+        let tag = tag.trim();
+        self.providers
+            .iter()
+            .flat_map(|provider| {
+                let models =
+                    if provider.models.is_empty() && !provider.default_model.trim().is_empty() {
+                        vec![provider.default_model.clone()]
+                    } else {
+                        provider.models.clone()
+                    };
+                models
+                    .into_iter()
+                    .filter(|model| {
+                        !model.trim().is_empty()
+                            && provider
+                                .model_tags_for(model)
+                                .iter()
+                                .any(|item| item == tag)
+                    })
+                    .map(|model| ProviderModelChoice {
+                        provider_id: provider.id.clone(),
+                        provider_name: provider.display_name.clone(),
+                        model,
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    }
+
+    /// 判断当前模型是否允许工具调用。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 未显式关闭时返回 true
+    pub fn active_model_tools_enabled(&self) -> Result<bool> {
+        let provider = self.provider(None)?;
+        Ok(provider.model_tools_enabled_for(&provider.default_model))
+    }
+
     pub fn active_context_chars(&self) -> Result<usize> {
         let provider = self.provider(None)?;
         Ok(provider

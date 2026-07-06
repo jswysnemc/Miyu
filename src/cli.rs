@@ -34,6 +34,7 @@ mod config_commands;
 mod fuzzy_select;
 mod history;
 mod init;
+mod input_flags;
 mod kb_commands;
 mod localization;
 mod memory_commands;
@@ -63,6 +64,7 @@ use config_commands::run_config;
 use fuzzy_select::inline_fuzzy_select;
 use history::run_history;
 use init::{remove_shell_hooks, run_init, InitKind};
+use input_flags::parse_message_input_flags;
 use kb_commands::{run_kb, run_update_default_kb};
 pub(crate) use localization::parse;
 use memory_commands::run_memory;
@@ -98,11 +100,15 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     if cli.shell_intercept {
         let shell_name = cli.shell.as_deref().unwrap_or("fish");
-        let input = clipboard::ClipboardCliInput {
-            message: join_message(cli.message),
-            clipb: cli.clipb,
-        };
-        return run_shell_intercept(&paths, shell_name, input.message, input.clipb).await;
+        let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+        return run_shell_intercept(
+            &paths,
+            shell_name,
+            input.message,
+            input.clipb,
+            input.web_search,
+        )
+        .await;
     }
 
     if !paths.config_file.exists() && !matches!(cli.command, Some(Command::Init)) {
@@ -113,7 +119,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
         Some(Command::Tool(args)) => run_tool(&paths, mode, args).await,
         Some(Command::Ask(args)) => {
-            let input = clipboard::chat_input_from_parts(args.message, args.clipb);
+            let input = parse_message_input_flags(args.message, args.clipb, args.web_search);
             run_chat_with_options(
                 &paths,
                 input.message,
@@ -121,6 +127,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                 false,
                 mode,
                 input.clipb,
+                input.web_search,
                 args.thinking.or_else(|| thinking_override.clone()),
             )
             .await
@@ -148,8 +155,8 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Set(args)) => run_set(&paths, args),
         Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
         None => {
-            let input = clipboard::chat_input_from_parts(cli.message, cli.clipb);
-            if input.message.is_empty() && !input.clipb {
+            let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+            if input.message.is_empty() && !input.clipb && !input.web_search {
                 run_repl(&paths, mode, thinking_override.clone()).await
             } else {
                 run_chat_with_options(
@@ -159,6 +166,7 @@ pub async fn run(cli: Cli) -> Result<()> {
                     false,
                     mode,
                     input.clipb,
+                    input.web_search,
                     thinking_override.clone(),
                 )
                 .await

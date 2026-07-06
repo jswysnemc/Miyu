@@ -170,36 +170,6 @@ impl ConversationDb {
         Ok(turns)
     }
 
-    /// 删除最早的若干非运行中轮次并返回被删除内容。
-    ///
-    /// 参数:
-    /// - `count`: 删除轮次数量
-    ///
-    /// 返回:
-    /// - 被删除的轮次
-    pub fn trim_oldest_non_running_turns(&self, count: usize) -> Result<Vec<Turn>> {
-        if count == 0 {
-            return Ok(Vec::new());
-        }
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT turn_id, seq, user_content, user_timestamp, assistant_content,
-                    assistant_reasoning, assistant_timestamp, status, tool_reports
-             FROM turns WHERE status != 'running' ORDER BY seq ASC LIMIT ?1",
-        )?;
-        let to_remove = stmt
-            .query_map(params![count as i64], map_turn)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        drop(stmt);
-        for turn in &to_remove {
-            conn.execute(
-                "DELETE FROM turns WHERE turn_id = ?1",
-                params![turn.turn_id],
-            )?;
-        }
-        Ok(to_remove)
-    }
-
     /// 按轮次标识删除对话轮次。
     ///
     /// 参数:

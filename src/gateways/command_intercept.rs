@@ -1,9 +1,6 @@
-use crate::config::AppConfig;
+use crate::control_commands::{parse_control_command, ControlCommand, ControlSurface};
 use crate::i18n::text as t;
-use crate::memory::MemoryStore;
 use crate::paths::MiyuPaths;
-use crate::state::StateStore;
-use crate::tools;
 use anyhow::Result;
 
 /// 处理 gateway 入站控制命令。
@@ -14,22 +11,34 @@ use anyhow::Result;
 ///
 /// 返回:
 /// - 已处理时返回需要发送的回复文本，否则返回空
-pub(crate) fn handle_gateway_command(paths: &MiyuPaths, prompt: &str) -> Result<Option<String>> {
-    if !is_gateway_reset_all_command(prompt) {
-        return Ok(None);
+pub(crate) async fn handle_gateway_command(
+    paths: &MiyuPaths,
+    prompt: &str,
+) -> Result<Option<String>> {
+    if is_gateway_reset_all_command(prompt) {
+        let message = crate::control_commands::clear_state(paths, true)?;
+        return Ok(Some(format!(
+            "{message}；{}",
+            t("gateway is still running", "gateway 仍在运行")
+        )));
     }
-    AppConfig::init_files(paths)?;
-    let config = AppConfig::load_or_default(paths)?;
-    StateStore::new(paths)?.reset_conversation()?;
-    MemoryStore::new(&config, paths).reset_all(false)?;
-    tools::clear_aur_review_state(paths)?;
-    Ok(Some(
-        t(
-            "cleared current conversation history and all memory; gateway is still running",
-            "已清空当前会话历史与全部记忆，gateway 仍在运行",
-        )
-        .to_string(),
-    ))
+    let Some(command) = parse_control_command(prompt, ControlSurface::Gateway)? else {
+        return Ok(None);
+    };
+    Ok(Some(match command {
+        ControlCommand::Help => crate::control_commands::help_text(ControlSurface::Gateway),
+        ControlCommand::New { title } => {
+            crate::control_commands::create_new_session(paths, &title)?
+        }
+        ControlCommand::Compact { keep_tail_turns } => {
+            crate::control_commands::compact_conversation_from_paths(paths, keep_tail_turns).await?
+        }
+        ControlCommand::Clear { all } => crate::control_commands::clear_state(paths, all)?,
+        ControlCommand::Model { selection } => {
+            crate::control_commands::run_model_command(paths, selection, ControlSurface::Gateway)?
+                .message
+        }
+    }))
 }
 
 /// 判断入站消息是否是 gateway 安全重置命令。
@@ -53,7 +62,9 @@ fn is_gateway_reset_all_command(prompt: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
     use crate::paths::MiyuPaths;
+    use crate::state::StateStore;
     use std::path::PathBuf;
 
     fn test_paths(root: PathBuf) -> MiyuPaths {
@@ -82,8 +93,8 @@ mod tests {
         assert!(!is_gateway_reset_all_command("please miyu reset all"));
     }
 
-    #[test]
-    fn gateway_reset_all_clears_state_without_agent_turn() {
+    #[tokio::test]
+    async fn gateway_reset_all_clears_state_without_agent_turn() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path().to_path_buf());
         AppConfig::init_files(&paths).unwrap();
@@ -91,9 +102,23 @@ mod tests {
         state.start_turn("turn_1", "hello").unwrap();
         state.complete_turn("turn_1", "hi", None).unwrap();
 
-        let reply = handle_gateway_command(&paths, "miyu reset all").unwrap();
+        let reply = handle_gateway_command(&paths, "miyu reset all")
+            .await
+            .unwrap();
 
         assert!(reply.unwrap().contains("gateway"));
         assert!(state.load_conversation().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn gateway_help_supports_english_and_chinese_slash_commands() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+
+        let english = handle_gateway_command(&paths, "/help").await.unwrap();
+        let chinese = handle_gateway_command(&paths, "/帮助").await.unwrap();
+
+        assert!(english.unwrap().contains("/compact"));
+        assert!(chinese.unwrap().contains("/压缩"));
     }
 }

@@ -7,7 +7,7 @@ use serde::{Deserialize, Deserializer};
 /// - `value`: 表单或配置中的上下文长度，可使用纯数字、k 或 m 单位
 ///
 /// 返回:
-/// - 大于 0 时返回字符数，空值或 0 返回空
+/// - 大于 0 时返回 token 数，空值或 0 返回空
 pub fn parse_context_chars(value: &str) -> Result<Option<usize>> {
     let value = value.trim().replace('_', "").to_ascii_lowercase();
     if value.is_empty() {
@@ -15,16 +15,16 @@ pub fn parse_context_chars(value: &str) -> Result<Option<usize>> {
     }
 
     let (number, multiplier) = split_context_unit(&value)?;
-    let chars = if number.contains('.') {
+    let tokens = if number.contains('.') {
         parse_decimal_context_chars(number, multiplier)?
     } else {
         parse_integer_context_chars(number, multiplier)?
     };
 
-    if chars == 0 {
+    if tokens == 0 {
         Ok(None)
     } else {
-        Ok(Some(chars))
+        Ok(Some(tokens))
     }
 }
 
@@ -86,7 +86,7 @@ fn split_context_unit(value: &str) -> Result<(&str, usize)> {
 /// - `multiplier`: 单位倍数
 ///
 /// 返回:
-/// - 换算后的字符数
+/// - 换算后的 token 数
 fn parse_integer_context_chars(number: &str, multiplier: usize) -> Result<usize> {
     let number = number
         .parse::<usize>()
@@ -103,7 +103,7 @@ fn parse_integer_context_chars(number: &str, multiplier: usize) -> Result<usize>
 /// - `multiplier`: 单位倍数
 ///
 /// 返回:
-/// - 换算后的字符数
+/// - 换算后的 token 数
 fn parse_decimal_context_chars(number: &str, multiplier: usize) -> Result<usize> {
     let number = number
         .parse::<f64>()
@@ -111,11 +111,11 @@ fn parse_decimal_context_chars(number: &str, multiplier: usize) -> Result<usize>
     if !number.is_finite() || number < 0.0 {
         bail!("invalid context length: {number}");
     }
-    let chars = (number * multiplier as f64).round();
-    if chars > usize::MAX as f64 {
+    let tokens = (number * multiplier as f64).round();
+    if tokens > usize::MAX as f64 {
         bail!("context length is too large");
     }
-    Ok(chars as usize)
+    Ok(tokens as usize)
 }
 
 #[derive(Deserialize)]

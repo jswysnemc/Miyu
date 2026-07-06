@@ -144,7 +144,7 @@ async fn process_message_event(
     let _guard = agent_lock.lock().await;
     let context = ChannelContext::weixin(event.from_user_id.clone(), event.context_token.clone());
     save_latest_channel_context(paths, &context)?;
-    if let Some(reply) = handle_gateway_command(paths, &event.prompt)? {
+    if let Some(reply) = handle_gateway_command(paths, &event.prompt).await? {
         client
             .send_text(&event.from_user_id, &reply, event.context_token.as_deref())
             .await?;

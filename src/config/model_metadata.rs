@@ -25,6 +25,8 @@ pub struct ModelMetadata {
         skip_serializing_if = "Option::is_none"
     )]
     pub context_chars: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
 }
@@ -36,20 +38,20 @@ impl ModelMetadata {
     /// - 无
     ///
     /// 返回:
-    /// - 没有上下文长度和标签时返回 true
+    /// - 没有上下文长度、工具开关和标签时返回 true
     pub fn is_empty(&self) -> bool {
-        self.context_chars.is_none() && self.tags.is_empty()
+        self.context_chars.is_none() && self.tools_enabled.is_none() && self.tags.is_empty()
     }
 }
 
 impl ProviderConfig {
-    /// 获取模型上下文字符数。
+    /// 获取模型上下文 token 数。
     ///
     /// 参数:
     /// - `model`: 模型 ID
     ///
     /// 返回:
-    /// - 新模型元数据中的上下文长度，或旧字段中的上下文长度
+    /// - 新模型元数据中的上下文 token 数，或旧字段中的兼容值
     pub fn model_context_chars_for(&self, model: &str) -> Option<usize> {
         self.model_metadata
             .get(model)
@@ -71,11 +73,25 @@ impl ProviderConfig {
             .unwrap_or(&[])
     }
 
-    /// 设置模型上下文字符数。
+    /// 判断模型是否允许工具调用。
     ///
     /// 参数:
     /// - `model`: 模型 ID
-    /// - `context_chars`: 上下文字符数，空值表示取消配置
+    ///
+    /// 返回:
+    /// - 没有显式关闭时返回 true
+    pub fn model_tools_enabled_for(&self, model: &str) -> bool {
+        self.model_metadata
+            .get(model)
+            .and_then(|metadata| metadata.tools_enabled)
+            .unwrap_or(true)
+    }
+
+    /// 设置模型上下文 token 数。
+    ///
+    /// 参数:
+    /// - `model`: 模型 ID
+    /// - `context_chars`: 上下文 token 数，空值表示取消配置
     ///
     /// 返回:
     /// - 无
@@ -110,6 +126,28 @@ impl ProviderConfig {
             }
         } else {
             self.model_metadata_mut(model).tags = tags;
+        }
+        self.remove_empty_model_metadata(model);
+    }
+
+    /// 设置模型工具调用开关。
+    ///
+    /// 参数:
+    /// - `model`: 模型 ID
+    /// - `enabled`: 是否允许工具调用，true 会恢复默认兼容行为
+    ///
+    /// 返回:
+    /// - 无
+    pub fn set_model_tools_enabled_for(&mut self, model: &str, enabled: bool) {
+        if model.trim().is_empty() {
+            return;
+        }
+        if enabled {
+            if let Some(metadata) = self.model_metadata.get_mut(model) {
+                metadata.tools_enabled = None;
+            }
+        } else {
+            self.model_metadata_mut(model).tools_enabled = Some(false);
         }
         self.remove_empty_model_metadata(model);
     }
@@ -153,15 +191,4 @@ impl ProviderConfig {
 /// - 标签属于内置标签集合时返回 true
 pub fn is_valid_model_tag(tag: &str) -> bool {
     MODEL_TAGS.contains(&tag.trim())
-}
-
-/// 返回模型标签显示文本。
-///
-/// 参数:
-/// - `tags`: 标签列表
-///
-/// 返回:
-/// - 逗号分隔的标签文本
-pub fn format_model_tags(tags: &[String]) -> String {
-    tags.join(",")
 }

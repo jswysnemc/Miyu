@@ -5,6 +5,7 @@ pub(super) async fn run_shell_intercept(
     shell_name: &str,
     message: String,
     clipb: bool,
+    web_search: bool,
 ) -> Result<()> {
     if !matches!(shell_name, "fish" | "bash" | "zsh" | "powershell") {
         bail!("{}: {shell_name}", t("unsupported shell", "不支持的 shell"));
@@ -15,8 +16,17 @@ pub(super) async fn run_shell_intercept(
             t("not a natural language command", "不是自然语言命令")
         );
     }
-    let result =
-        run_chat_with_options(paths, message, None, false, AgentMode::Yolo, clipb, None).await;
+    let result = run_chat_with_options(
+        paths,
+        message,
+        None,
+        false,
+        AgentMode::Yolo,
+        clipb,
+        web_search,
+        None,
+    )
+    .await;
     drain_stdin();
     result
 }
@@ -58,14 +68,24 @@ pub(super) async fn run_chat_with_options(
     plain: bool,
     mode: AgentMode,
     clipb: bool,
+    web_search: bool,
     thinking_override: Option<String>,
 ) -> Result<()> {
-    if message.is_empty() && !clipb {
+    if message.is_empty() && !clipb && !web_search {
         return run_repl(paths, mode, thinking_override).await;
     }
     AppConfig::init_files(paths)?;
     let mut config = AppConfig::load_or_default(paths)?;
     apply_thinking_override(&mut config, thinking_override.as_deref())?;
+    if web_search {
+        let choice =
+            config.select_active_provider_model_with_tag(crate::config::MODEL_TAG_WEB_SEARCH)?;
+        println!(
+            "{}: {}",
+            t("web search model", "网络搜索模型"),
+            choice.label()
+        );
+    }
     let chat_input = prepare_clipboard_chat_input(message, clipb)?;
     let state = StateStore::new(paths)?;
     state.init_files()?;

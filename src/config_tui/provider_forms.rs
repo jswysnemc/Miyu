@@ -6,7 +6,8 @@ use std::io;
 
 use super::form::{parse_bool_field, run_form, Field};
 use super::model_metadata_form::{
-    apply_context_chars_field, apply_tags_field, context_chars_field_value, tags_field_value,
+    apply_context_chars_field, apply_tag_fields, apply_tools_enabled_field,
+    context_chars_field_value, tag_fields, tools_enabled_field,
 };
 
 /// 编辑 provider 配置表单。
@@ -22,7 +23,6 @@ pub(super) fn edit_provider_form(
     provider: ProviderConfig,
 ) -> Result<Option<ProviderConfig>> {
     let current_context_chars = context_chars_field_value(&provider, &provider.default_model);
-    let current_tags = tags_field_value(&provider, &provider.default_model);
     let mut fields = vec![
         Field::new(t("Config ID", "配置 ID"), provider.id.clone()),
         Field::new(t("Display name", "显示名称"), provider.display_name.clone()),
@@ -43,10 +43,14 @@ pub(super) fn edit_provider_form(
             provider.default_model.clone(),
         ),
         Field::new(
-            t("Model context chars", "模型上下文字符数"),
+            t("Model context tokens", "模型上下文 token 数"),
             current_context_chars,
         ),
-        Field::new(t("Model tags", "模型标签"), current_tags),
+    ];
+    let tag_start = fields.len();
+    fields.extend(tag_fields(&provider, &provider.default_model));
+    let tag_end = fields.len();
+    fields.extend([
         Field::new(
             t("Timeout seconds", "超时秒数"),
             provider.timeout_seconds.to_string(),
@@ -75,7 +79,7 @@ pub(super) fn edit_provider_form(
             t("Custom Body JSON", "自定义 Body JSON"),
             provider.extra_body.clone(),
         ),
-    ];
+    ]);
     if !run_form(stdout, t(" EDIT PROVIDER ", " 编辑供应商 "), &mut fields)? {
         return Ok(None);
     }
@@ -84,7 +88,7 @@ pub(super) fn edit_provider_form(
     if !default_model.trim().is_empty() && !models.iter().any(|item| item == &default_model) {
         models.push(default_model.clone());
     }
-    let extra_body = normalize_extra_body(&fields[12].value)?;
+    let extra_body = normalize_extra_body(&fields[tag_end + 4].value)?;
     let mut updated = ProviderConfig {
         id: fields[0].value.trim().to_string(),
         display_name: fields[1].value.trim().to_string(),
@@ -95,15 +99,15 @@ pub(super) fn edit_provider_form(
         model_context_chars: provider.model_context_chars.clone(),
         model_metadata: provider.model_metadata.clone(),
         default_model,
-        timeout_seconds: fields[8].value.trim().parse().unwrap_or(60),
-        temperature: fields[9].value.trim().parse().unwrap_or(0.7),
-        thinking_level: fields[10].value.trim().to_string(),
-        thinking_format: fields[11].value.trim().to_string(),
+        timeout_seconds: fields[tag_end].value.trim().parse().unwrap_or(60),
+        temperature: fields[tag_end + 1].value.trim().parse().unwrap_or(0.7),
+        thinking_level: fields[tag_end + 2].value.trim().to_string(),
+        thinking_format: fields[tag_end + 3].value.trim().to_string(),
         extra_body,
     };
     let default_model = updated.default_model.clone();
     apply_context_chars_field(&mut updated, &default_model, &fields[6].value)?;
-    apply_tags_field(&mut updated, &default_model, &fields[7].value)?;
+    apply_tag_fields(&mut updated, &default_model, &fields[tag_start..tag_end])?;
     Ok(Some(updated))
 }
 
@@ -149,13 +153,18 @@ pub(super) fn edit_model_form(
     let active = provider.models.iter().any(|item| item == model);
     let current = provider.default_model == model;
     let context_chars = context_chars_field_value(provider, model);
-    let tags = tags_field_value(provider, model);
     let mut fields = vec![
         Field::boolean(t("Activate model", "激活模型"), active),
         Field::boolean(t("Set as current model", "设为当前模型"), current),
-        Field::new(t("Model context chars", "模型上下文字符数"), context_chars),
-        Field::new(t("Model tags", "模型标签"), tags),
+        tools_enabled_field(provider, model),
+        Field::new(
+            t("Model context tokens", "模型上下文 token 数"),
+            context_chars,
+        ),
     ];
+    let tag_start = fields.len();
+    fields.extend(tag_fields(provider, model));
+    let tag_end = fields.len();
     if !run_form(stdout, t(" EDIT MODEL ", " 编辑模型 "), &mut fields)? {
         return Ok(false);
     }
@@ -183,8 +192,9 @@ pub(super) fn edit_model_form(
             provider.models.push(provider.default_model.clone());
         }
     }
-    apply_context_chars_field(provider, model, &fields[2].value)?;
-    apply_tags_field(provider, model, &fields[3].value)?;
+    apply_tools_enabled_field(provider, model, &fields[2].value)?;
+    apply_context_chars_field(provider, model, &fields[3].value)?;
+    apply_tag_fields(provider, model, &fields[tag_start..tag_end])?;
     Ok(true)
 }
 

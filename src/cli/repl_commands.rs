@@ -1,22 +1,9 @@
-const REPL_COMMANDS: &[&str] = &[
-    "/providers",
-    "/config",
-    "/ps",
-    "/thinking",
-    "/plan",
-    "/yolo",
-    "/undo",
-    "/reset",
-    "/help",
-    "/exit",
-];
-
 /// 返回 REPL 支持的斜杠菜单。
 ///
 /// 返回:
 /// - 斜杠菜单列表
 pub(super) fn repl_commands() -> &'static [&'static str] {
-    REPL_COMMANDS
+    crate::control_commands::catalog::REPL_COMMANDS
 }
 
 /// 根据当前输入生成斜杠菜单补全建议。
@@ -88,6 +75,11 @@ mod tests {
     fn repl_commands_include_recent_management_entries() {
         assert!(repl_commands().contains(&"/thinking"));
         assert!(repl_commands().contains(&"/ps"));
+        assert!(repl_commands().contains(&"/compact"));
+        assert!(repl_commands().contains(&"/model"));
+        assert!(!repl_commands().contains(&"/帮助"));
+        assert!(!repl_commands().contains(&"/压缩"));
+        assert!(!repl_commands().contains(&"/模型"));
         assert!(!repl_commands().contains(&"/commands"));
         assert!(!repl_commands().contains(&"/clipb"));
         assert!(!repl_commands().contains(&"/set"));

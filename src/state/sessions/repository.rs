@@ -1,4 +1,5 @@
 use super::model::{SessionInfo, DEFAULT_SESSION_ID};
+use super::workspace::{current_workspace_scope, WorkspaceScope};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -12,7 +13,8 @@ use std::path::{Path, PathBuf};
 /// 返回:
 /// - 会话列表
 pub fn list_sessions(paths: &MiyuPaths) -> Result<Vec<SessionInfo>> {
-    ensure_default_session(paths)
+    let scope = current_session_scope(paths)?;
+    ensure_default_session_for_base(&scope.state_dir)
 }
 
 /// 创建新会话并设为当前会话。
@@ -24,6 +26,7 @@ pub fn list_sessions(paths: &MiyuPaths) -> Result<Vec<SessionInfo>> {
 /// 返回:
 /// - 新会话信息
 pub fn create_session(paths: &MiyuPaths, title: Option<&str>) -> Result<SessionInfo> {
+    let scope = current_session_scope(paths)?;
     let now = Utc::now().to_rfc3339();
     let session = SessionInfo {
         id: new_session_id(),
@@ -35,11 +38,11 @@ pub fn create_session(paths: &MiyuPaths, title: Option<&str>) -> Result<SessionI
         created_at: now.clone(),
         updated_at: now,
     };
-    let mut sessions = ensure_default_session(paths)?;
+    let mut sessions = ensure_default_session_for_base(&scope.state_dir)?;
     sessions.insert(0, session.clone());
-    save_sessions(paths, &sessions)?;
-    write_current_session_id(paths, &session.id)?;
-    std::fs::create_dir_all(session_state_dir(paths, &session.id))?;
+    save_sessions_to_base(&scope.state_dir, &sessions)?;
+    write_current_session_id_to_base(&scope.state_dir, &session.id)?;
+    std::fs::create_dir_all(session_state_dir(&scope.state_dir, &session.id))?;
     Ok(session)
 }
 
@@ -52,13 +55,14 @@ pub fn create_session(paths: &MiyuPaths, title: Option<&str>) -> Result<SessionI
 /// 返回:
 /// - 当前会话信息
 pub fn switch_session(paths: &MiyuPaths, session_id: &str) -> Result<SessionInfo> {
+    let scope = current_session_scope(paths)?;
     let session_id = session_id.trim();
-    let session = ensure_default_session(paths)?
+    let session = ensure_default_session_for_base(&scope.state_dir)?
         .into_iter()
         .find(|session| session.id == session_id)
         .with_context(|| format!("session not found: {session_id}"))?;
-    write_current_session_id(paths, &session.id)?;
-    std::fs::create_dir_all(session_state_dir(paths, &session.id))?;
+    write_current_session_id_to_base(&scope.state_dir, &session.id)?;
+    std::fs::create_dir_all(session_state_dir(&scope.state_dir, &session.id))?;
     Ok(session)
 }
 
@@ -72,11 +76,12 @@ pub fn switch_session(paths: &MiyuPaths, session_id: &str) -> Result<SessionInfo
 /// 返回:
 /// - 更新后的会话信息
 pub fn rename_session(paths: &MiyuPaths, session_id: &str, title: &str) -> Result<SessionInfo> {
+    let scope = current_session_scope(paths)?;
     let title = title.trim();
     if title.is_empty() {
         bail!("session title cannot be empty");
     }
-    let mut sessions = ensure_default_session(paths)?;
+    let mut sessions = ensure_default_session_for_base(&scope.state_dir)?;
     let session = sessions
         .iter_mut()
         .find(|session| session.id == session_id.trim())
@@ -85,7 +90,7 @@ pub fn rename_session(paths: &MiyuPaths, session_id: &str, title: &str) -> Resul
     session.updated_at = Utc::now().to_rfc3339();
     let updated = session.clone();
     sort_sessions(&mut sessions);
-    save_sessions(paths, &sessions)?;
+    save_sessions_to_base(&scope.state_dir, &sessions)?;
     Ok(updated)
 }
 
@@ -98,23 +103,24 @@ pub fn rename_session(paths: &MiyuPaths, session_id: &str, title: &str) -> Resul
 /// 返回:
 /// - 是否删除了会话
 pub fn delete_session(paths: &MiyuPaths, session_id: &str) -> Result<bool> {
+    let scope = current_session_scope(paths)?;
     let session_id = session_id.trim();
     if session_id == DEFAULT_SESSION_ID {
         bail!("default session cannot be deleted");
     }
-    let mut sessions = ensure_default_session(paths)?;
+    let mut sessions = ensure_default_session_for_base(&scope.state_dir)?;
     let before = sessions.len();
     sessions.retain(|session| session.id != session_id);
     if before == sessions.len() {
         return Ok(false);
     }
-    save_sessions(paths, &sessions)?;
-    let state_dir = session_state_dir(paths, session_id);
+    save_sessions_to_base(&scope.state_dir, &sessions)?;
+    let state_dir = session_state_dir(&scope.state_dir, session_id);
     if state_dir.exists() {
         std::fs::remove_dir_all(state_dir)?;
     }
-    if read_current_session_id(paths)? == session_id {
-        write_current_session_id(paths, DEFAULT_SESSION_ID)?;
+    if read_current_session_id_from_base(&scope.state_dir)? == session_id {
+        write_current_session_id_to_base(&scope.state_dir, DEFAULT_SESSION_ID)?;
     }
     Ok(true)
 }
@@ -127,17 +133,19 @@ pub fn delete_session(paths: &MiyuPaths, session_id: &str) -> Result<bool> {
 /// 返回:
 /// - 当前会话信息
 pub fn ensure_active_session(paths: &MiyuPaths) -> Result<SessionInfo> {
-    let sessions = ensure_default_session(paths)?;
-    let active_id = read_current_session_id(paths)?;
+    let scope = current_session_scope(paths)?;
+    let sessions = ensure_default_session_for_base(&scope.state_dir)?;
+    let active_id = read_current_session_id_from_base(&scope.state_dir)?;
     if let Some(session) = sessions.iter().find(|session| session.id == active_id) {
-        std::fs::create_dir_all(session_state_dir(paths, &session.id))?;
+        std::fs::create_dir_all(session_state_dir(&scope.state_dir, &session.id))?;
         return Ok(session.clone());
     }
-    write_current_session_id(paths, DEFAULT_SESSION_ID)?;
+    write_current_session_id_to_base(&scope.state_dir, DEFAULT_SESSION_ID)?;
     let session = sessions
         .into_iter()
         .find(|session| session.id == DEFAULT_SESSION_ID)
         .expect("default session must exist");
+    std::fs::create_dir_all(session_state_dir(&scope.state_dir, &session.id))?;
     Ok(session)
 }
 
@@ -149,8 +157,173 @@ pub fn ensure_active_session(paths: &MiyuPaths) -> Result<SessionInfo> {
 /// 返回:
 /// - 当前会话状态目录
 pub fn active_state_dir(paths: &MiyuPaths) -> Result<PathBuf> {
+    let scope = current_session_scope(paths)?;
     let session = ensure_active_session(paths)?;
-    Ok(session_state_dir(paths, &session.id))
+    Ok(session_state_dir(&scope.state_dir, &session.id))
+}
+
+/// 返回当前工作区会话作用域目录。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+///
+/// 返回:
+/// - 当前工作区会话作用域目录
+pub fn session_scope_dir(paths: &MiyuPaths) -> Result<PathBuf> {
+    Ok(current_session_scope(paths)?.state_dir)
+}
+
+/// 返回完成旧状态迁移后的当前工作区会话作用域。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+///
+/// 返回:
+/// - 当前工作区会话作用域
+fn current_session_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
+    let scope = current_workspace_scope(paths)?;
+    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
+    Ok(scope)
+}
+
+/// 首次使用工作区会话时迁移旧版全局会话状态。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_state_dir`: 当前工作区会话作用域目录
+///
+/// 返回:
+/// - 迁移是否成功
+fn migrate_legacy_sessions_to_workspace(
+    paths: &MiyuPaths,
+    workspace_state_dir: &Path,
+) -> Result<()> {
+    if workspace_has_state(workspace_state_dir)? {
+        return Ok(());
+    }
+
+    let legacy_sessions_dir = paths.state_dir.join("sessions");
+    let legacy_index = legacy_sessions_dir.join("index.json");
+    let legacy_current = legacy_sessions_dir.join("current");
+    let legacy_data_dir = legacy_sessions_dir.join("data");
+    let has_legacy_sessions =
+        legacy_index.exists() || legacy_current.exists() || legacy_data_dir.exists();
+    let has_legacy_default = legacy_default_files()
+        .iter()
+        .any(|name| paths.state_dir.join(name).exists());
+    if !has_legacy_sessions && !has_legacy_default {
+        return Ok(());
+    }
+
+    std::fs::create_dir_all(workspace_state_dir)?;
+    copy_file_if_missing(&legacy_index, &sessions_file(workspace_state_dir))?;
+    copy_file_if_missing(&legacy_current, &current_session_file(workspace_state_dir))?;
+    copy_dir_contents_if_missing(&legacy_data_dir, &workspace_state_dir.join("data"))?;
+
+    if has_legacy_default {
+        let default_dir = session_state_dir(workspace_state_dir, DEFAULT_SESSION_ID);
+        std::fs::create_dir_all(&default_dir)?;
+        for name in legacy_default_files() {
+            copy_file_if_missing(&paths.state_dir.join(name), &default_dir.join(name))?;
+        }
+    }
+    Ok(())
+}
+
+/// 判断工作区会话作用域是否已经存在有效状态。
+///
+/// 参数:
+/// - `workspace_state_dir`: 当前工作区会话作用域目录
+///
+/// 返回:
+/// - 存在状态时返回 true
+fn workspace_has_state(workspace_state_dir: &Path) -> Result<bool> {
+    if sessions_file(workspace_state_dir).exists()
+        || current_session_file(workspace_state_dir).exists()
+    {
+        return Ok(true);
+    }
+    has_dir_entries(&workspace_state_dir.join("data"))
+}
+
+/// 返回旧版默认会话状态文件名。
+///
+/// 返回:
+/// - 文件名列表
+fn legacy_default_files() -> &'static [&'static str] {
+    &[
+        "conversation.db",
+        "conversation.jsonl",
+        "usage.json",
+        "loaded-tools.json",
+        "miyu.log",
+        "profile.md",
+        "compaction-summary.json",
+        "prompt.sha256",
+    ]
+}
+
+/// 判断目录是否存在条目。
+///
+/// 参数:
+/// - `path`: 目录路径
+///
+/// 返回:
+/// - 存在条目时返回 true
+fn has_dir_entries(path: &Path) -> Result<bool> {
+    if !path.is_dir() {
+        return Ok(false);
+    }
+    Ok(std::fs::read_dir(path)?.next().transpose()?.is_some())
+}
+
+/// 复制文件，目标已存在时跳过。
+///
+/// 参数:
+/// - `source`: 源文件路径
+/// - `target`: 目标文件路径
+///
+/// 返回:
+/// - 复制是否成功
+fn copy_file_if_missing(source: &Path, target: &Path) -> Result<()> {
+    if !source.is_file() || target.exists() {
+        return Ok(());
+    }
+    if let Some(parent) = target.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::copy(source, target)?;
+    Ok(())
+}
+
+/// 递归复制目录内容，目标已存在的条目会跳过。
+///
+/// 参数:
+/// - `source`: 源目录路径
+/// - `target`: 目标目录路径
+///
+/// 返回:
+/// - 复制是否成功
+fn copy_dir_contents_if_missing(source: &Path, target: &Path) -> Result<()> {
+    if !source.is_dir() {
+        return Ok(());
+    }
+    std::fs::create_dir_all(target)?;
+    for entry in std::fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if target_path.exists() {
+            continue;
+        }
+        let file_type = entry.file_type()?;
+        if file_type.is_dir() {
+            copy_dir_contents_if_missing(&source_path, &target_path)?;
+        } else if file_type.is_file() {
+            copy_file_if_missing(&source_path, &target_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// 根据用户消息更新会话标题和更新时间。
@@ -186,17 +359,6 @@ pub fn touch_session_with_message(
 ///
 /// 返回:
 /// - 会话列表
-fn ensure_default_session(paths: &MiyuPaths) -> Result<Vec<SessionInfo>> {
-    ensure_default_session_for_base(&paths.state_dir)
-}
-
-/// 确保默认会话存在。
-///
-/// 参数:
-/// - `base_state_dir`: 原始状态目录
-///
-/// 返回:
-/// - 会话列表
 fn ensure_default_session_for_base(base_state_dir: &Path) -> Result<Vec<SessionInfo>> {
     std::fs::create_dir_all(base_state_dir)?;
     let mut sessions = read_sessions_from_base(base_state_dir)?;
@@ -219,10 +381,10 @@ fn ensure_default_session_for_base(base_state_dir: &Path) -> Result<Vec<SessionI
 ///
 /// 返回:
 /// - 当前会话 ID
-fn read_current_session_id(paths: &MiyuPaths) -> Result<String> {
-    let file = current_session_file(&paths.state_dir);
+fn read_current_session_id_from_base(base_state_dir: &Path) -> Result<String> {
+    let file = current_session_file(base_state_dir);
     if !file.exists() {
-        write_current_session_id(paths, DEFAULT_SESSION_ID)?;
+        write_current_session_id_to_base(base_state_dir, DEFAULT_SESSION_ID)?;
         return Ok(DEFAULT_SESSION_ID.to_string());
     }
     let value = std::fs::read_to_string(file)?;
@@ -237,12 +399,12 @@ fn read_current_session_id(paths: &MiyuPaths) -> Result<String> {
 ///
 /// 返回:
 /// - 写入是否成功
-fn write_current_session_id(paths: &MiyuPaths, session_id: &str) -> Result<()> {
-    if let Some(parent) = current_session_file(&paths.state_dir).parent() {
+fn write_current_session_id_to_base(base_state_dir: &Path, session_id: &str) -> Result<()> {
+    if let Some(parent) = current_session_file(base_state_dir).parent() {
         std::fs::create_dir_all(parent)?;
     }
     std::fs::write(
-        current_session_file(&paths.state_dir),
+        current_session_file(base_state_dir),
         format!("{session_id}\n"),
     )?;
     Ok(())
@@ -266,18 +428,6 @@ fn read_sessions_from_base(base_state_dir: &Path) -> Result<Vec<SessionInfo>> {
         serde_json::from_str(&raw)
             .with_context(|| format!("invalid JSON in {}", file.display()))?,
     )
-}
-
-/// 保存会话索引。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `sessions`: 会话列表
-///
-/// 返回:
-/// - 保存是否成功
-fn save_sessions(paths: &MiyuPaths, sessions: &[SessionInfo]) -> Result<()> {
-    save_sessions_to_base(&paths.state_dir, sessions)
 }
 
 /// 保存会话索引。
@@ -308,7 +458,7 @@ fn save_sessions_to_base(base_state_dir: &Path, sessions: &[SessionInfo]) -> Res
 /// 返回:
 /// - 会话索引文件路径
 fn sessions_file(base_state_dir: &Path) -> PathBuf {
-    base_state_dir.join("sessions").join("index.json")
+    base_state_dir.join("index.json")
 }
 
 /// 返回当前会话文件路径。
@@ -319,24 +469,19 @@ fn sessions_file(base_state_dir: &Path) -> PathBuf {
 /// 返回:
 /// - 当前会话文件路径
 fn current_session_file(base_state_dir: &Path) -> PathBuf {
-    base_state_dir.join("sessions").join("current")
+    base_state_dir.join("current")
 }
 
 /// 返回会话状态目录。
 ///
 /// 参数:
-/// - `paths`: Miyu 路径
+/// - `base_state_dir`: 当前工作区会话作用域目录
 /// - `session_id`: 会话 ID
 ///
 /// 返回:
 /// - 会话状态目录
-fn session_state_dir(paths: &MiyuPaths, session_id: &str) -> PathBuf {
-    if session_id == DEFAULT_SESSION_ID {
-        return paths.state_dir.clone();
-    }
-    paths
-        .state_dir
-        .join("sessions")
+fn session_state_dir(base_state_dir: &Path, session_id: &str) -> PathBuf {
+    base_state_dir
         .join("data")
         .join(sanitize_session_id(session_id))
 }
@@ -439,14 +584,18 @@ mod tests {
     }
 
     #[test]
-    fn default_session_uses_root_state_dir() {
+    fn default_session_uses_workspace_state_dir() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path().to_path_buf());
 
         let session = ensure_active_session(&paths).unwrap();
+        let scope_dir = session_scope_dir(&paths).unwrap();
 
         assert_eq!(session.id, DEFAULT_SESSION_ID);
-        assert_eq!(active_state_dir(&paths).unwrap(), paths.state_dir);
+        assert_eq!(
+            active_state_dir(&paths).unwrap(),
+            scope_dir.join("data").join(DEFAULT_SESSION_ID)
+        );
     }
 
     #[test]
@@ -481,7 +630,8 @@ mod tests {
         let paths = test_paths(temp.path().to_path_buf());
         let session = create_session(&paths, None).unwrap();
 
-        touch_session_with_message(&paths.state_dir, &session.id, "hello project world").unwrap();
+        let scope_dir = session_scope_dir(&paths).unwrap();
+        touch_session_with_message(&scope_dir, &session.id, "hello project world").unwrap();
         let updated = list_sessions(&paths)
             .unwrap()
             .into_iter()
@@ -489,5 +639,53 @@ mod tests {
             .unwrap();
 
         assert_eq!(updated.title, "hello project world");
+    }
+
+    #[test]
+    fn migrates_legacy_sessions_into_workspace_scope() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let legacy_session = SessionInfo {
+            id: "session_old".to_string(),
+            title: "Old work".to_string(),
+            created_at: "2026-01-01T00:00:00Z".to_string(),
+            updated_at: "2026-01-01T00:00:00Z".to_string(),
+        };
+        let legacy_sessions_dir = paths.state_dir.join("sessions");
+        std::fs::create_dir_all(legacy_sessions_dir.join("data/session_old")).unwrap();
+        std::fs::create_dir_all(&paths.state_dir).unwrap();
+        std::fs::write(
+            legacy_sessions_dir.join("index.json"),
+            serde_json::to_string_pretty(&vec![legacy_session.clone()]).unwrap(),
+        )
+        .unwrap();
+        std::fs::write(legacy_sessions_dir.join("current"), "session_old\n").unwrap();
+        std::fs::write(
+            legacy_sessions_dir.join("data/session_old/usage.json"),
+            "old session usage",
+        )
+        .unwrap();
+        std::fs::write(paths.state_dir.join("conversation.jsonl"), "legacy default").unwrap();
+
+        let active = ensure_active_session(&paths).unwrap();
+        let scope_dir = session_scope_dir(&paths).unwrap();
+
+        assert_eq!(active.id, "session_old");
+        assert!(sessions_file(&scope_dir).exists());
+        assert_eq!(
+            std::fs::read_to_string(current_session_file(&scope_dir)).unwrap(),
+            "session_old\n"
+        );
+        assert_eq!(
+            std::fs::read_to_string(scope_dir.join("data/session_old/usage.json")).unwrap(),
+            "old session usage"
+        );
+        assert_eq!(
+            std::fs::read_to_string(
+                session_state_dir(&scope_dir, DEFAULT_SESSION_ID).join("conversation.jsonl")
+            )
+            .unwrap(),
+            "legacy default"
+        );
     }
 }

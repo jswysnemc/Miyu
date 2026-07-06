@@ -16,6 +16,7 @@ pub struct MemoryStore {
     skills_dir: PathBuf,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct EvictedTurn {
     pub timestamp: String,
@@ -64,6 +65,7 @@ impl MemoryStore {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub fn remember_evicted_turns(&self, turns: &[EvictedTurn]) -> Result<()> {
         if !self.config.enabled || !self.config.evicted_context_enabled || turns.is_empty() {
             return Ok(());
@@ -498,4 +500,3 @@ impl MemoryStore {
         Ok(Connection::open(&self.state_db)?)
     }
 }
-

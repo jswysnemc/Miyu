@@ -1,14 +1,17 @@
-use crate::config::{format_model_tags, is_valid_model_tag, parse_context_chars, ProviderConfig};
-use anyhow::{bail, Result};
+use crate::config::{parse_context_chars, ProviderConfig, MODEL_TAGS};
+use crate::i18n::text as t;
+use anyhow::Result;
 
-/// 返回模型上下文字段值。
+use super::form::{parse_bool_field, Field};
+
+/// 返回模型上下文 token 字段值。
 ///
 /// 参数:
 /// - `provider`: Provider 配置
 /// - `model`: 模型 ID
 ///
 /// 返回:
-/// - 表单展示的上下文长度
+/// - 表单展示的上下文 token 数
 pub(super) fn context_chars_field_value(provider: &ProviderConfig, model: &str) -> String {
     provider
         .model_context_chars_for(model)
@@ -16,24 +19,50 @@ pub(super) fn context_chars_field_value(provider: &ProviderConfig, model: &str) 
         .unwrap_or_default()
 }
 
-/// 返回模型标签字段值。
+/// 返回模型标签勾选字段。
 ///
 /// 参数:
 /// - `provider`: Provider 配置
 /// - `model`: 模型 ID
 ///
 /// 返回:
-/// - 表单展示的逗号分隔标签
-pub(super) fn tags_field_value(provider: &ProviderConfig, model: &str) -> String {
-    format_model_tags(provider.model_tags_for(model))
+/// - 模型标签勾选字段
+pub(super) fn tag_fields(provider: &ProviderConfig, model: &str) -> Vec<Field> {
+    MODEL_TAGS
+        .iter()
+        .map(|tag| {
+            Field::boolean(
+                tag,
+                provider
+                    .model_tags_for(model)
+                    .iter()
+                    .any(|item| item.as_str() == *tag),
+            )
+        })
+        .collect()
 }
 
-/// 应用模型上下文字段。
+/// 返回模型工具调用支持字段。
 ///
 /// 参数:
 /// - `provider`: Provider 配置
 /// - `model`: 模型 ID
-/// - `value`: 表单输入的上下文长度
+///
+/// 返回:
+/// - 模型工具调用支持字段
+pub(super) fn tools_enabled_field(provider: &ProviderConfig, model: &str) -> Field {
+    Field::boolean(
+        t("Tool calling support", "工具调用支持"),
+        provider.model_tools_enabled_for(model),
+    )
+}
+
+/// 应用模型上下文 token 字段。
+///
+/// 参数:
+/// - `provider`: Provider 配置
+/// - `model`: 模型 ID
+/// - `value`: 表单输入的上下文 token 数
 ///
 /// 返回:
 /// - 应用是否成功
@@ -46,46 +75,46 @@ pub(super) fn apply_context_chars_field(
     Ok(())
 }
 
-/// 应用模型标签字段。
+/// 应用模型工具调用支持字段。
 ///
 /// 参数:
 /// - `provider`: Provider 配置
 /// - `model`: 模型 ID
-/// - `value`: 表单输入的标签列表
+/// - `value`: 工具调用支持字段值
 ///
 /// 返回:
 /// - 应用是否成功
-pub(super) fn apply_tags_field(
+pub(super) fn apply_tools_enabled_field(
     provider: &mut ProviderConfig,
     model: &str,
     value: &str,
 ) -> Result<()> {
-    provider.set_model_tags_for(model, parse_tags_field(value)?);
+    provider.set_model_tools_enabled_for(model, parse_bool_field(value)?);
     Ok(())
 }
 
-/// 解析模型标签字段。
+/// 应用模型标签勾选字段。
 ///
 /// 参数:
-/// - `value`: 逗号或换行分隔的标签列表
+/// - `provider`: Provider 配置
+/// - `model`: 模型 ID
+/// - `fields`: 模型标签勾选字段
 ///
 /// 返回:
-/// - 去重后的标签列表
-fn parse_tags_field(value: &str) -> Result<Vec<String>> {
+/// - 应用是否成功
+pub(super) fn apply_tag_fields(
+    provider: &mut ProviderConfig,
+    model: &str,
+    fields: &[Field],
+) -> Result<()> {
     let mut tags = Vec::new();
-    for tag in value.split([',', '\n', '\r']) {
-        let tag = tag.trim();
-        if tag.is_empty() {
-            continue;
-        }
-        if !is_valid_model_tag(tag) {
-            bail!("invalid model tag: {tag}");
-        }
-        if !tags.iter().any(|item| item == tag) {
-            tags.push(tag.to_string());
+    for field in fields {
+        if parse_bool_field(&field.value)? {
+            tags.push(field.label.to_string());
         }
     }
-    Ok(tags)
+    provider.set_model_tags_for(model, tags);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -116,10 +145,13 @@ mod tests {
     }
 
     #[test]
-    fn parses_and_deduplicates_tags() {
+    fn applies_checked_tags() {
         let mut provider = provider_with_model("test-model");
+        let mut fields = tag_fields(&provider, "test-model");
+        fields[0].value = "true".to_string();
+        fields[2].value = "true".to_string();
 
-        apply_tags_field(&mut provider, "test-model", "tool,vision,tool").unwrap();
+        apply_tag_fields(&mut provider, "test-model", &fields).unwrap();
 
         assert_eq!(
             provider.model_tags_for("test-model"),
@@ -128,10 +160,29 @@ mod tests {
     }
 
     #[test]
-    fn rejects_unknown_tags() {
+    fn applies_disabled_tool_support() {
         let mut provider = provider_with_model("test-model");
 
-        assert!(apply_tags_field(&mut provider, "test-model", "tool,unknown").is_err());
+        apply_tools_enabled_field(&mut provider, "test-model", "false").unwrap();
+
+        assert!(!provider.model_tools_enabled_for("test-model"));
+        assert_eq!(
+            provider
+                .model_metadata
+                .get("test-model")
+                .and_then(|metadata| metadata.tools_enabled),
+            Some(false)
+        );
+    }
+
+    #[test]
+    fn enabling_tool_support_removes_default_metadata() {
+        let mut provider = provider_with_model("test-model");
+        apply_tools_enabled_field(&mut provider, "test-model", "false").unwrap();
+        apply_tools_enabled_field(&mut provider, "test-model", "true").unwrap();
+
+        assert!(provider.model_tools_enabled_for("test-model"));
+        assert!(!provider.model_metadata.contains_key("test-model"));
     }
 
     #[test]

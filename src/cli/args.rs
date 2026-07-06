@@ -12,6 +12,9 @@ pub struct Cli {
     #[arg(short = 'c', long = "clipb")]
     pub clipb: bool,
 
+    #[arg(short = 'w', long = "web")]
+    pub web_search: bool,
+
     #[arg(long, value_name = "LEVEL")]
     pub thinking: Option<String>,
 
@@ -61,6 +64,9 @@ pub enum Command {
 pub struct MessageArgs {
     #[arg(short = 'c', long = "clipb")]
     pub clipb: bool,
+
+    #[arg(short = 'w', long = "web")]
+    pub web_search: bool,
 
     #[arg(long, value_name = "LEVEL")]
     pub thinking: Option<String>,

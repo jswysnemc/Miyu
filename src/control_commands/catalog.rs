@@ -1,0 +1,16 @@
+pub const REPL_COMMANDS: &[&str] = &[
+    "/help",
+    "/new",
+    "/compact",
+    "/clear",
+    "/model",
+    "/providers",
+    "/config",
+    "/ps",
+    "/thinking",
+    "/plan",
+    "/yolo",
+    "/undo",
+    "/reset",
+    "/exit",
+];

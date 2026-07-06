@@ -78,29 +78,6 @@ pub fn interrupted_text() -> &'static str {
     INTERRUPTED_TEXT
 }
 
-/// 计算轮次上下文字符数。
-///
-/// 参数:
-/// - `turn`: 对话轮次
-///
-/// 返回:
-/// - 用于上下文裁剪的字符数
-pub fn turn_chars(turn: &Turn) -> usize {
-    turn.user_content.chars().count()
-        + turn.assistant_content.chars().count()
-        + turn
-            .assistant_reasoning
-            .as_deref()
-            .map(str::chars)
-            .map(Iterator::count)
-            .unwrap_or(0)
-        + turn
-            .tool_reports
-            .iter()
-            .map(|report| report.chars().count())
-            .sum::<usize>()
-}
-
 /// 将轮次列表转换为旧消息入口视图。
 ///
 /// 参数:

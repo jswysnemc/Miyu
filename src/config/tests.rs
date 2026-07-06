@@ -63,6 +63,7 @@ fn active_context_chars_prefers_model_metadata() {
         model,
         ModelMetadata {
             context_chars: Some(128_000),
+            tools_enabled: None,
             tags: Vec::new(),
         },
     );
@@ -86,6 +87,44 @@ fn provider_validation_rejects_invalid_model_tag() {
     let err = config.validate().unwrap_err();
 
     assert!(err.to_string().contains("model_metadata tag"));
+}
+
+#[test]
+fn active_model_tools_default_to_enabled() {
+    let config = AppConfig::default();
+
+    assert!(config.active_model_tools_enabled().unwrap());
+}
+
+#[test]
+fn active_model_tools_can_be_disabled() {
+    let mut config = AppConfig::default();
+    let model = config.providers[0].default_model.clone();
+    config.providers[0].set_model_tools_enabled_for(&model, false);
+
+    assert!(!config.active_model_tools_enabled().unwrap());
+}
+
+#[test]
+fn selects_provider_model_by_web_search_tag() {
+    let mut config = AppConfig::default();
+    let mut provider = ProviderConfig::new_openai_compatible();
+    provider.id = "web".to_string();
+    provider.display_name = "Web".to_string();
+    provider.base_url = "https://example.invalid/v1".to_string();
+    provider.models.push("web-model".to_string());
+    provider.default_model = "web-model".to_string();
+    provider.set_model_tags_for("web-model", vec![MODEL_TAG_WEB_SEARCH.to_string()]);
+    config.providers.push(provider);
+
+    let choice = config
+        .select_active_provider_model_with_tag(MODEL_TAG_WEB_SEARCH)
+        .unwrap();
+
+    assert_eq!(choice.provider_id, "web");
+    assert_eq!(choice.model, "web-model");
+    assert_eq!(config.active_provider, "web");
+    assert_eq!(config.provider(None).unwrap().default_model, "web-model");
 }
 
 #[test]

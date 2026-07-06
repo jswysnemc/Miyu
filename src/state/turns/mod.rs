@@ -5,7 +5,5 @@ mod schema;
 
 #[cfg(test)]
 pub use model::pending_placeholder;
-pub use model::{
-    interrupted_text, turn_chars, turns_to_entries, StoredConversationEntry, Turn, TurnStatus,
-};
+pub use model::{interrupted_text, turns_to_entries, StoredConversationEntry, Turn, TurnStatus};
 pub use repository::ConversationDb;
