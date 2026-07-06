@@ -1,14 +1,15 @@
 /* ============================================================
  * 定制下拉选择器样式（Custom Select）
- * 遵循 Codex Desktop 紧凑深色质感，精细边框与圆角
+ * 完全复用品牌及明暗主题 CSS 变量，确保排版对齐与无缝融合
  * ============================================================ */
 
 .custom-select {
   position: relative;
   display: inline-block;
-  min-width: 120px;
+  min-width: 100px;
   font-size: 13px;
   user-select: none;
+  vertical-align: middle;
 }
 
 .custom-select-trigger {
@@ -16,22 +17,23 @@
   align-items: center;
   justify-content: space-between;
   width: 100%;
-  padding: 6px 10px;
-  background-color: #16191f;
-  color: #e2e8f0;
-  border: 1px solid #262b33;
-  border-radius: 4px;
+  min-height: 32px;
+  padding: 4px 10px;
+  background: var(--bg-surface);
+  color: var(--text-main);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
   cursor: pointer;
   outline: none;
   transition: border-color 0.15s ease, background-color 0.15s ease;
   font-family: inherit;
-  font-size: 13px;
+  font-size: 12px;
 }
 
 .custom-select-trigger:hover,
 .custom-select.open .custom-select-trigger {
-  border-color: #3b82f6;
-  background-color: #1e2229;
+  border-color: var(--accent);
+  background: var(--bg-hover);
 }
 
 .select-value {
@@ -44,7 +46,7 @@
 .select-arrow {
   display: flex;
   align-items: center;
-  color: #94a3b8;
+  color: var(--text-muted);
   transition: transform 0.2s ease;
 }
 
@@ -60,30 +62,31 @@
   z-index: 1000;
   max-height: 240px;
   overflow-y: auto;
-  background-color: #16191f;
-  border: 1px solid #262b33;
-  border-radius: 4px;
-  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  box-shadow: var(--shadow-md);
   padding: 4px 0;
 }
 
 .custom-select-option {
   padding: 6px 10px;
-  color: #cbd5e1;
+  color: var(--text-main);
   cursor: pointer;
   transition: background-color 0.15s ease, color 0.15s ease;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  font-size: 12px;
 }
 
 .custom-select-option:hover {
-  background-color: #262b33;
-  color: #ffffff;
+  background: var(--bg-hover);
+  color: var(--accent);
 }
 
 .custom-select-option.selected {
-  background-color: #1d283a;
-  color: #3b82f6;
-  font-weight: 500;
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 600;
 }

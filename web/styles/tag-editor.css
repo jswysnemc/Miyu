@@ -1,21 +1,21 @@
 /* ============================================================
  * 标签阵列编辑器（Tag Editor）样式规范
- * 高密度芯片化展示，石墨灰质感
+ * 采用主题 CSS 变量，确保明暗模式和谐一致
  * ============================================================ */
 
 .tag-editor-container {
   min-height: 38px;
   padding: 4px 8px;
-  background-color: #16191f;
-  border: 1px solid #262b33;
-  border-radius: 4px;
+  background-color: var(--bg-surface);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
   cursor: text;
-  transition: border-color 0.15s ease;
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 
 .tag-editor-container:focus-within {
-  border-color: #3b82f6;
-  background-color: #1e2229;
+  border-color: var(--accent);
+  background-color: var(--bg-hover);
 }
 
 .tag-chips-wrap {
@@ -30,10 +30,10 @@
   align-items: center;
   gap: 4px;
   padding: 2px 8px;
-  background-color: #1d283a;
-  color: #60a5fa;
-  border: 1px solid #2563eb33;
-  border-radius: 12px;
+  background-color: var(--accent-soft);
+  color: var(--accent-strong);
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-pill);
   font-size: 12px;
   font-weight: 500;
   line-height: 1.5;
@@ -53,7 +53,7 @@
   padding: 0;
   background: none;
   border: none;
-  color: #93c5fd;
+  color: var(--text-muted);
   cursor: pointer;
   opacity: 0.7;
   transition: opacity 0.15s ease, color 0.15s ease;
@@ -61,21 +61,20 @@
 
 .chip-remove:hover {
   opacity: 1;
-  color: #ef4444;
+  color: var(--danger);
 }
 
-.tag-editor-input {
+.tag-input {
   flex: 1;
-  min-width: 120px;
+  min-width: 80px;
   border: none;
   background: transparent;
-  color: #e2e8f0;
-  font-family: inherit;
+  color: var(--text-main);
   font-size: 13px;
-  padding: 4px 0;
   outline: none;
+  padding: 4px 0;
 }
 
-.tag-editor-input::placeholder {
-  color: #64748b;
+.tag-input::placeholder {
+  color: var(--text-faint);
 }

@@ -19,11 +19,27 @@ import {
 import { loadSessions } from "./sessions/list.js";
 import { setResponding } from "./composer/controls.js";
 
-const modeEl = document.getElementById("modeSelect");
-const thinkingEl = document.getElementById("thinkingSelect");
-
 // 当前流式请求的中断控制器
 let currentAbort = null;
+
+/**
+ * 获取当前选择的运行模式
+ * @returns {string}
+ */
+function getModeValue() {
+  const el = document.getElementById("modeSelect");
+  return el && el.value !== undefined ? el.value : "yolo";
+}
+
+/**
+ * 获取当前选择的思考等级
+ * @returns {string|null}
+ */
+function getThinkingValue() {
+  const el = document.getElementById("thinkingSelect");
+  const val = el && el.value !== undefined ? el.value : "";
+  return val ? val : null;
+}
 
 /**
  * 中断当前流式请求
@@ -52,8 +68,8 @@ export async function sendCurrentMessage(message, imageUrl) {
         session_id: appState.activeSessionId,
         message,
         image_url: imageUrl,
-        mode: modeEl.value,
-        thinking: thinkingEl.value || null,
+        mode: getModeValue(),
+        thinking: getThinkingValue(),
       },
       handleStreamEvent,
       currentAbort.signal

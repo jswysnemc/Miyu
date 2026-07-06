@@ -1,9 +1,17 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-theme="dark">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Miyu Web Agent Console</title>
+  <script>
+    (function() {
+      try {
+        var saved = localStorage.getItem("miyu.web.theme") || "dark";
+        document.documentElement.setAttribute("data-theme", saved);
+      } catch (e) {}
+    })();
+  </script>
 
   <!-- 第三方类库 CDN，支持离线降级 -->
   <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>

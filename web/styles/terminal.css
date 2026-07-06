@@ -1,21 +1,21 @@
 /* ============================================================
  * 终端模拟器卡片样式（Terminal Viewer）
- * 模拟真实终端，拥有深色极简顶栏与排版回显
+ * 模拟真实终端，使用主题变量兼容双模式
  * ============================================================ */
 
 .terminal-viewer-box {
   margin: 10px 0;
-  border: 1px solid #262b33;
-  border-radius: 6px;
-  background-color: #0b0d10;
+  border: 1px solid var(--border-color);
+  border-radius: var(--radius-xs);
+  background-color: var(--code-bg);
   overflow: hidden;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-family: var(--mono);
   font-size: 12px;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  box-shadow: var(--shadow-sm);
 }
 
 .terminal-viewer-box.term-err {
-  border-color: #7f1d1d;
+  border-color: var(--danger);
 }
 
 .terminal-header {
@@ -23,9 +23,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 6px 12px;
-  background-color: #16191f;
-  border-bottom: 1px solid #262b33;
-  color: #cbd5e1;
+  background-color: var(--bg-surface);
+  border-bottom: 1px solid var(--border-color);
+  color: var(--text-main);
 }
 
 .term-title {
@@ -35,7 +35,7 @@
 }
 
 .term-icon {
-  color: #10b981;
+  color: var(--accent);
   display: flex;
   align-items: center;
 }
@@ -48,33 +48,33 @@
 }
 
 .status-ok {
-  background-color: #064e3b;
-  color: #6ee7b7;
+  background-color: var(--accent-soft);
+  color: var(--accent-strong);
 }
 
 .status-err {
-  background-color: #7f1d1d;
-  color: #fca5a5;
+  background-color: var(--danger-soft);
+  color: var(--danger);
 }
 
 .terminal-cmd-bar {
   padding: 8px 12px;
-  background-color: #11141a;
-  border-bottom: 1px solid #1e232d;
+  background-color: var(--bg-hover);
+  border-bottom: 1px solid var(--border-light);
   color: #38bdf8;
   font-weight: 600;
   word-break: break-all;
 }
 
 .term-prompt {
-  color: #10b981;
+  color: var(--accent);
   margin-right: 6px;
 }
 
 .terminal-body {
   margin: 0;
   padding: 12px;
-  color: #e2e8f0;
+  color: var(--code-fg);
   overflow-x: auto;
   max-height: 400px;
   line-height: 1.5;

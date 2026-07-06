@@ -54,11 +54,11 @@ export function toggleTheme() {
 }
 
 /**
- * 初始化主题：读取本地存储，默认浅色
+ * 初始化主题：读取本地存储，默认深色（Codex Desktop 极客美学）
  * @returns {void}
  */
 export function initTheme() {
-  const saved = localStorage.getItem("miyu.web.theme") || "light";
+  const saved = localStorage.getItem("miyu.web.theme") || "dark";
   applyTheme(saved);
 }
 
