@@ -35,5 +35,11 @@ pub(super) fn open_connection(state_dir: &Path) -> Result<Connection> {
         CREATE INDEX IF NOT EXISTS idx_turns_seq ON turns(seq);
         CREATE INDEX IF NOT EXISTS idx_turns_status ON turns(status);",
     )?;
+    crate::state::checkpoints::schema::create_checkpoint_tables(&conn)?;
+    crate::state::context_epoch::schema::create_context_epoch_tables(&conn)?;
+    crate::state::failure_recovery::schema::create_failure_recovery_tables(&conn)?;
+    crate::state::session_memory::schema::create_session_memory_tables(&conn)?;
+    crate::state::tool_history::schema::create_tool_history_tables(&conn)?;
+    crate::runtime_recovery::schema::create_runtime_recovery_tables(&conn)?;
     Ok(conn)
 }

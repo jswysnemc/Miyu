@@ -1,0 +1,111 @@
+use super::compaction::CompactionSummary;
+use super::context_epoch::ContextEpochSummary;
+use super::failure_recovery::RecoverySnapshot;
+use super::request_projection::DynamicContextSource;
+use super::session_memory::summary::SessionMemorySummary;
+use super::tool_history::ToolHistorySummary;
+use super::usage::UsageSnapshot;
+use super::StateStore;
+use crate::runtime_recovery::RuntimeRecoverySummary;
+use anyhow::Result;
+
+#[derive(Debug, Clone)]
+pub struct ActiveRunSummary {
+    pub owner: String,
+    pub pid: u32,
+    pub started_at: String,
+    pub lock_path: String,
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSnapshot {
+    pub session_id: String,
+    pub turn_count: usize,
+    pub checkpoint_count: usize,
+    pub checkpoint_covered_turns: usize,
+    pub tail_turns: usize,
+    pub latest_checkpoint_at: Option<String>,
+    pub context_chars: usize,
+    pub context_limit_chars: usize,
+    pub context_ratio: f32,
+    pub usage: UsageSnapshot,
+    pub compaction: Option<CompactionSummary>,
+    pub recovery: RecoverySnapshot,
+    pub context_epoch: Option<ContextEpochSummary>,
+    pub session_memory: Option<SessionMemorySummary>,
+    pub tool_history: ToolHistorySummary,
+    pub runtime_recovery: RuntimeRecoverySummary,
+    pub dynamic_sources: Vec<DynamicContextSource>,
+    pub projection_warnings: Vec<String>,
+    pub active_run: Option<ActiveRunSummary>,
+}
+
+impl StateStore {
+    /// 读取当前会话状态快照。
+    ///
+    /// 参数:
+    /// - `context_limit_chars`: 当前模型上下文窗口字符数
+    ///
+    /// 返回:
+    /// - 会话状态快照
+    pub fn session_snapshot(&self, context_limit_chars: usize) -> Result<SessionSnapshot> {
+        let projection = self.project_session_summary(context_limit_chars)?;
+        self.audit_runtime_sequence_gaps()?;
+        crate::runtime_recovery::audit_dead_process_owners(&self.conv_db, &self.session_id)?;
+        crate::runtime_recovery::audit_stale_subagent_owners(
+            &self.conv_db,
+            &self.session_id,
+            std::process::id(),
+        )?;
+        let context_chars = projection.estimate.state_context_chars;
+        let projection_warnings = projection
+            .warnings
+            .iter()
+            .map(|warning| warning.message.clone())
+            .collect();
+        let session_memory = super::session_memory::repository::load_memory(
+            &self.conv_db,
+            &projection.stats.session_id,
+        )?
+        .map(super::session_memory::summary::summarize_memory);
+        Ok(SessionSnapshot {
+            session_id: projection.stats.session_id,
+            turn_count: projection.stats.turn_count,
+            checkpoint_count: projection.stats.checkpoint_count,
+            checkpoint_covered_turns: projection.stats.checkpoint_covered_turns,
+            tail_turns: projection.stats.tail_turns,
+            latest_checkpoint_at: projection.stats.latest_checkpoint_at,
+            context_chars,
+            context_limit_chars,
+            context_ratio: context_ratio(context_chars, context_limit_chars),
+            usage: projection.stats.usage,
+            compaction: projection.compaction,
+            recovery: projection.recovery,
+            context_epoch: self.context_epoch_summary()?,
+            session_memory,
+            tool_history: self.tool_history_summary()?,
+            runtime_recovery: crate::runtime_recovery::session_summary(
+                &self.conv_db,
+                &self.session_id,
+            )?,
+            dynamic_sources: Vec::new(),
+            projection_warnings,
+            active_run: None,
+        })
+    }
+}
+
+/// 计算上下文占用比例。
+///
+/// 参数:
+/// - `context_chars`: 当前上下文估算字符数
+/// - `context_limit_chars`: 当前模型上下文预算字符数
+///
+/// 返回:
+/// - 上下文占用比例
+pub fn context_ratio(context_chars: usize, context_limit_chars: usize) -> f32 {
+    if context_limit_chars == 0 {
+        return 0.0;
+    }
+    context_chars as f32 / context_limit_chars as f32
+}

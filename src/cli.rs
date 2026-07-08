@@ -1,4 +1,4 @@
-use crate::agent::{Agent, AgentEvent, AgentMode};
+use crate::agent::{AgentEvent, AgentMode};
 use crate::clipboard;
 use crate::config::AppConfig;
 use crate::gateways::cli::run_gateway;
@@ -59,7 +59,7 @@ mod skills_commands;
 use alarm_worker::run_alarm_worker;
 use args::*;
 use background_commands::run_background_commands;
-use chat::{run_chat_with_options, run_shell_intercept};
+use chat::{run_chat_with_options, run_shell_intercept, ChatRunOptions};
 use config_commands::run_config;
 use fuzzy_select::inline_fuzzy_select;
 use history::run_history;
@@ -122,13 +122,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             let input = parse_message_input_flags(args.message, args.clipb, args.web_search);
             run_chat_with_options(
                 &paths,
-                input.message,
-                None,
-                false,
-                mode,
-                input.clipb,
-                input.web_search,
-                args.thinking.or_else(|| thinking_override.clone()),
+                ChatRunOptions {
+                    message: input.message,
+                    source: crate::runner::SubmissionSource::Command,
+                    show_reasoning: None,
+                    plain: false,
+                    mode,
+                    clipb: input.clipb,
+                    web_search: input.web_search,
+                    thinking_override: args.thinking.or_else(|| thinking_override.clone()),
+                    show_final_summary: true,
+                },
             )
             .await
         }
@@ -161,13 +165,17 @@ pub async fn run(cli: Cli) -> Result<()> {
             } else {
                 run_chat_with_options(
                     &paths,
-                    input.message,
-                    None,
-                    false,
-                    mode,
-                    input.clipb,
-                    input.web_search,
-                    thinking_override.clone(),
+                    ChatRunOptions {
+                        message: input.message,
+                        source: crate::runner::SubmissionSource::Command,
+                        show_reasoning: None,
+                        plain: false,
+                        mode,
+                        clipb: input.clipb,
+                        web_search: input.web_search,
+                        thinking_override: thinking_override.clone(),
+                        show_final_summary: true,
+                    },
                 )
                 .await
             }
@@ -213,7 +221,7 @@ pub(crate) fn build_tool_registry(
     Ok(registry)
 }
 
-fn build_repl_tool_registry(
+pub(crate) fn build_repl_tool_registry(
     config: &AppConfig,
     paths: &MiyuPaths,
     mode: AgentMode,

@@ -2,15 +2,13 @@ use super::client::WeixinBotClient;
 use super::event::{parse_weixin_message, WeixinInboundMediaKind, WeixinMessageEvent};
 use super::inbound_media::{image_mime, save_inbound_media, SavedInboundMedia};
 use super::prompt::channel_prompt;
-use crate::agent::{Agent, AgentMode};
+use crate::agent::AgentMode;
 use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
 use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
 use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChannelTarget};
 use crate::gateways::command_intercept::handle_gateway_command;
-use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
-use crate::state::StateStore;
 use anyhow::{bail, Context, Result};
 use base64::Engine;
 use serde_json::Value;
@@ -263,9 +261,6 @@ async fn run_agent(
 ) -> Result<String> {
     AppConfig::init_files(paths)?;
     let config = AppConfig::load_or_default(paths)?;
-    let state = StateStore::new(paths)?;
-    state.init_files()?;
-    let client = OpenAiCompatibleClient::from_config(&config, paths)?;
     let mut registry = build_tool_registry(&config, paths, AgentMode::Yolo)?;
     register_channel_message_tool(
         &mut registry,
@@ -277,29 +272,53 @@ async fn run_agent(
             context_token: event.context_token.clone(),
         },
     );
-    let progressive_loading_enabled = config.tools.progressive_loading_enabled;
-    let prompt = format!("{}\n\n{}", context.inbound_marker(), prompt);
-    let mut agent = Agent::new_with_extra_system_prompt(
-        config,
-        paths,
-        state.clone(),
-        client,
-        registry,
-        AgentMode::Yolo,
-        Some(channel_prompt()),
-    )?;
-    if progressive_loading_enabled {
-        let mut loaded_tools = state.load_loaded_tools()?;
-        loaded_tools.push("send_channel_message".to_string());
-        agent.restore_loaded_tools(&loaded_tools);
+    let mut user_input = crate::runner::UserInputSubmission::new(prompt, AgentMode::Yolo)
+        .with_extra_system_prompt(channel_prompt());
+    if let Some(image_url) = image_url {
+        user_input = user_input.with_image_url(image_url);
     }
-    let result = agent
-        .chat_stream_with_image(&prompt, image_url, |_| Ok(()))
+    let channel = crate::runner::ChannelSubmission::new(context.channel())
+        .with_inbound_marker(context.inbound_marker())
+        .with_extra_loaded_tool("send_channel_message");
+    let submission = crate::runner::RunnerSubmission::user_input(
+        crate::runner::SubmissionSource::Gateway,
+        user_input,
+    )
+    .with_channel(channel);
+    let output = run_gateway_submission(paths, config, registry, submission).await?;
+    let Some(completion) = output.completion else {
+        bail!("gateway runner completed without assistant content");
+    };
+    Ok(completion.content)
+}
+
+/// 通过 runner 执行 gateway submission。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+/// - `registry`: 工具注册表
+/// - `submission`: runner submission
+///
+/// 返回:
+/// - runner 输出
+async fn run_gateway_submission(
+    paths: &MiyuPaths,
+    config: AppConfig,
+    registry: crate::tools::ToolRegistry,
+    submission: crate::runner::RunnerSubmission,
+) -> Result<crate::runner::RunnerOutput> {
+    let mut output = crate::runner::RunnerOutput::default();
+    let mut sink = |event| {
+        output.push_event(event);
+        Ok(())
+    };
+    crate::runner::SessionRunner::new(paths)
+        .with_config(config)
+        .with_tool_registry(registry)
+        .run_submission(submission, &mut sink)
         .await?;
-    if progressive_loading_enabled {
-        state.save_loaded_tools(&agent.loaded_tools())?;
-    }
-    Ok(result.content)
+    Ok(output)
 }
 
 /// 将已保存图片转换为 data URL。

@@ -27,6 +27,7 @@ mod registry;
 mod skills;
 mod subagent_runner;
 mod task;
+mod task_runtime;
 mod task_state;
 mod trash_path;
 mod vision;
@@ -203,6 +204,22 @@ pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
         memory::register(&mut registry, config.clone(), paths.clone());
     }
     registry
+}
+
+/// 将后台命令工具绑定到命令模式运行时 owner。
+///
+/// 参数:
+/// - `registry`: 工具注册表
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `session_id`: 会话标识
+pub(crate) fn register_command_mode_background(
+    registry: &mut ToolRegistry,
+    config: &AppConfig,
+    paths: &MiyuPaths,
+    session_id: &str,
+) {
+    command::register_command_mode_background(registry, config, paths, session_id);
 }
 
 /// 注册仅限 REPL 使用的子代理任务工具。

@@ -1,6 +1,6 @@
 use super::background_tasks::{
     cleanup_background_tasks, list_background_tasks, read_background_task_output,
-    start_background_task, stop_background_task,
+    start_background_task, stop_background_task, BackgroundRuntimeOwner,
 };
 use crate::config::AppConfig;
 use crate::i18n::text as t;
@@ -25,6 +25,7 @@ pub(super) async fn run_background_action(
     paths: &MiyuPaths,
     allow_command_execution: bool,
     readonly: bool,
+    runtime_owner: Option<BackgroundRuntimeOwner>,
 ) -> Result<String> {
     let action = args
         .get("action")
@@ -32,7 +33,9 @@ pub(super) async fn run_background_action(
         .unwrap_or_default()
         .trim();
     match action {
-        "start" if !readonly => start_background_task(args, config, paths, allow_command_execution),
+        "start" if !readonly => {
+            start_background_task(args, config, paths, allow_command_execution, runtime_owner)
+        }
         "list" => list_background_tasks(paths, config).await,
         "output" => read_background_task_output(args, config, paths).await,
         "stop" if !readonly => stop_background_task(args, config, paths).await,

@@ -13,6 +13,34 @@ struct UsageState {
     last_usage: Option<Usage>,
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct UsageSnapshot {
+    pub requests: u64,
+    pub prompt_tokens: u64,
+    pub completion_tokens: u64,
+    pub total_tokens: u64,
+    pub last_usage: Option<Usage>,
+}
+
+impl From<UsageState> for UsageSnapshot {
+    /// 将内部用量状态转换成只读快照。
+    ///
+    /// 参数:
+    /// - `state`: 内部用量状态
+    ///
+    /// 返回:
+    /// - 用量快照
+    fn from(state: UsageState) -> Self {
+        Self {
+            requests: state.requests,
+            prompt_tokens: state.prompt_tokens,
+            completion_tokens: state.completion_tokens,
+            total_tokens: state.total_tokens,
+            last_usage: state.last_usage,
+        }
+    }
+}
+
 /// 累加模型用量并保存最近一次 provider usage。
 ///
 /// 参数:
@@ -44,6 +72,7 @@ pub fn add_usage(path: &Path, usage: &Usage) -> Result<()> {
 ///
 /// 返回:
 /// - 最近一次 provider usage
+#[cfg(test)]
 pub fn last_usage(path: &Path) -> Result<Option<Usage>> {
     if !path.exists() {
         return Ok(None);
@@ -51,6 +80,22 @@ pub fn last_usage(path: &Path) -> Result<Option<Usage>> {
     let raw = std::fs::read_to_string(path)?;
     let state = serde_json::from_str::<UsageState>(&raw).unwrap_or_default();
     Ok(state.last_usage)
+}
+
+/// 读取累计用量快照。
+///
+/// 参数:
+/// - `path`: 用量状态文件
+///
+/// 返回:
+/// - 累计用量快照
+pub fn snapshot(path: &Path) -> Result<UsageSnapshot> {
+    if !path.exists() {
+        return Ok(UsageSnapshot::default());
+    }
+    let raw = std::fs::read_to_string(path)?;
+    let state = serde_json::from_str::<UsageState>(&raw).unwrap_or_default();
+    Ok(state.into())
 }
 
 /// 清空最近一次 provider usage。

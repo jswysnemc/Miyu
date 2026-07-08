@@ -7,6 +7,9 @@ mod live_tool_status;
 mod markdown;
 mod markdown_blocks;
 mod markdown_inline;
+mod session_summary;
+#[cfg(test)]
+mod session_summary_tests;
 mod status_style;
 mod stream;
 mod stream_config;
@@ -22,6 +25,7 @@ mod tool_names;
 mod wait_spinner;
 
 pub(crate) use error::write_chat_error;
+pub use session_summary::print_session_summary;
 pub use stream::StreamRenderer;
 pub use stream_config::{ReasoningDisplayMode, StreamRenderOptions, ToolCallDisplayMode};
 pub use stream_output::print_assistant_response;

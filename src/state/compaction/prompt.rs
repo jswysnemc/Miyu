@@ -1,3 +1,4 @@
+use crate::state::tool_history::format_legacy_tool_reports;
 use crate::state::turns::{Turn, TurnStatus};
 
 const SUMMARY_TEMPLATE: &str = r#"Output exactly this Markdown structure and keep the section order unchanged:
@@ -48,13 +49,27 @@ const TOOL_REPORT_MAX_CHARS: usize = 2_000;
 /// 返回:
 /// - 发送给模型的摘要提示词
 pub fn build_summary_prompt(previous_summary: Option<&str>, turns: &[Turn]) -> String {
+    build_summary_prompt_from_history(previous_summary, &format_turns_for_summary(turns))
+}
+
+/// 从已格式化历史构造压缩摘要提示词。
+///
+/// 参数:
+/// - `previous_summary`: 旧压缩摘要
+/// - `history`: 已格式化并完成预算控制的历史文本
+///
+/// 返回:
+/// - 发送给模型的摘要提示词
+pub(in crate::state) fn build_summary_prompt_from_history(
+    previous_summary: Option<&str>,
+    history: &str,
+) -> String {
     let anchor = match previous_summary.map(str::trim).filter(|value| !value.is_empty()) {
         Some(summary) => format!(
             "Update the anchored summary below using the conversation history above.\nPreserve still-true details, remove stale details, and merge in the new facts.\n\n<previous-summary>\n{summary}\n</previous-summary>"
         ),
         None => "Create a new anchored summary from the conversation history above.".to_string(),
     };
-    let history = format_turns_for_summary(turns);
     format!(
         "{anchor}\n\n{SUMMARY_TEMPLATE}\n\n<conversation-history>\n{history}\n</conversation-history>"
     )
@@ -122,44 +137,11 @@ fn format_turn_for_summary(turn: &Turn) -> String {
     if !turn.tool_reports.is_empty() {
         parts.push(format!(
             "<tool-reports>\n{}\n</tool-reports>",
-            format_tool_reports(&turn.tool_reports)
+            format_legacy_tool_reports(&turn.tool_reports, TOOL_REPORT_MAX_CHARS)
         ));
     }
     parts.push("</turn>".to_string());
     parts.join("\n")
-}
-
-/// 格式化工具报告。
-///
-/// 参数:
-/// - `reports`: 工具报告列表
-///
-/// 返回:
-/// - 截断后的报告文本
-fn format_tool_reports(reports: &[String]) -> String {
-    reports
-        .iter()
-        .map(|report| truncate_chars(report.trim(), TOOL_REPORT_MAX_CHARS))
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
-
-/// 截断字符文本。
-///
-/// 参数:
-/// - `value`: 原始文本
-/// - `max_chars`: 最大字符数
-///
-/// 返回:
-/// - 截断后的文本
-fn truncate_chars(value: &str, max_chars: usize) -> String {
-    let mut iter = value.chars();
-    let truncated = iter.by_ref().take(max_chars).collect::<String>();
-    if iter.next().is_some() {
-        format!("{truncated}\n[truncated]")
-    } else {
-        truncated
-    }
 }
 
 /// 返回轮次状态名称。

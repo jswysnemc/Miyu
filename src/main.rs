@@ -14,6 +14,8 @@ mod memory;
 mod paths;
 mod prompts;
 mod render;
+mod runner;
+mod runtime_recovery;
 mod shell;
 mod state;
 mod tools;

@@ -1,5 +1,5 @@
 use super::subagent_runner::{ProgressMode, SubagentProgress, SubagentRunner, SubagentStats};
-use super::{task_state, ToolProgress, ToolRegistry, ToolSpec};
+use super::{task_runtime, task_state, ToolProgress, ToolRegistry, ToolSpec};
 use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::llm::OpenAiCompatibleClient;
@@ -172,6 +172,7 @@ async fn start_task(args: Value, context: TaskContext) -> Result<String> {
         .unwrap_or(DEFAULT_MAX_STEPS)
         .clamp(1, MAX_MAX_STEPS);
     let (task, cancel_rx) = task_state::create_task(description, subagent_type, max_steps);
+    let _ = task_runtime::record_subagent_task_started(&context.paths, &task);
     let task_id = task.id.clone();
     tokio::spawn(async move {
         execute_subagent_task(task_id, prompt, context, cancel_rx).await;
@@ -202,10 +203,12 @@ async fn execute_subagent_task(
     context: TaskContext,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
+    let paths = context.paths.clone();
     let task = match task_state::task_snapshot(&task_id) {
         Ok(task) => task,
         Err(err) => {
             task_state::finish_task(&task_id, "failed", None, Some(err.to_string()), None);
+            record_finished_runtime_task(&paths, &task_id);
             return;
         }
     };
@@ -216,6 +219,7 @@ async fn execute_subagent_task(
     match result {
         Ok((content, stats)) => {
             task_state::finish_task(&task_id, "completed", Some(content), None, Some(stats));
+            record_finished_runtime_task(&paths, &task_id);
         }
         Err(err) if err.to_string() == "cancelled" => {
             task_state::finish_task(
@@ -225,10 +229,26 @@ async fn execute_subagent_task(
                 Some("cancelled".to_string()),
                 None,
             );
+            record_finished_runtime_task(&paths, &task_id);
         }
         Err(err) => {
             task_state::finish_task(&task_id, "failed", None, Some(err.to_string()), None);
+            record_finished_runtime_task(&paths, &task_id);
         }
+    }
+}
+
+/// 记录已结束子代理任务的运行时状态。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `task_id`: 子代理任务 ID
+///
+/// 返回:
+/// - 无
+fn record_finished_runtime_task(paths: &MiyuPaths, task_id: &str) {
+    if let Ok(task) = task_state::task_snapshot(task_id) {
+        let _ = task_runtime::record_subagent_task_finished(paths, &task);
     }
 }
 

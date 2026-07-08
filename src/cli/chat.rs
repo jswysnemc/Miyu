@@ -1,5 +1,16 @@
 use super::*;
 
+/// 处理 shell command-not-found 拦截生成的自然语言请求。
+///
+/// 参数:
+/// - `paths`: Miyu 路径集合
+/// - `shell_name`: 当前 shell 名称
+/// - `message`: 拦截到的自然语言文本
+/// - `clipb`: 是否读取剪贴板
+/// - `web_search`: 是否启用网络搜索模型
+///
+/// 返回:
+/// - 执行是否成功
 pub(super) async fn run_shell_intercept(
     paths: &MiyuPaths,
     shell_name: &str,
@@ -18,19 +29,43 @@ pub(super) async fn run_shell_intercept(
     }
     let result = run_chat_with_options(
         paths,
-        message,
-        None,
-        false,
-        AgentMode::Yolo,
-        clipb,
-        web_search,
-        None,
+        shell_intercept_chat_options(message, clipb, web_search),
     )
     .await;
     drain_stdin();
     result
 }
 
+/// 构造 shell 拦截入口的单轮聊天选项。
+///
+/// 参数:
+/// - `message`: 自然语言命令文本
+/// - `clipb`: 是否读取剪贴板
+/// - `web_search`: 是否启用网络搜索模型
+///
+/// 返回:
+/// - 单轮聊天执行选项
+fn shell_intercept_chat_options(message: String, clipb: bool, web_search: bool) -> ChatRunOptions {
+    ChatRunOptions {
+        message,
+        source: crate::runner::SubmissionSource::ShellIntercept,
+        show_reasoning: None,
+        plain: false,
+        mode: AgentMode::Yolo,
+        clipb,
+        web_search,
+        thinking_override: None,
+        show_final_summary: true,
+    }
+}
+
+/// 清理当前终端标准输入中残留的按键内容。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
 pub(super) fn drain_stdin() {
     use std::os::fd::AsRawFd;
 
@@ -61,16 +96,42 @@ pub(super) fn drain_stdin() {
     let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
 }
 
+/// 单次命令聊天执行选项。
+pub(super) struct ChatRunOptions {
+    pub(super) message: String,
+    pub(super) source: crate::runner::SubmissionSource,
+    pub(super) show_reasoning: Option<bool>,
+    pub(super) plain: bool,
+    pub(super) mode: AgentMode,
+    pub(super) clipb: bool,
+    pub(super) web_search: bool,
+    pub(super) thinking_override: Option<String>,
+    pub(super) show_final_summary: bool,
+}
+
+/// 执行一次非交互聊天请求。
+///
+/// 参数:
+/// - `paths`: Miyu 路径集合
+/// - `options`: 聊天执行选项
+///
+/// 返回:
+/// - 执行是否成功
 pub(super) async fn run_chat_with_options(
     paths: &MiyuPaths,
-    message: String,
-    show_reasoning: Option<bool>,
-    plain: bool,
-    mode: AgentMode,
-    clipb: bool,
-    web_search: bool,
-    thinking_override: Option<String>,
+    options: ChatRunOptions,
 ) -> Result<()> {
+    let ChatRunOptions {
+        message,
+        source,
+        show_reasoning,
+        plain,
+        mode,
+        clipb,
+        web_search,
+        thinking_override,
+        show_final_summary,
+    } = options;
     if message.is_empty() && !clipb && !web_search {
         return run_repl(paths, mode, thinking_override).await;
     }
@@ -86,11 +147,8 @@ pub(super) async fn run_chat_with_options(
             choice.label()
         );
     }
+    config.active_context_chars()?;
     let chat_input = prepare_clipboard_chat_input(message, clipb)?;
-    let state = StateStore::new(paths)?;
-    state.init_files()?;
-    let client = OpenAiCompatibleClient::from_config(&config, paths)?;
-    let registry = build_tool_registry(&config, paths, mode)?;
     let reasoning_mode = if show_reasoning == Some(false) {
         render::ReasoningDisplayMode::Hidden
     } else {
@@ -102,27 +160,67 @@ pub(super) async fn run_chat_with_options(
         render::ToolCallDisplayMode::from_config(&config.display.tool_calls)
     };
     let render_options = stream_render_options(&config);
-    let progressive_loading_enabled = config.tools.progressive_loading_enabled;
-    let mut agent = Agent::new(config, paths, state.clone(), client, registry, mode)?;
-    if progressive_loading_enabled {
-        let loaded_tools = state.load_loaded_tools()?;
-        agent.restore_loaded_tools(&loaded_tools);
-    }
+    let render_policy = crate::runner::RenderPolicy::new(
+        plain,
+        reasoning_mode,
+        tool_call_mode,
+        render_options.clone(),
+    );
+    let user_input = match chat_input.image_url {
+        Some(image_url) => crate::runner::UserInputSubmission::new(chat_input.message, mode)
+            .with_image_url(image_url),
+        None => crate::runner::UserInputSubmission::new(chat_input.message, mode),
+    };
+    let submission = crate::runner::RunnerSubmission::user_input(source, user_input)
+        .with_render_policy(render_policy)
+        .with_final_summary(show_final_summary && !plain);
     let mut renderer =
         render::StreamRenderer::new(reasoning_mode, tool_call_mode, plain, render_options);
     renderer.start_waiting()?;
-    let result = agent
-        .chat_stream_with_image(&chat_input.message, chat_input.image_url, |event| {
-            handle_agent_event(&mut renderer, event)
-        })
-        .await;
+    let mut runner_output = crate::runner::RunnerOutput::default();
+    let mut final_summary = None;
+    let result = {
+        let mut sink = |event: crate::runner::RunnerEvent| {
+            match &event {
+                crate::runner::RunnerEvent::Agent(agent_event) => {
+                    handle_agent_event(&mut renderer, agent_event.clone())?;
+                }
+                crate::runner::RunnerEvent::FinalSummary(snapshot) => {
+                    final_summary = Some(snapshot.clone());
+                }
+                _ => {}
+            }
+            runner_output.push_event(event);
+            Ok(())
+        };
+        crate::runner::SessionRunner::new(paths)
+            .with_config(config)
+            .run_submission(submission, &mut sink)
+            .await
+    };
     renderer.finish()?;
-    if progressive_loading_enabled {
-        state.save_loaded_tools(&agent.loaded_tools())?;
-    }
     if let Err(err) = result {
         render::write_chat_error(&err, plain)?;
         return Err(err);
     }
+    if let Some(snapshot) = final_summary {
+        render::print_session_summary(&snapshot)?;
+    }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shell_intercept_prints_final_summary() {
+        let options = shell_intercept_chat_options("整理当前目录".to_string(), false, false);
+
+        assert!(options.show_final_summary);
+        assert_eq!(
+            options.source,
+            crate::runner::SubmissionSource::ShellIntercept
+        );
+    }
 }

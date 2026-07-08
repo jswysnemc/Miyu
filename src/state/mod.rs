@@ -1,7 +1,15 @@
+mod checkpoints;
 mod compaction;
+mod context_epoch;
+pub(crate) mod failure_recovery;
 mod loaded_tools;
 mod pending_turn;
+pub(crate) mod request_projection;
+mod runtime_recovery;
+pub(crate) mod session_memory;
+mod session_snapshot;
 mod sessions;
+pub(crate) mod tool_history;
 mod turns;
 mod usage;
 
@@ -15,15 +23,21 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-pub use compaction::CompactionRequest;
+pub use compaction::{CompactionApplyOutcome, CompactionRequest, CompactionSummary};
+pub use context_epoch::{ContextEpochProjection, ContextEpochSummary, ContextSourceInput};
+pub use failure_recovery::{FailureKind, RecoverySnapshot, RecoveryStatus};
 pub use pending_turn::PendingTurnGuard;
+pub use session_memory::summary::SessionMemorySummary;
+pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
 pub use sessions::{
-    create_session, delete_session, ensure_active_session as active_session, list_sessions,
-    rename_session, switch_session,
+    active_state_dir, create_session, delete_session, ensure_active_session as active_session,
+    list_sessions, rename_session, switch_session,
 };
+pub use tool_history::{ToolCallStatus, ToolHistorySummary};
 #[cfg(test)]
 pub use turns::TurnStatus;
 pub use turns::{turns_to_entries, ConversationDb, StoredConversationEntry, Turn};
+pub use usage::UsageSnapshot;
 
 #[derive(Debug, Clone)]
 pub struct StateStore {
@@ -53,6 +67,7 @@ impl StateStore {
             conv_db,
         };
         store.migrate_from_jsonl()?;
+        checkpoints::migrate_legacy_compaction_summary(&store)?;
         Ok(store)
     }
 
@@ -72,6 +87,17 @@ impl StateStore {
         Ok(())
     }
 
+    /// 返回当前状态存储对应的会话 ID。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 会话 ID
+    pub fn session_id(&self) -> &str {
+        &self.session_id
+    }
+
     /// 系统提示变化时重置会话。
     ///
     /// 参数:
@@ -84,11 +110,8 @@ impl StateStore {
         let fingerprint = prompt_fingerprint(system_prompt);
         let file = self.prompt_fingerprint_file();
         let previous = std::fs::read_to_string(&file).unwrap_or_default();
+        context_epoch::prepare_context_epoch(&self.conv_db, &self.session_id, system_prompt)?;
         if previous.trim() != fingerprint {
-            self.conv_db.reset()?;
-            self.clear_loaded_tools()?;
-            self.clear_compaction_summary()?;
-            self.clear_last_usage()?;
             std::fs::write(file, format!("{fingerprint}\n"))?;
         }
         Ok(())
@@ -122,7 +145,12 @@ impl StateStore {
         content: &str,
         reasoning: Option<&str>,
     ) -> Result<()> {
-        self.conv_db.complete_turn(turn_id, content, reasoning)
+        self.conv_db.complete_turn(turn_id, content, reasoning)?;
+        let _ = session_memory::extractor::extract_after_turn_with_default_summary(
+            &self.conv_db,
+            &self.session_id,
+        );
+        Ok(())
     }
 
     /// 中断对话轮次。
@@ -133,7 +161,9 @@ impl StateStore {
     /// 返回:
     /// - 写入是否成功
     pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
-        self.conv_db.interrupt_turn(turn_id)
+        self.conv_db.interrupt_turn(turn_id)?;
+        self.settle_pending_tool_calls_for_turns(&[turn_id.to_string()])?;
+        Ok(())
     }
 
     /// 附加工具报告上下文。
@@ -165,7 +195,31 @@ impl StateStore {
     /// 返回:
     /// - 被恢复轮次数量
     pub fn recover_stale_turns(&self) -> Result<usize> {
-        self.conv_db.recover_stale_running_turns()
+        let turn_ids = self.conv_db.recover_stale_running_turns()?;
+        let settled_tools = self.settle_pending_tool_calls_for_turns(&turn_ids)?;
+        for turn_id in &turn_ids {
+            self.record_recovery_failure(
+                Some(turn_id),
+                FailureKind::StaleRunningTurn,
+                RecoveryStatus::Resolved,
+                "启动时发现运行中轮次，已标记为中断",
+                0,
+                0,
+                0,
+            )?;
+        }
+        if settled_tools > 0 {
+            self.record_recovery_failure(
+                None,
+                FailureKind::ToolHistoryPendingStale,
+                RecoveryStatus::Resolved,
+                &format!("启动时发现 {settled_tools} 个未完成工具调用，已标记为中断"),
+                0,
+                0,
+                0,
+            )?;
+        }
+        Ok(turn_ids.len())
     }
 
     /// 兼容旧 JSONL 孤立用户消息检查。
@@ -208,15 +262,18 @@ impl StateStore {
         self.conv_db.load_turns()
     }
 
-    /// 读取排除指定轮次后的上下文轮次。
+    /// 构造当前会话历史投影。
     ///
     /// 参数:
-    /// - `exclude_turn_id`: 排除轮次标识
+    /// - `exclude_turn_id`: 可选排除的运行中轮次
     ///
     /// 返回:
-    /// - 轮次列表
-    pub fn load_turns_excluding(&self, exclude_turn_id: &str) -> Result<Vec<Turn>> {
-        self.conv_db.load_turns_excluding(exclude_turn_id)
+    /// - 会话历史投影
+    pub(crate) fn project_history(
+        &self,
+        exclude_turn_id: Option<&str>,
+    ) -> Result<checkpoints::ProjectedHistory> {
+        checkpoints::project_history(&self.conv_db, &self.session_id, exclude_turn_id)
     }
 
     /// 清空对话历史。
@@ -283,15 +340,60 @@ impl StateStore {
         usage::add_usage(&self.usage_file(), usage)
     }
 
-    /// 读取最近一次 provider usage。
+    /// 读取累计用量快照。
     ///
     /// 参数:
     /// - 无
     ///
     /// 返回:
-    /// - 最近一次 provider usage
-    fn last_usage(&self) -> Result<Option<Usage>> {
-        usage::last_usage(&self.usage_file())
+    /// - 累计用量快照
+    pub fn usage_snapshot(&self) -> Result<UsageSnapshot> {
+        usage::snapshot(&self.usage_file())
+    }
+
+    /// 读取当前会话 Context Epoch 摘要。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - Context Epoch 摘要
+    pub fn context_epoch_summary(&self) -> Result<Option<ContextEpochSummary>> {
+        context_epoch::context_epoch_summary(&self.conv_db, &self.session_id)
+    }
+
+    /// 构造当前会话 Context Epoch 投影。
+    ///
+    /// 参数:
+    /// - `system_prompt`: 当前稳定系统提示
+    ///
+    /// 返回:
+    /// - Context Epoch 投影
+    pub fn context_epoch_projection(&self, system_prompt: &str) -> Result<ContextEpochProjection> {
+        let result =
+            context_epoch::context_epoch_projection(&self.conv_db, &self.session_id, system_prompt);
+        self.record_context_epoch_projection_result(&result)?;
+        result
+    }
+
+    /// 从 Context Source 输入构造当前会话 Context Epoch 投影。
+    ///
+    /// 参数:
+    /// - `sources`: Context Source 输入集合
+    ///
+    /// 返回:
+    /// - Context Epoch 投影
+    pub fn context_epoch_projection_from_sources(
+        &self,
+        sources: Vec<ContextSourceInput>,
+    ) -> Result<ContextEpochProjection> {
+        let result = context_epoch::context_epoch_projection_from_sources(
+            &self.conv_db,
+            &self.session_id,
+            sources,
+        );
+        self.record_context_epoch_projection_result(&result)?;
+        result
     }
 
     /// 清空最近一次 provider usage。
@@ -358,6 +460,20 @@ impl StateStore {
         {
             self.complete_turn(&turn.turn_id, content, reasoning)?;
         }
+        Ok(())
+    }
+
+    /// 测试用：写入损坏的 Context Epoch snapshot。
+    ///
+    /// 参数: `snapshot_json` 是损坏的 snapshot JSON
+    /// 返回: 写入是否成功
+    #[cfg(test)]
+    pub fn corrupt_context_epoch_snapshot_for_test(&self, snapshot_json: &str) -> Result<()> {
+        let conn = self.conv_db.conn.lock().unwrap();
+        conn.execute(
+            "UPDATE context_epochs SET snapshot_json = ?1 WHERE session_id = ?2",
+            rusqlite::params![snapshot_json, self.session_id],
+        )?;
         Ok(())
     }
 
@@ -429,220 +545,4 @@ fn touch(path: PathBuf) -> Result<()> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::turns::pending_placeholder;
-    use super::*;
-
-    fn test_paths(state_dir: PathBuf) -> MiyuPaths {
-        MiyuPaths {
-            config_dir: PathBuf::new(),
-            config_file: PathBuf::new(),
-            secrets_file: PathBuf::new(),
-            skills_dir: PathBuf::new(),
-            data_dir: PathBuf::new(),
-            cache_dir: PathBuf::new(),
-            state_dir,
-            pictures_dir: PathBuf::new(),
-            fish_hook_file: PathBuf::new(),
-            bash_hook_file: PathBuf::new(),
-            zsh_hook_file: PathBuf::new(),
-            powershell_hook_file: PathBuf::new(),
-        }
-    }
-
-    #[test]
-    fn turn_lifecycle() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        store.start_turn("turn_1", "hello").unwrap();
-        let turns = store.load_turns().unwrap();
-        assert_eq!(turns.len(), 1);
-        assert_eq!(turns[0].status, TurnStatus::Running);
-        assert_eq!(turns[0].assistant_content, pending_placeholder());
-
-        store.complete_turn("turn_1", "hi there", None).unwrap();
-        let turns = store.load_turns().unwrap();
-        assert_eq!(turns[0].status, TurnStatus::Completed);
-        assert_eq!(turns[0].assistant_content, "hi there");
-    }
-
-    #[test]
-    fn marks_running_turns_as_interrupted() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        store.start_turn("turn_1", "old task").unwrap();
-        assert!(store.mark_interrupted_turn_if_needed().unwrap());
-        let turns = store.load_turns().unwrap();
-        assert_eq!(turns[0].status, TurnStatus::Interrupted);
-        assert!(turns[0].assistant_content.contains("被中断"));
-        assert!(!store.mark_interrupted_turn_if_needed().unwrap());
-    }
-
-    #[test]
-    fn undo_removes_last_turn() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        store.start_turn("turn_1", "hello").unwrap();
-        store.complete_turn("turn_1", "hi", None).unwrap();
-        store.start_turn("turn_2", "bye").unwrap();
-        store.complete_turn("turn_2", "goodbye", None).unwrap();
-
-        let (removed, prompt) = store.undo_last_turn().unwrap();
-        assert_eq!(removed, 1);
-        assert_eq!(prompt.as_deref(), Some("bye"));
-        assert_eq!(store.load_turns().unwrap().len(), 1);
-    }
-
-    #[test]
-    fn reset_conversation_clears_loaded_tools() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-
-        store
-            .save_loaded_tools(&["web_search".to_string(), "web_fetch".to_string()])
-            .unwrap();
-        assert_eq!(
-            store.load_loaded_tools().unwrap(),
-            vec!["web_fetch".to_string(), "web_search".to_string()]
-        );
-
-        store.reset_conversation().unwrap();
-
-        assert!(store.load_loaded_tools().unwrap().is_empty());
-    }
-
-    #[test]
-    fn compaction_summary_is_applied_and_injected() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        for index in 1..=4 {
-            let turn_id = format!("turn_{index}");
-            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
-            store
-                .complete_turn(&turn_id, &"a".repeat(200), None)
-                .unwrap();
-        }
-        store
-            .add_usage(&Usage {
-                prompt_tokens: 900,
-                completion_tokens: 20,
-                total_tokens: 920,
-            })
-            .unwrap();
-
-        let request = store
-            .select_compaction(1000, 0.5)
-            .unwrap()
-            .expect("compaction request");
-        store
-            .apply_compaction(&request, "## Goal\n- keep context")
-            .unwrap();
-
-        let turns = store.load_turns().unwrap();
-        let context = store.compaction_summary_context().unwrap().unwrap();
-
-        assert_eq!(turns.len(), 2);
-        assert!(context.contains("<conversation-summary>"));
-        assert!(context.contains("keep context"));
-    }
-
-    #[test]
-    fn reset_conversation_clears_compaction_summary() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        for index in 1..=4 {
-            let turn_id = format!("turn_{index}");
-            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
-            store
-                .complete_turn(&turn_id, &"a".repeat(200), None)
-                .unwrap();
-        }
-        store
-            .add_usage(&Usage {
-                prompt_tokens: 900,
-                completion_tokens: 20,
-                total_tokens: 920,
-            })
-            .unwrap();
-        let request = store
-            .select_compaction(1000, 0.5)
-            .unwrap()
-            .expect("compaction request");
-        store.apply_compaction(&request, "summary").unwrap();
-
-        store.reset_conversation().unwrap();
-
-        assert!(store.compaction_summary_context().unwrap().is_none());
-    }
-
-    #[test]
-    fn compaction_skips_without_provider_usage() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        for index in 1..=4 {
-            let turn_id = format!("turn_{index}");
-            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
-            store
-                .complete_turn(&turn_id, &"a".repeat(200), None)
-                .unwrap();
-        }
-
-        assert!(store.select_compaction(1000, 0.5).unwrap().is_none());
-    }
-
-    #[test]
-    fn compaction_skips_when_provider_usage_is_under_threshold() {
-        let temp = tempfile::tempdir().unwrap();
-        let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
-        for index in 1..=4 {
-            let turn_id = format!("turn_{index}");
-            store.start_turn(&turn_id, &"u".repeat(200)).unwrap();
-            store
-                .complete_turn(&turn_id, &"a".repeat(200), None)
-                .unwrap();
-        }
-        store
-            .add_usage(&Usage {
-                prompt_tokens: 200,
-                completion_tokens: 20,
-                total_tokens: 220,
-            })
-            .unwrap();
-
-        assert!(store.select_compaction(1000, 0.5).unwrap().is_none());
-    }
-
-    #[test]
-    fn sessions_have_isolated_conversations() {
-        let temp = tempfile::tempdir().unwrap();
-        let paths = test_paths(temp.path().to_path_buf());
-        let default_store = StateStore::new(&paths).unwrap();
-        default_store.start_turn("turn_default", "default").unwrap();
-        default_store
-            .complete_turn("turn_default", "default reply", None)
-            .unwrap();
-
-        let session = create_session(&paths, Some("work")).unwrap();
-        let work_store = StateStore::new(&paths).unwrap();
-        assert!(work_store.load_conversation().unwrap().is_empty());
-        work_store.start_turn("turn_work", "work").unwrap();
-        work_store
-            .complete_turn("turn_work", "work reply", None)
-            .unwrap();
-
-        switch_session(&paths, "default").unwrap();
-        let default_store = StateStore::new(&paths).unwrap();
-        let default_history = default_store.load_conversation().unwrap();
-
-        switch_session(&paths, &session.id).unwrap();
-        let work_store = StateStore::new(&paths).unwrap();
-        let work_history = work_store.load_conversation().unwrap();
-
-        assert!(default_history
-            .iter()
-            .any(|entry| entry.content == "default"));
-        assert!(!default_history.iter().any(|entry| entry.content == "work"));
-        assert!(work_history.iter().any(|entry| entry.content == "work"));
-        assert!(!work_history.iter().any(|entry| entry.content == "default"));
-    }
-}
+mod tests;

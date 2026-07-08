@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::Mutex;
 
 pub struct ConversationDb {
-    pub(super) conn: Mutex<Connection>,
+    pub(in crate::state) conn: Mutex<Connection>,
 }
 
 impl std::fmt::Debug for ConversationDb {
@@ -28,6 +28,21 @@ impl ConversationDb {
         Ok(Self {
             conn: Mutex::new(open_connection(state_dir)?),
         })
+    }
+
+    /// 使用数据库连接执行只暴露连接边界的操作。
+    ///
+    /// 参数:
+    /// - `operation`: 需要在连接上执行的操作
+    ///
+    /// 返回:
+    /// - 操作结果
+    pub(crate) fn with_conn<T>(
+        &self,
+        operation: impl FnOnce(&Connection) -> Result<T>,
+    ) -> Result<T> {
+        let conn = self.conn.lock().unwrap();
+        operation(&conn)
     }
 
     /// 开始一轮新对话。
@@ -150,45 +165,40 @@ impl ConversationDb {
         )
     }
 
-    /// 读取排除当前轮的上下文轮次。
+    /// 读取指定 seq 之后的轮次。
     ///
     /// 参数:
-    /// - `exclude_turn_id`: 要排除的轮次标识
+    /// - `after_seq`: 起始 seq，不包含该 seq
+    /// - `exclude_turn_id`: 可选排除轮次
     ///
     /// 返回:
-    /// - 按序排列的轮次列表
-    pub fn load_turns_excluding(&self, exclude_turn_id: &str) -> Result<Vec<Turn>> {
+    /// - tail turns
+    pub(in crate::state) fn load_turns_after_seq(
+        &self,
+        after_seq: i64,
+        exclude_turn_id: Option<&str>,
+    ) -> Result<Vec<Turn>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT turn_id, seq, user_content, user_timestamp, assistant_content,
-                    assistant_reasoning, assistant_timestamp, status, tool_reports
-             FROM turns WHERE turn_id != ?1 ORDER BY seq ASC",
-        )?;
-        let turns = stmt
-            .query_map(params![exclude_turn_id], map_turn)?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
-        Ok(turns)
-    }
-
-    /// 按轮次标识删除对话轮次。
-    ///
-    /// 参数:
-    /// - `turn_ids`: 轮次标识列表
-    ///
-    /// 返回:
-    /// - 删除是否成功
-    pub fn delete_turns_by_ids(&self, turn_ids: &[String]) -> Result<()> {
-        if turn_ids.is_empty() {
-            return Ok(());
+        match exclude_turn_id {
+            Some(turn_id) => {
+                let mut stmt = conn.prepare(
+                    "SELECT turn_id, seq, user_content, user_timestamp, assistant_content,
+                            assistant_reasoning, assistant_timestamp, status, tool_reports
+                     FROM turns WHERE seq > ?1 AND turn_id != ?2 ORDER BY seq ASC",
+                )?;
+                let turns = stmt
+                    .query_map(params![after_seq, turn_id], map_turn)?
+                    .collect::<std::result::Result<Vec<_>, _>>()?;
+                Ok(turns)
+            }
+            None => load_turns_with_sql(
+                &conn,
+                "SELECT turn_id, seq, user_content, user_timestamp, assistant_content,
+                        assistant_reasoning, assistant_timestamp, status, tool_reports
+                 FROM turns WHERE seq > ?1 ORDER BY seq ASC",
+                params![after_seq],
+            ),
         }
-        let conn = self.conn.lock().unwrap();
-        for turn_id in turn_ids {
-            conn.execute(
-                "DELETE FROM turns WHERE turn_id = ?1 AND status != 'running'",
-                params![turn_id],
-            )?;
-        }
-        Ok(())
     }
 
     /// 清空对话轮次。
@@ -196,7 +206,17 @@ impl ConversationDb {
     /// 返回:
     /// - 清空是否成功
     pub fn reset(&self) -> Result<()> {
-        self.conn.lock().unwrap().execute("DELETE FROM turns", [])?;
+        self.conn.lock().unwrap().execute_batch(
+            "DELETE FROM turns;
+             DELETE FROM compaction_checkpoints;
+             DELETE FROM context_epoch_events;
+             DELETE FROM context_epochs;
+             DELETE FROM failure_recovery_records;
+             DELETE FROM session_memory;
+             DELETE FROM tool_calls;
+             DELETE FROM tool_results;
+             DELETE FROM tool_output_replacements;",
+        )?;
         Ok(())
     }
 
@@ -225,11 +245,19 @@ impl ConversationDb {
     /// 恢复所有陈旧运行中轮次为中断状态。
     ///
     /// 返回:
-    /// - 被恢复的轮次数量
-    pub fn recover_stale_running_turns(&self) -> Result<usize> {
+    /// - 被恢复的轮次标识列表
+    pub fn recover_stale_running_turns(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
-        let affected = conn.execute(
+        let stale_turn_ids = {
+            let mut stmt = conn.prepare("SELECT turn_id FROM turns WHERE status = 'running'")?;
+            let rows = stmt.query_map([], |row| row.get(0))?;
+            rows.collect::<std::result::Result<Vec<String>, _>>()?
+        };
+        if stale_turn_ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        conn.execute(
             "UPDATE turns
              SET assistant_content = ?1,
                  assistant_timestamp = ?2,
@@ -237,7 +265,7 @@ impl ConversationDb {
              WHERE status = 'running'",
             params![interrupted_text(), now],
         )?;
-        Ok(affected)
+        Ok(stale_turn_ids)
     }
 
     /// 是否存在运行中轮次。

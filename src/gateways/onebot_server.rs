@@ -3,13 +3,9 @@ use super::onebot::OneBotClient;
 use super::onebot_event::{
     parse_message_event, OneBotInboundMedia, OneBotInboundMediaKind, OneBotMessageEvent,
 };
-use crate::agent::{Agent, AgentMode};
-use crate::cli::build_tool_registry;
-use crate::config::AppConfig;
+use crate::agent::AgentMode;
 use crate::gateways::command_intercept::handle_gateway_command;
-use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
-use crate::state::StateStore;
 use anyhow::{bail, Context, Result};
 use axum::extract::State;
 use axum::routing::post;
@@ -181,32 +177,19 @@ async fn prepare_agent_input(
 /// 返回:
 /// - Agent 回复文本
 async fn run_agent(paths: &MiyuPaths, prompt: String, image_url: Option<String>) -> Result<String> {
-    AppConfig::init_files(paths)?;
-    let config = AppConfig::load_or_default(paths)?;
-    let state = StateStore::new(paths)?;
-    state.init_files()?;
-    let client = OpenAiCompatibleClient::from_config(&config, paths)?;
-    let registry = build_tool_registry(&config, paths, AgentMode::Yolo)?;
-    let progressive_loading_enabled = config.tools.progressive_loading_enabled;
-    let mut agent = Agent::new(
-        config,
-        paths,
-        state.clone(),
-        client,
-        registry,
-        AgentMode::Yolo,
-    )?;
-    if progressive_loading_enabled {
-        let loaded_tools = state.load_loaded_tools()?;
-        agent.restore_loaded_tools(&loaded_tools);
+    let mut user_input = crate::runner::UserInputSubmission::new(prompt, AgentMode::Yolo);
+    if let Some(image_url) = image_url {
+        user_input = user_input.with_image_url(image_url);
     }
-    let result = agent
-        .chat_stream_with_image(&prompt, image_url, |_| Ok(()))
-        .await?;
-    if progressive_loading_enabled {
-        state.save_loaded_tools(&agent.loaded_tools())?;
-    }
-    Ok(result.content)
+    let submission = crate::runner::RunnerSubmission::user_input(
+        crate::runner::SubmissionSource::Gateway,
+        user_input,
+    );
+    let output = crate::runner::run_submission(paths, submission).await?;
+    let Some(completion) = output.completion else {
+        bail!("gateway runner completed without assistant content");
+    };
+    Ok(completion.content)
 }
 
 /// 将入站图片转换为 data URL。

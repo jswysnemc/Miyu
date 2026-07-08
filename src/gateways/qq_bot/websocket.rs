@@ -2,6 +2,7 @@ use super::auth::QqBotAuthenticator;
 use super::event::parse_message_event;
 use super::processor::{target_kind_name, QqBotProcessor, QqBotProcessorConfig};
 use crate::paths::MiyuPaths;
+use crate::runtime_recovery::RuntimeTransportReplayDecision;
 use anyhow::{bail, Context, Result};
 use futures_util::{SinkExt, StreamExt};
 use serde::Deserialize;
@@ -31,6 +32,12 @@ const QQ_FULL_INTENTS: u64 = QQ_PUBLIC_GUILD_MESSAGES_INTENT
 const QQ_GATEWAY_USER_AGENT: &str = "Miyu QQBot Gateway";
 
 type QqWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
+
+enum WebsocketReplayAction {
+    ApplyCurrent,
+    ApplyBuffered(Vec<Value>),
+    Skip,
+}
 
 pub(crate) struct QqBotWebsocketConfig {
     pub(crate) base_url: String,
@@ -84,6 +91,7 @@ pub(crate) async fn run_qq_bot_websocket(
                     Ok(()) => eprintln!("【QQ网关】【WebSocket断开】连接已关闭，准备重连"),
                     Err(err) => eprintln!("【QQ网关】【WebSocket失败】{err:#}"),
                 }
+                audit_websocket_transport_replay(&processor);
                 tokio::time::sleep(RECONNECT_DELAY).await;
             }
         }
@@ -222,14 +230,53 @@ async fn run_dispatch_loop(
     loop {
         tokio::select! {
             _ = heartbeat.tick() => {
-                send_heartbeat(&mut websocket, last_sequence).await?;
+                if let Err(err) = send_heartbeat(&mut websocket, last_sequence).await {
+                    record_websocket_transport_close(
+                        &processor,
+                        &format!("QQ websocket heartbeat failed: {err:#}"),
+                        last_sequence,
+                    );
+                    return Err(err);
+                }
             }
             payload = read_json_message(&mut websocket) => {
-                let Some(payload) = payload? else {
-                    continue;
+                let payload = match payload {
+                    Ok(Some(payload)) => payload,
+                    Ok(None) => continue,
+                    Err(err) => {
+                        record_websocket_transport_close(
+                            &processor,
+                            &format!("QQ websocket receive failed: {err:#}"),
+                            last_sequence,
+                        );
+                        return Err(err);
+                    }
                 };
-                if let Some(sequence) = payload.get("s").and_then(Value::as_u64) {
+                let current_sequence = payload.get("s").and_then(Value::as_u64);
+                if let Some(sequence) = current_sequence {
                     last_sequence = Some(sequence);
+                    record_websocket_transport_event(&processor, sequence, &payload);
+                    match begin_websocket_transport_replay_event(&processor, sequence) {
+                        WebsocketReplayAction::ApplyCurrent => {
+                            handle_gateway_payload(payload, processor.clone()).await?;
+                            advance_websocket_transport_cursor(&processor, None, Some(sequence));
+                        }
+                        WebsocketReplayAction::ApplyBuffered(payloads) => {
+                            for payload in payloads {
+                                let sequence = payload.get("s").and_then(Value::as_u64);
+                                handle_gateway_payload(payload, processor.clone()).await?;
+                                if let Some(sequence) = sequence {
+                                    advance_websocket_transport_cursor(
+                                        &processor,
+                                        None,
+                                        Some(sequence),
+                                    );
+                                }
+                            }
+                        }
+                        WebsocketReplayAction::Skip => {}
+                    }
+                    continue;
                 }
                 handle_gateway_payload(payload, processor.clone()).await?;
             }
@@ -255,6 +302,128 @@ async fn send_heartbeat(websocket: &mut QqWebSocket, last_sequence: Option<u64>)
         .await
         .context("failed to send QQ websocket heartbeat")?;
     Ok(())
+}
+
+/// 记录 QQ WebSocket transport 断开，失败时只输出错误。
+///
+/// 参数:
+/// - `processor`: QQ 消息处理器
+/// - `reason`: 断开原因
+/// - `last_sequence`: 最近一次 Gateway Dispatch 序号
+///
+/// 返回:
+/// - 无
+fn record_websocket_transport_close(
+    processor: &QqBotProcessor,
+    reason: &str,
+    last_sequence: Option<u64>,
+) {
+    // 1. WebSocket reconnect 是 transport 边界，不能复用进程关闭策略终止网关进程
+    if let Err(err) = processor.record_websocket_transport_close(reason, last_sequence) {
+        eprintln!("【QQ网关】【恢复记录失败】{err:#}");
+    }
+}
+
+/// 推进 QQ WebSocket transport cursor 或 ack，失败时只输出错误。
+///
+/// 参数:
+/// - `processor`: QQ 消息处理器
+/// - `cursor_seq`: 可选已接收 Gateway Dispatch 序号
+/// - `acked_seq`: 可选已处理 Gateway Dispatch 序号
+///
+/// 返回:
+/// - 无
+fn advance_websocket_transport_cursor(
+    processor: &QqBotProcessor,
+    cursor_seq: Option<u64>,
+    acked_seq: Option<u64>,
+) {
+    // 1. cursor/ack 是 transport 恢复边界，不写入 conversation turn
+    if let Err(err) = processor.advance_websocket_transport_cursor(cursor_seq, acked_seq) {
+        eprintln!("【QQ网关】【游标记录失败】{err:#}");
+    }
+}
+
+/// 审计 QQ WebSocket transport 是否存在无法 replay 的未确认区间。
+///
+/// 参数:
+/// - `processor`: QQ 消息处理器
+///
+/// 返回:
+/// - 无
+fn audit_websocket_transport_replay(processor: &QqBotProcessor) {
+    // 1. QQ Gateway 当前没有 replay 请求实现，只能把未确认区间暴露为恢复记录
+    if let Err(err) = processor.audit_websocket_transport_replay() {
+        eprintln!("【QQ网关】【重放审计失败】{err:#}");
+    }
+}
+
+/// 写入 QQ WebSocket transport 事件到本地 replay source。
+///
+/// 参数:
+/// - `processor`: QQ 消息处理器
+/// - `sequence`: Gateway Dispatch 序号
+/// - `payload`: 原始 Gateway Payload
+///
+/// 返回:
+/// - 无
+fn record_websocket_transport_event(processor: &QqBotProcessor, sequence: u64, payload: &Value) {
+    // 1. transport payload 先落本地 inbox，后续 gap 才能从本地 replay source 恢复
+    if let Err(err) = processor.record_websocket_transport_event(sequence, payload) {
+        eprintln!("【QQ网关】【重放事件记录失败】{err:#}");
+    }
+}
+
+/// 开始应用 QQ WebSocket transport replay 事件。
+///
+/// 参数:
+/// - `processor`: QQ 消息处理器
+/// - `sequence`: Gateway Dispatch 序号
+///
+/// 返回:
+/// - replay 处理动作
+fn begin_websocket_transport_replay_event(
+    processor: &QqBotProcessor,
+    sequence: u64,
+) -> WebsocketReplayAction {
+    match processor.begin_websocket_transport_replay_event(sequence) {
+        Ok(RuntimeTransportReplayDecision::Apply { .. }) => WebsocketReplayAction::ApplyCurrent,
+        Ok(RuntimeTransportReplayDecision::ReplayBuffered {
+            replay_start,
+            replay_end,
+            ..
+        }) => match processor.load_websocket_transport_replay_events(replay_start, replay_end) {
+            Ok(payloads) => WebsocketReplayAction::ApplyBuffered(payloads),
+            Err(err) => {
+                eprintln!("【QQ网关】【重放读取失败】{err:#}");
+                WebsocketReplayAction::Skip
+            }
+        },
+        Ok(RuntimeTransportReplayDecision::SkipStale {
+            sequence,
+            acked_seq,
+        }) => {
+            eprintln!(
+                "【QQ网关】【重放跳过】跳过已确认事件 sequence={sequence} acked_seq={acked_seq}"
+            );
+            WebsocketReplayAction::Skip
+        }
+        Ok(RuntimeTransportReplayDecision::GapUnavailable {
+            sequence,
+            missing_start,
+            missing_end,
+            acked_seq,
+        }) => {
+            eprintln!(
+                "【QQ网关】【重放缺口】跳过缺口后的事件 sequence={sequence} missing={missing_start}..{missing_end} acked_seq={acked_seq}"
+            );
+            WebsocketReplayAction::Skip
+        }
+        Err(err) => {
+            eprintln!("【QQ网关】【重放状态失败】{err:#}");
+            WebsocketReplayAction::ApplyCurrent
+        }
+    }
 }
 
 /// 读取并解析 WebSocket JSON 消息。

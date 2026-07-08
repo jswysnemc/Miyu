@@ -1,0 +1,454 @@
+use super::{
+    ActiveRunGuard, ChannelSubmission, RunnerEvent, RunnerEventSink, RunnerSubmission,
+    RunnerSubmissionKind, SessionOwner, SubmissionSource, TurnRunner, UserInputSubmission,
+};
+use crate::agent::{Agent, AgentMode};
+use crate::cli::{build_repl_tool_registry, build_tool_registry};
+use crate::config::AppConfig;
+use crate::llm::OpenAiCompatibleClient;
+use crate::paths::MiyuPaths;
+use crate::state::{active_state_dir, StateStore};
+use crate::tools::ToolRegistry;
+use anyhow::{bail, Result};
+use std::collections::BTreeSet;
+
+/// 会话 runner，负责会话范围资源和单轮执行边界。
+pub(crate) struct SessionRunner<'paths> {
+    paths: &'paths MiyuPaths,
+    config_override: Option<AppConfig>,
+    tool_registry_override: Option<ToolRegistry>,
+}
+
+impl<'paths> SessionRunner<'paths> {
+    /// 创建会话 runner。
+    ///
+    /// 参数:
+    /// - `paths`: Miyu 路径集合
+    ///
+    /// 返回:
+    /// - 会话 runner
+    pub(crate) fn new(paths: &'paths MiyuPaths) -> Self {
+        Self {
+            paths,
+            config_override: None,
+            tool_registry_override: None,
+        }
+    }
+
+    /// 设置本次运行使用的配置覆盖。
+    ///
+    /// 参数:
+    /// - `config`: 已由入口处理过临时覆盖的应用配置
+    ///
+    /// 返回:
+    /// - 更新后的会话 runner
+    pub(crate) fn with_config(mut self, config: AppConfig) -> Self {
+        self.config_override = Some(config);
+        self
+    }
+
+    /// 设置本次运行使用的工具注册表覆盖。
+    ///
+    /// 参数:
+    /// - `registry`: 已由入口补充过渠道工具的工具注册表
+    ///
+    /// 返回:
+    /// - 更新后的会话 runner
+    pub(crate) fn with_tool_registry(mut self, registry: ToolRegistry) -> Self {
+        self.tool_registry_override = Some(registry);
+        self
+    }
+
+    /// 执行 runner submission。
+    ///
+    /// 参数:
+    /// - `submission`: runner 输入
+    /// - `sink`: runner 事件接收器
+    ///
+    /// 返回:
+    /// - 可选聊天结果，控制命令后续接入
+    pub(crate) async fn run_submission<S>(
+        &self,
+        submission: RunnerSubmission,
+        sink: &mut S,
+    ) -> Result<Option<crate::llm::ChatResult>>
+    where
+        S: RunnerEventSink,
+    {
+        match &submission.kind {
+            RunnerSubmissionKind::UserInput(input) => self
+                .run_user_input(&submission, input.clone(), sink)
+                .await
+                .map(Some),
+            RunnerSubmissionKind::Control(_) => {
+                bail!("runner control submission is not wired yet")
+            }
+        }
+    }
+
+    /// 执行用户输入 submission。
+    ///
+    /// 参数:
+    /// - `submission`: runner 输入
+    /// - `input`: 用户输入 submission
+    /// - `sink`: runner 事件接收器
+    ///
+    /// 返回:
+    /// - 聊天结果
+    async fn run_user_input<S>(
+        &self,
+        submission: &RunnerSubmission,
+        input: UserInputSubmission,
+        sink: &mut S,
+    ) -> Result<crate::llm::ChatResult>
+    where
+        S: RunnerEventSink,
+    {
+        AppConfig::init_files(self.paths)?;
+        let config = self.load_config()?;
+        let context_limit_chars = config.active_context_chars()?;
+        let state = StateStore::new(self.paths)?;
+        let state_dir = active_state_dir(self.paths)?;
+        let _active_run = ActiveRunGuard::acquire_with_state_dir(
+            state.session_id(),
+            SessionOwner::from(submission.source),
+            &state_dir,
+        )?;
+        state.init_files()?;
+        let client = OpenAiCompatibleClient::from_config(&config, self.paths)?;
+        let registry =
+            self.load_tool_registry(&config, submission.source, input.mode, state.session_id())?;
+        let mut agent = build_agent(
+            config.clone(),
+            self.paths,
+            state.clone(),
+            client,
+            registry,
+            input.mode,
+            input.extra_system_prompt.as_deref(),
+        )?;
+        if config.tools.progressive_loading_enabled {
+            let loaded_tools = loaded_tools_for_submission(&state, submission.channel.as_ref())?;
+            agent.restore_loaded_tools(&loaded_tools);
+            sink.on_runner_event(RunnerEvent::LoadedToolsChanged(loaded_tools))?;
+        }
+        sink.on_runner_event(RunnerEvent::Started)?;
+        let input = with_channel_marker(input, submission.channel.as_ref());
+        let mut turn_runner = TurnRunner::new(&mut agent);
+        let result = turn_runner.run_user_input(&input, sink).await;
+        if config.tools.progressive_loading_enabled {
+            let loaded_tools = agent.loaded_tools();
+            state.save_loaded_tools(&loaded_tools)?;
+            sink.on_runner_event(RunnerEvent::LoadedToolsChanged(loaded_tools))?;
+        }
+        let result = result?;
+        if should_apply_command_mode_exit_policy(submission.source) {
+            state.apply_command_mode_runtime_exit_policy()?;
+        }
+        if submission.show_final_summary {
+            let mut snapshot = state.session_snapshot(context_limit_chars)?;
+            snapshot.dynamic_sources = agent.last_dynamic_sources();
+            snapshot.active_run = Some(_active_run.summary());
+            sink.on_runner_event(RunnerEvent::FinalSummary(snapshot))?;
+        }
+        Ok(result)
+    }
+
+    /// 读取本次 runner 使用的配置。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 应用配置
+    fn load_config(&self) -> Result<AppConfig> {
+        match &self.config_override {
+            Some(config) => Ok(config.clone()),
+            None => AppConfig::load_or_default(self.paths),
+        }
+    }
+
+    /// 读取本次 runner 使用的工具注册表。
+    ///
+    /// 参数:
+    /// - `config`: 应用配置
+    /// - `source`: submission 来源
+    /// - `mode`: Agent 模式
+    ///
+    /// 返回:
+    /// - 工具注册表
+    fn load_tool_registry(
+        &self,
+        config: &AppConfig,
+        source: SubmissionSource,
+        mode: AgentMode,
+        session_id: &str,
+    ) -> Result<ToolRegistry> {
+        match &self.tool_registry_override {
+            Some(registry) => Ok(registry.clone()),
+            None => build_submission_tool_registry(config, self.paths, source, mode, session_id),
+        }
+    }
+}
+
+/// 构造当前 submission 使用的工具注册表。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径集合
+/// - `source`: submission 来源
+/// - `mode`: Agent 模式
+///
+/// 返回:
+/// - 工具注册表
+fn build_submission_tool_registry(
+    config: &AppConfig,
+    paths: &MiyuPaths,
+    source: SubmissionSource,
+    mode: AgentMode,
+    session_id: &str,
+) -> Result<ToolRegistry> {
+    let mut registry = match source {
+        SubmissionSource::Repl => build_repl_tool_registry(config, paths, mode),
+        SubmissionSource::Command
+        | SubmissionSource::Gateway
+        | SubmissionSource::ShellIntercept => build_tool_registry(config, paths, mode),
+    }?;
+    if mode == AgentMode::Yolo && should_apply_command_mode_exit_policy(source) {
+        crate::tools::register_command_mode_background(&mut registry, config, paths, session_id);
+    }
+    Ok(registry)
+}
+
+/// 判断当前 submission 是否使用命令模式运行时清理策略。
+///
+/// 参数:
+/// - `source`: submission 来源
+///
+/// 返回:
+/// - 是否应用命令模式退出策略
+fn should_apply_command_mode_exit_policy(source: SubmissionSource) -> bool {
+    matches!(
+        source,
+        SubmissionSource::Command | SubmissionSource::ShellIntercept
+    )
+}
+
+/// 构造 Agent。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径集合
+/// - `state`: 状态存储
+/// - `client`: LLM 客户端
+/// - `registry`: 工具注册表
+/// - `mode`: Agent 模式
+/// - `extra_system_prompt`: 额外系统提示词
+///
+/// 返回:
+/// - Agent 实例
+fn build_agent(
+    config: AppConfig,
+    paths: &MiyuPaths,
+    state: StateStore,
+    client: OpenAiCompatibleClient,
+    registry: ToolRegistry,
+    mode: AgentMode,
+    extra_system_prompt: Option<&str>,
+) -> Result<Agent> {
+    if extra_system_prompt.is_some() {
+        Agent::new_with_extra_system_prompt(
+            config,
+            paths,
+            state,
+            client,
+            registry,
+            mode,
+            extra_system_prompt,
+        )
+    } else {
+        Agent::new(config, paths, state, client, registry, mode)
+    }
+}
+
+/// 读取当前 submission 的已加载工具集合。
+///
+/// 参数:
+/// - `state`: 状态存储
+/// - `channel`: 可选渠道元数据
+///
+/// 返回:
+/// - 已加载工具集合
+fn loaded_tools_for_submission(
+    state: &StateStore,
+    channel: Option<&ChannelSubmission>,
+) -> Result<Vec<String>> {
+    let loaded_tools = state.load_loaded_tools()?;
+    Ok(merge_loaded_tools(loaded_tools, channel))
+}
+
+/// 合并状态内和渠道要求的已加载工具。
+///
+/// 参数:
+/// - `loaded_tools`: 状态内已加载工具
+/// - `channel`: 可选渠道元数据
+///
+/// 返回:
+/// - 去重后的已加载工具
+fn merge_loaded_tools(
+    loaded_tools: Vec<String>,
+    channel: Option<&ChannelSubmission>,
+) -> Vec<String> {
+    let mut seen = BTreeSet::new();
+    let mut merged = Vec::new();
+    for tool in loaded_tools.into_iter().chain(
+        channel
+            .into_iter()
+            .flat_map(|channel| channel.extra_loaded_tools.iter().cloned()),
+    ) {
+        if seen.insert(tool.clone()) {
+            merged.push(tool);
+        }
+    }
+    merged
+}
+
+/// 将渠道入站标记加入用户输入。
+///
+/// 参数:
+/// - `input`: 用户输入 submission
+/// - `channel`: 可选渠道元数据
+///
+/// 返回:
+/// - 更新后的用户输入 submission
+fn with_channel_marker(
+    mut input: UserInputSubmission,
+    channel: Option<&ChannelSubmission>,
+) -> UserInputSubmission {
+    if let Some(marker) = channel.and_then(|channel| channel.inbound_marker.as_deref()) {
+        input.input = format!("{marker}\n\n{}", input.input);
+    }
+    input
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::paths::MiyuPaths;
+    use std::path::PathBuf;
+
+    /// 创建测试路径集合。
+    ///
+    /// 参数:
+    /// - `state_dir`: 状态目录
+    ///
+    /// 返回:
+    /// - 测试路径集合
+    fn test_paths(state_dir: PathBuf) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: PathBuf::new(),
+            config_file: PathBuf::new(),
+            secrets_file: PathBuf::new(),
+            skills_dir: PathBuf::new(),
+            data_dir: PathBuf::new(),
+            cache_dir: PathBuf::new(),
+            state_dir,
+            pictures_dir: PathBuf::new(),
+            fish_hook_file: PathBuf::new(),
+            bash_hook_file: PathBuf::new(),
+            zsh_hook_file: PathBuf::new(),
+            powershell_hook_file: PathBuf::new(),
+        }
+    }
+
+    /// 验证渠道入站标记会被前置到用户输入。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn channel_marker_is_prepended_to_user_input() {
+        let input = UserInputSubmission::new("你好", AgentMode::Yolo);
+        let channel = ChannelSubmission::new("qq")
+            .with_inbound_marker("[channel=qq gateway=qq-bot target=group]");
+
+        let input = with_channel_marker(input, Some(&channel));
+
+        assert_eq!(
+            input.input,
+            "[channel=qq gateway=qq-bot target=group]\n\n你好"
+        );
+    }
+
+    /// 验证渠道工具和已有工具会按首次出现顺序去重。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn channel_loaded_tools_are_merged_without_duplicates() {
+        let loaded_tools = vec!["read_file".to_string(), "send_channel_message".to_string()];
+        let channel = ChannelSubmission::new("qq")
+            .with_extra_loaded_tool("send_channel_message")
+            .with_extra_loaded_tool("write_file");
+
+        let merged = merge_loaded_tools(loaded_tools, Some(&channel));
+
+        assert_eq!(
+            merged,
+            vec!["read_file", "send_channel_message", "write_file"]
+        );
+    }
+
+    /// 验证命令模式后台命令会绑定 command-mode owner。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[tokio::test]
+    async fn command_mode_registry_marks_background_owner() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let config = AppConfig::default();
+        let state = StateStore::new(&paths).unwrap();
+        let registry = build_submission_tool_registry(
+            &config,
+            &paths,
+            SubmissionSource::Command,
+            AgentMode::Yolo,
+            state.session_id(),
+        )
+        .unwrap();
+
+        registry
+            .call(
+                "background_command",
+                r#"{"action":"start","command":"true","label":"cmd-owner"}"#,
+            )
+            .await
+            .unwrap();
+
+        let db_path = crate::state::active_state_dir(&paths)
+            .unwrap()
+            .join("conversation.db");
+        let conn = rusqlite::Connection::open(db_path).unwrap();
+        let owner_kind: String = conn
+            .query_row(
+                "SELECT owner_kind
+                 FROM runtime_processes
+                 ORDER BY started_at DESC
+                 LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(owner_kind, "command_mode");
+    }
+}

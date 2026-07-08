@@ -5,7 +5,7 @@ use super::background_schema::{
 };
 use super::background_tasks::{
     cleanup_background_tasks, list_background_tasks, read_background_task_output,
-    start_background_task, stop_background_task,
+    start_background_task, stop_background_task, BackgroundRuntimeOwner,
 };
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
@@ -26,8 +26,27 @@ pub(crate) fn register(
     paths: MiyuPaths,
     allow_command_execution: bool,
 ) {
+    register_with_runtime_owner(registry, config, paths, allow_command_execution, None);
+}
+
+/// 注册带运行时 owner 的后台命令写入类工具。
+///
+/// 参数:
+/// - `registry`: 工具注册表
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `allow_command_execution`: 是否允许命令执行
+/// - `runtime_owner`: 可选运行时 owner 元数据
+pub(crate) fn register_with_runtime_owner(
+    registry: &mut ToolRegistry,
+    config: AppConfig,
+    paths: MiyuPaths,
+    allow_command_execution: bool,
+    runtime_owner: Option<BackgroundRuntimeOwner>,
+) {
     let action_config = config.clone();
     let action_paths = paths.clone();
+    let action_owner = runtime_owner.clone();
     registry.register(
         ToolSpec::new(
             background_tool_name(),
@@ -36,9 +55,17 @@ pub(crate) fn register(
             move |args| {
                 let config = action_config.clone();
                 let paths = action_paths.clone();
+                let runtime_owner = action_owner.clone();
                 async move {
-                    run_background_action(args, &config, &paths, allow_command_execution, false)
-                        .await
+                    run_background_action(
+                        args,
+                        &config,
+                        &paths,
+                        allow_command_execution,
+                        false,
+                        runtime_owner,
+                    )
+                    .await
                 }
             },
         )
@@ -62,7 +89,7 @@ pub(crate) fn register_readonly(registry: &mut ToolRegistry, config: AppConfig, 
         move |args| {
             let config = action_config.clone();
             let paths = action_paths.clone();
-            async move { run_background_action(args, &config, &paths, false, true).await }
+            async move { run_background_action(args, &config, &paths, false, true, None).await }
         },
     ));
 }
@@ -111,7 +138,48 @@ pub(crate) fn start_background_task_for_user(
     if let Some(timeout_seconds) = timeout_seconds {
         args["timeout_seconds"] = json!(timeout_seconds);
     }
-    start_background_task(args, config, paths, true)
+    start_background_task(args, config, paths, true, None)
+}
+
+/// 用户 CLI 启动网关后台命令。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+/// - `command`: shell 命令
+/// - `cwd`: 可选工作目录
+/// - `label`: 可选标签
+/// - `timeout_seconds`: 可选超时时间，0 表示不自动超时
+/// - `gateway_id`: 网关标识
+///
+/// 返回:
+/// - JSON 格式任务信息
+pub(crate) fn start_gateway_background_task_for_user(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    command: &str,
+    cwd: Option<&str>,
+    label: Option<&str>,
+    timeout_seconds: Option<u64>,
+    gateway_id: &str,
+) -> Result<String> {
+    let mut args = json!({"command": command});
+    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
+        args["cwd"] = json!(cwd);
+    }
+    if let Some(label) = label.filter(|value| !value.trim().is_empty()) {
+        args["label"] = json!(label);
+    }
+    if let Some(timeout_seconds) = timeout_seconds {
+        args["timeout_seconds"] = json!(timeout_seconds);
+    }
+    start_background_task(
+        args,
+        config,
+        paths,
+        true,
+        Some(BackgroundRuntimeOwner::gateway(gateway_id)),
+    )
 }
 
 /// 用户 CLI 读取后台命令输出。

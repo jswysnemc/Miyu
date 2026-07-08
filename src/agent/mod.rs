@@ -1,5 +1,9 @@
+mod compaction;
 mod conversation;
 mod message_context;
+mod model_context;
+mod recovery;
+mod tool_history;
 mod tool_visibility;
 
 use crate::config::AppConfig;
@@ -9,12 +13,17 @@ use crate::llm::{
 };
 use crate::memory::MemoryStore;
 use crate::paths::MiyuPaths;
-use crate::state::{CompactionRequest, PendingTurnGuard, StateStore};
-use crate::tools::{self, memes, ToolPermission, ToolRegistry};
-use anyhow::{bail, Context, Result};
-use message_context::{
-    clean_user_visible_text, runtime_context_message, system_messages_first, with_mode_reminder,
+use crate::state::request_projection::{
+    project_provider_base_context_projection, project_provider_turn_from_base_projection,
+    project_provider_turn_from_messages, DynamicContextSource, ProjectedBaseContext,
 };
+use crate::state::PendingTurnGuard;
+use crate::state::StateStore;
+use crate::tools::{self, memes, ToolPermission, ToolRegistry};
+use anyhow::{bail, Result};
+use message_context::{clean_user_visible_text, runtime_context_message, system_messages_first};
+use model_context::selected_model_label;
+use recovery::is_context_overflow_error;
 use tokio::sync::mpsc;
 use tool_visibility::ToolVisibility;
 
@@ -63,7 +72,7 @@ pub enum AgentEvent {
 pub struct Agent {
     state: StateStore,
     client: OpenAiCompatibleClient,
-    system_prompt: String,
+    base_system_prompt: String,
     context_tokens: usize,
     trim_at_ratio: f32,
     tools_enabled: bool,
@@ -74,6 +83,7 @@ pub struct Agent {
     mode: AgentMode,
     config: AppConfig,
     paths: MiyuPaths,
+    last_dynamic_sources: Vec<DynamicContextSource>,
 }
 
 impl Agent {
@@ -134,7 +144,6 @@ impl Agent {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
         }
-        let system_prompt = with_mode_reminder(base_system_prompt, mode);
         let context_tokens = config.active_context_chars()?;
         let max_tool_rounds = config.tools.max_rounds;
         if tools_enabled && config.tools.progressive_loading_enabled {
@@ -146,7 +155,7 @@ impl Agent {
         Ok(Self {
             state,
             client,
-            system_prompt,
+            base_system_prompt,
             context_tokens,
             trim_at_ratio: config.context.trim_at_ratio,
             tools_enabled,
@@ -157,14 +166,8 @@ impl Agent {
             mode,
             config,
             paths: paths.clone(),
+            last_dynamic_sources: Vec::new(),
         })
-    }
-
-    pub async fn chat_stream<F>(&mut self, input: &str, on_event: F) -> Result<ChatResult>
-    where
-        F: FnMut(AgentEvent) -> Result<()>,
-    {
-        self.chat_stream_with_image(input, None, on_event).await
     }
 
     /// 恢复上一轮已经加载的工具集合。
@@ -190,6 +193,17 @@ impl Agent {
         self.tool_visibility.loaded_tool_names()
     }
 
+    /// 导出最近一次 provider 请求的动态上下文来源。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 动态上下文来源列表
+    pub fn last_dynamic_sources(&self) -> Vec<DynamicContextSource> {
+        self.last_dynamic_sources.clone()
+    }
+
     /// 发送一轮带可选图片的流式对话。
     ///
     /// 参数:
@@ -208,7 +222,6 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
-        self.compact_conversation_if_needed().await?;
         let input = clean_user_visible_text(input);
         let turn_id = new_turn_id();
         self.state.start_turn(&turn_id, &input)?;
@@ -216,32 +229,90 @@ impl Agent {
         let auto_meme_plan =
             memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
                 .await?;
-        let mut messages = self.chat_messages(Some(&turn_id))?;
-        if let Some(association) = self.memory.association(&input)? {
-            messages.push(ChatMessage::system(
-                self.memory.format_association(&association),
-            ));
-        }
-        if let Some(plan) = &auto_meme_plan {
-            messages.push(ChatMessage::system(plan.reminder.clone()));
-        }
-        messages.push(ChatMessage::plain("user", input.clone()));
-        if let Some(image_url) = image_url {
-            if let Some(message) = messages.last_mut().filter(|message| message.role == "user") {
-                *message = ChatMessage::user_with_image(&input, image_url);
-            }
+        let association_prompt = self
+            .memory
+            .association(&input)?
+            .map(|association| self.memory.format_association(&association));
+        let auto_meme_reminder = auto_meme_plan.as_ref().map(|plan| plan.reminder.as_str());
+        let mut messages = self.chat_messages_for_turn(
+            &turn_id,
+            &input,
+            image_url.as_deref(),
+            association_prompt.as_deref(),
+            auto_meme_reminder,
+        )?;
+        if self
+            .compact_conversation_if_needed(&turn_id, &messages)
+            .await?
+        {
+            messages = self.chat_messages_for_turn(
+                &turn_id,
+                &input,
+                image_url.as_deref(),
+                association_prompt.as_deref(),
+                auto_meme_reminder,
+            )?;
         }
         let mut on_event = on_event;
         let mut used_tools = Vec::new();
         let mut persisted_tool_reports = Vec::new();
-        let result = self
+        let result = match self
             .chat_with_tools(
+                &turn_id,
                 &mut messages,
                 &mut used_tools,
                 &mut persisted_tool_reports,
                 &mut on_event,
             )
-            .await?;
+            .await
+        {
+            Ok(result) => result,
+            Err(err) if is_context_overflow_error(&err) => {
+                if !used_tools.is_empty() || !persisted_tool_reports.is_empty() {
+                    self.record_overflow_retry_failed(&turn_id, &messages, &err)?;
+                    return Err(err);
+                }
+                if !self
+                    .recover_after_provider_overflow(
+                        &turn_id,
+                        &messages,
+                        &err,
+                        &input,
+                        image_url.as_deref(),
+                        association_prompt.as_deref(),
+                        auto_meme_reminder,
+                    )
+                    .await?
+                {
+                    return Err(err);
+                }
+                messages = self.chat_messages_for_turn(
+                    &turn_id,
+                    &input,
+                    image_url.as_deref(),
+                    association_prompt.as_deref(),
+                    auto_meme_reminder,
+                )?;
+                match self
+                    .chat_with_tools(
+                        &turn_id,
+                        &mut messages,
+                        &mut used_tools,
+                        &mut persisted_tool_reports,
+                        &mut on_event,
+                    )
+                    .await
+                {
+                    Ok(result) => result,
+                    Err(retry_err) if is_context_overflow_error(&retry_err) => {
+                        self.record_overflow_retry_failed(&turn_id, &messages, &retry_err)?;
+                        return Err(retry_err);
+                    }
+                    Err(retry_err) => return Err(retry_err),
+                }
+            }
+            Err(err) => return Err(err),
+        };
         if let Some(plan) = auto_meme_plan {
             on_event(AgentEvent::ExternalOutput)?;
             memes::render_auto_meme(&self.config, &self.paths, &plan.event).await?;
@@ -252,6 +323,7 @@ impl Agent {
                 .append_tool_report_context(&turn_id, &tool_name, &report)?;
         }
         guard.complete(&result.content, result.reasoning.as_deref())?;
+        let _ = self.extract_session_memory_with_model().await;
         self.memory.process_after_turn(&input, &result.content)?;
         if let Some(usage) = &result.usage {
             self.state.add_usage(usage)?;
@@ -259,75 +331,9 @@ impl Agent {
         Ok(result)
     }
 
-    /// 按最近一次 provider token usage 自动压缩旧会话。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 压缩是否成功
-    async fn compact_conversation_if_needed(&self) -> Result<()> {
-        let Some(request) = self
-            .state
-            .select_compaction(self.context_tokens, self.trim_at_ratio)?
-        else {
-            return Ok(());
-        };
-        let summary = self
-            .create_compaction_summary(&request)
-            .await
-            .context("failed to compact conversation")?;
-        self.state.apply_compaction(&request, &summary)?;
-        Ok(())
-    }
-
-    /// 立即手动压缩当前会话旧轮次。
-    ///
-    /// 参数:
-    /// - `keep_tail_turns`: 保留的最近非运行轮次数量
-    ///
-    /// 返回:
-    /// - 已压缩轮次数量
-    pub async fn compact_conversation_now(&self, keep_tail_turns: usize) -> Result<usize> {
-        let Some(request) = self.state.select_manual_compaction(keep_tail_turns)? else {
-            return Ok(0);
-        };
-        let turn_count = request.turn_count();
-        let summary = self
-            .create_compaction_summary(&request)
-            .await
-            .context("failed to compact conversation")?;
-        self.state.apply_compaction(&request, &summary)?;
-        Ok(turn_count)
-    }
-
-    /// 使用当前模型生成会话压缩摘要。
-    ///
-    /// 参数:
-    /// - `request`: 压缩请求
-    ///
-    /// 返回:
-    /// - 压缩摘要正文
-    async fn create_compaction_summary(&self, request: &CompactionRequest) -> Result<String> {
-        let messages = vec![
-            ChatMessage::system(
-                "You are a conversation compaction worker. Produce a concise, faithful Markdown summary for future turns. Do not answer the user task.",
-            ),
-            ChatMessage::plain("user", request.prompt()),
-        ];
-        let result = self
-            .client
-            .chat_stream_events(messages, Vec::new(), |_| Ok(()))
-            .await?;
-        let summary = result.content.trim();
-        if summary.is_empty() {
-            bail!("compaction summary is empty");
-        }
-        Ok(summary.to_string())
-    }
-
     async fn chat_with_tools<F>(
         &mut self,
+        turn_id: &str,
         messages: &mut Vec<ChatMessage>,
         used_tools: &mut Vec<String>,
         persisted_tool_reports: &mut Vec<(String, String)>,
@@ -337,6 +343,7 @@ impl Agent {
         F: FnMut(AgentEvent) -> Result<()>,
     {
         let mut tool_round = 0usize;
+        let mut tool_event_seq = 0usize;
         loop {
             if self.max_tool_rounds > 0 && tool_round >= self.max_tool_rounds {
                 let content = format!(
@@ -361,6 +368,13 @@ impl Agent {
                 Vec::new()
             };
             let ordered_messages = system_messages_first(messages.clone());
+            let projection = project_provider_turn_from_messages(
+                &ordered_messages,
+                definitions.len(),
+                self.context_tokens,
+            );
+            self.state
+                .enforce_provider_projection(Some(turn_id), &projection)?;
             let result = self
                 .client
                 .chat_stream_events(ordered_messages, definitions.clone(), |event| match event {
@@ -378,6 +392,8 @@ impl Agent {
                 Some(result.tool_calls.clone()),
             ));
             for call in result.tool_calls {
+                tool_event_seq += 1;
+                self.record_tool_call_started(turn_id, tool_event_seq, &call)?;
                 used_tools.push(call.function.name.clone());
                 on_event(AgentEvent::ToolCall {
                     name: call.function.name.clone(),
@@ -386,6 +402,11 @@ impl Agent {
                 if self.mode == AgentMode::Plan
                     && self.tools.permission(&call.function.name)? != ToolPermission::ReadOnly
                 {
+                    let output = format!(
+                        "tool error: Plan mode blocked non-read-only tool: {}",
+                        call.function.name
+                    );
+                    self.record_tool_result_completed(turn_id, &call, false, &output, &output)?;
                     bail!(
                         "Plan mode blocked non-read-only tool: {}",
                         call.function.name
@@ -416,10 +437,16 @@ impl Agent {
                             output
                         }
                     };
-                    messages.push(ChatMessage::tool(
-                        call.id,
-                        tools::tool_output_for_context(&call.function.name, &output),
-                    ));
+                    let context_output =
+                        tools::tool_output_for_context(&call.function.name, &output);
+                    self.record_tool_result_completed(
+                        turn_id,
+                        &call,
+                        !context_output.starts_with("tool error:"),
+                        &output,
+                        &context_output,
+                    )?;
+                    messages.push(ChatMessage::tool(call.id, context_output));
                     continue;
                 }
                 if !self.tool_visibility.is_visible(&call.function.name) {
@@ -432,10 +459,16 @@ impl Agent {
                         ok: false,
                         output: output.clone(),
                     })?;
-                    messages.push(ChatMessage::tool(
-                        call.id,
-                        tools::tool_output_for_context(&call.function.name, &output),
-                    ));
+                    let context_output =
+                        tools::tool_output_for_context(&call.function.name, &output);
+                    self.record_tool_result_completed(
+                        turn_id,
+                        &call,
+                        false,
+                        &output,
+                        &context_output,
+                    )?;
+                    messages.push(ChatMessage::tool(call.id, context_output));
                     continue;
                 }
                 if call.function.name == "install_aur_package"
@@ -447,10 +480,16 @@ impl Agent {
                         ok: false,
                         output: output.clone(),
                     })?;
-                    messages.push(ChatMessage::tool(
-                        call.id,
-                        tools::tool_output_for_context(&call.function.name, &output),
-                    ));
+                    let context_output =
+                        tools::tool_output_for_context(&call.function.name, &output);
+                    self.record_tool_result_completed(
+                        turn_id,
+                        &call,
+                        false,
+                        &output,
+                        &context_output,
+                    )?;
+                    messages.push(ChatMessage::tool(call.id, context_output));
                     continue;
                 }
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
@@ -509,38 +548,96 @@ impl Agent {
                         }
                     }
                 };
-                messages.push(ChatMessage::tool(
-                    call.id,
-                    tools::tool_output_for_context(&call.function.name, &output),
-                ));
+                let context_output = tools::tool_output_for_context(&call.function.name, &output);
+                self.record_tool_result_completed(
+                    turn_id,
+                    &call,
+                    !output.starts_with("tool error:"),
+                    &output,
+                    &context_output,
+                )?;
+                messages.push(ChatMessage::tool(call.id, context_output));
             }
         }
     }
 
-    fn chat_messages(&self, exclude_turn_id: Option<&str>) -> Result<Vec<ChatMessage>> {
-        let mut messages = vec![ChatMessage::system(self.system_prompt.clone())];
-        if let Some(prompt) = self.tool_visibility.loaded_context_prompt(&self.tools) {
-            messages.push(ChatMessage::system(prompt));
-        }
-        if let Some(summary) = self.state.compaction_summary_context()? {
-            messages.push(ChatMessage::system(summary));
-        }
-        let entries = match exclude_turn_id {
-            Some(turn_id) => {
-                crate::state::turns_to_entries(self.state.load_turns_excluding(turn_id)?)
-            }
-            None => self.state.load_conversation()?,
-        };
-        for entry in entries {
-            if entry.role == "user" || entry.role == "assistant" {
-                messages.push(ChatMessage::plain(entry.role, entry.content));
-            }
-        }
-        if let Some(summary) = memes::last_auto_meme_reminder(&self.config, &self.paths)? {
-            messages.push(ChatMessage::system(summary));
-        }
-        messages.push(ChatMessage::system(runtime_context_message()));
-        Ok(messages)
+    /// 构造当前轮完整请求消息。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前运行中轮次标识
+    /// - `input`: 当前用户输入
+    /// - `image_url`: 可选图片 data URL
+    /// - `association_prompt`: 可选关联记忆上下文
+    /// - `auto_meme_reminder`: 可选自动表情包提醒
+    ///
+    /// 返回:
+    /// - 当前轮请求消息列表
+    fn chat_messages_for_turn(
+        &mut self,
+        turn_id: &str,
+        input: &str,
+        image_url: Option<&str>,
+        association_prompt: Option<&str>,
+        auto_meme_reminder: Option<&str>,
+    ) -> Result<Vec<ChatMessage>> {
+        let base_projection = self.chat_base_context_projection(Some(turn_id))?;
+        let projection = project_provider_turn_from_base_projection(
+            base_projection,
+            input,
+            image_url,
+            association_prompt,
+            auto_meme_reminder,
+            0,
+            self.context_tokens,
+        );
+        self.last_dynamic_sources = projection.dynamic_sources.clone();
+        self.state
+            .enforce_provider_projection(Some(turn_id), &projection)?;
+        Ok(projection.messages)
+    }
+
+    /// 构造 provider base context 投影。
+    ///
+    /// 参数:
+    /// - `exclude_turn_id`: 需要从历史投影中排除的当前运行中轮次
+    ///
+    /// 返回:
+    /// - provider base context 投影
+    fn chat_base_context_projection(
+        &self,
+        exclude_turn_id: Option<&str>,
+    ) -> Result<ProjectedBaseContext> {
+        let loaded_tools_context = self.tool_visibility.loaded_context_prompt(&self.tools);
+        let projected_history = self.state.project_history(exclude_turn_id)?;
+        let compaction_summary_context = projected_history
+            .checkpoint_context
+            .or(self.state.compaction_summary_context()?);
+        let last_auto_meme_reminder = memes::last_auto_meme_reminder(&self.config, &self.paths)?;
+        let runtime_context = runtime_context_message();
+        let epoch = self
+            .state
+            .context_epoch_projection(&self.base_system_prompt)?;
+        Ok(project_provider_base_context_projection(
+            &epoch.baseline,
+            Some(self.mode.reminder()),
+            self.selected_model_label()?.as_deref(),
+            loaded_tools_context.as_deref(),
+            compaction_summary_context.as_deref(),
+            projected_history.messages,
+            last_auto_meme_reminder.as_deref(),
+            &runtime_context,
+        ))
+    }
+
+    /// 构造当前 provider/model 标签。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 当前 provider/model 标签
+    fn selected_model_label(&self) -> Result<Option<String>> {
+        selected_model_label(&self.config)
     }
 }
 

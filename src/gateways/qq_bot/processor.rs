@@ -2,7 +2,7 @@ use super::auth::QqBotAuthenticator;
 use super::event::{QqBotInboundMediaKind, QqBotMessageEvent};
 use super::inbound_media::{save_inbound_media, saved_image_to_data_url, SavedQqInboundMedia};
 use super::prompt::channel_prompt;
-use crate::agent::{Agent, AgentMode};
+use crate::agent::AgentMode;
 use crate::cli::build_tool_registry;
 use crate::config::AppConfig;
 use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
@@ -10,10 +10,10 @@ use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChanne
 use crate::gateways::command_intercept::handle_gateway_command;
 use crate::gateways::message::OutboundMessage;
 use crate::gateways::qq_official::{QqOfficialClient, QqTargetKind};
-use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
-use anyhow::Result;
+use anyhow::{bail, Result};
+use serde_json::Value;
 use tokio::sync::Mutex;
 
 pub(crate) struct QqBotProcessorConfig {
@@ -63,6 +63,106 @@ impl QqBotProcessor {
         if self.verbose {
             eprintln!("【QQ网关】【调试】{}", message.as_ref());
         }
+    }
+
+    /// 记录 QQ WebSocket transport 断开观察事件。
+    ///
+    /// 参数:
+    /// - `reason`: 断开原因
+    /// - `last_sequence`: 最近一次 Gateway Dispatch 序号
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub(crate) fn record_websocket_transport_close(
+        &self,
+        reason: &str,
+        last_sequence: Option<u64>,
+    ) -> Result<()> {
+        let state = StateStore::new(&self.paths)?;
+        state.record_gateway_transport_close("qq", reason, last_sequence)
+    }
+
+    /// 推进 QQ WebSocket transport cursor 和 ack。
+    ///
+    /// 参数:
+    /// - `cursor_seq`: 可选已接收 Gateway Dispatch 序号
+    /// - `acked_seq`: 可选已处理 Gateway Dispatch 序号
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub(crate) fn advance_websocket_transport_cursor(
+        &self,
+        cursor_seq: Option<u64>,
+        acked_seq: Option<u64>,
+    ) -> Result<()> {
+        let state = StateStore::new(&self.paths)?;
+        state.advance_gateway_transport_cursor("qq", cursor_seq, acked_seq)?;
+        Ok(())
+    }
+
+    /// 审计 QQ WebSocket 是否存在无法 replay 的未确认区间。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 是否写入恢复记录
+    pub(crate) fn audit_websocket_transport_replay(&self) -> Result<bool> {
+        let state = StateStore::new(&self.paths)?;
+        state.audit_gateway_transport_replay("qq")
+    }
+
+    /// 写入 QQ WebSocket transport 事件到本地 replay source。
+    ///
+    /// 参数:
+    /// - `sequence`: Gateway Dispatch 序号
+    /// - `payload`: 原始 Gateway Payload
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub(crate) fn record_websocket_transport_event(
+        &self,
+        sequence: u64,
+        payload: &Value,
+    ) -> Result<()> {
+        let state = StateStore::new(&self.paths)?;
+        state.record_gateway_transport_event("qq", sequence, payload)
+    }
+
+    /// 读取 QQ WebSocket 本地 replay 事件。
+    ///
+    /// 参数:
+    /// - `start_sequence`: 起始序号
+    /// - `end_sequence`: 结束序号
+    ///
+    /// 返回:
+    /// - 按序排列的 Gateway Payload
+    pub(crate) fn load_websocket_transport_replay_events(
+        &self,
+        start_sequence: i64,
+        end_sequence: i64,
+    ) -> Result<Vec<Value>> {
+        let state = StateStore::new(&self.paths)?;
+        let events = state.load_gateway_transport_events("qq", start_sequence, end_sequence)?;
+        events
+            .into_iter()
+            .map(|event| serde_json::from_str::<Value>(&event.payload_json).map_err(Into::into))
+            .collect()
+    }
+
+    /// 开始应用 QQ WebSocket replay 事件。
+    ///
+    /// 参数:
+    /// - `sequence`: Gateway Dispatch 序号
+    ///
+    /// 返回:
+    /// - replay 应用决策
+    pub(crate) fn begin_websocket_transport_replay_event(
+        &self,
+        sequence: u64,
+    ) -> Result<crate::runtime_recovery::RuntimeTransportReplayDecision> {
+        let state = StateStore::new(&self.paths)?;
+        state.begin_gateway_transport_replay_event("qq", sequence)
     }
 
     /// 处理一条 QQ 官方机器人消息事件。
@@ -180,9 +280,6 @@ impl QqBotProcessor {
     ) -> Result<String> {
         AppConfig::init_files(&self.paths)?;
         let config = AppConfig::load_or_default(&self.paths)?;
-        let state = StateStore::new(&self.paths)?;
-        state.init_files()?;
-        let client = OpenAiCompatibleClient::from_config(&config, &self.paths)?;
         let mut registry = build_tool_registry(&config, &self.paths, AgentMode::Yolo)?;
         register_channel_message_tool(
             &mut registry,
@@ -193,30 +290,74 @@ impl QqBotProcessor {
                 msg_id: Some(event.msg_id.clone()),
             },
         );
-        let progressive_loading_enabled = config.tools.progressive_loading_enabled;
-        let prompt = format!("{}\n\n{}", context.inbound_marker(), prompt);
-        let mut agent = Agent::new_with_extra_system_prompt(
-            config,
-            &self.paths,
-            state.clone(),
-            client,
-            registry,
-            AgentMode::Yolo,
-            Some(channel_prompt()),
-        )?;
-        if progressive_loading_enabled {
-            let mut loaded_tools = state.load_loaded_tools()?;
-            loaded_tools.push("send_channel_message".to_string());
-            agent.restore_loaded_tools(&loaded_tools);
-        }
-        let result = agent
-            .chat_stream_with_image(&prompt, image_url, |_| Ok(()))
-            .await?;
-        if progressive_loading_enabled {
-            state.save_loaded_tools(&agent.loaded_tools())?;
-        }
-        Ok(result.content)
+        let user_input = gateway_user_input(prompt, image_url, Some(channel_prompt()));
+        let channel = crate::runner::ChannelSubmission::new(context.channel())
+            .with_inbound_marker(context.inbound_marker())
+            .with_extra_loaded_tool("send_channel_message");
+        let submission = crate::runner::RunnerSubmission::user_input(
+            crate::runner::SubmissionSource::Gateway,
+            user_input,
+        )
+        .with_channel(channel);
+        let output = run_gateway_submission(&self.paths, config, registry, submission).await?;
+        let Some(completion) = output.completion else {
+            bail!("gateway runner completed without assistant content");
+        };
+        Ok(completion.content)
     }
+}
+
+/// 构造 gateway 用户输入 submission。
+///
+/// 参数:
+/// - `prompt`: Agent 输入文本
+/// - `image_url`: 可选图片 data URL
+/// - `extra_system_prompt`: 可选额外系统提示词
+///
+/// 返回:
+/// - 用户输入 submission
+fn gateway_user_input(
+    prompt: String,
+    image_url: Option<String>,
+    extra_system_prompt: Option<&str>,
+) -> crate::runner::UserInputSubmission {
+    let mut input = crate::runner::UserInputSubmission::new(prompt, AgentMode::Yolo);
+    if let Some(image_url) = image_url {
+        input = input.with_image_url(image_url);
+    }
+    if let Some(prompt) = extra_system_prompt {
+        input = input.with_extra_system_prompt(prompt);
+    }
+    input
+}
+
+/// 通过 runner 执行 gateway submission。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+/// - `registry`: 工具注册表
+/// - `submission`: runner submission
+///
+/// 返回:
+/// - runner 输出
+async fn run_gateway_submission(
+    paths: &MiyuPaths,
+    config: AppConfig,
+    registry: crate::tools::ToolRegistry,
+    submission: crate::runner::RunnerSubmission,
+) -> Result<crate::runner::RunnerOutput> {
+    let mut output = crate::runner::RunnerOutput::default();
+    let mut sink = |event| {
+        output.push_event(event);
+        Ok(())
+    };
+    crate::runner::SessionRunner::new(paths)
+        .with_config(config)
+        .with_tool_registry(registry)
+        .run_submission(submission, &mut sink)
+        .await?;
+    Ok(output)
 }
 
 /// 将已保存媒体信息追加到 Agent 输入。

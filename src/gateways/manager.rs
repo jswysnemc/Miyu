@@ -1,7 +1,9 @@
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
+use crate::state::StateStore;
 use crate::tools::command::{
-    list_background_tasks_for_user, start_background_task_for_user, stop_background_task_for_user,
+    list_background_tasks_for_user, start_gateway_background_task_for_user,
+    stop_background_task_for_user,
 };
 use anyhow::{Context, Result};
 use serde::Deserialize;
@@ -35,6 +37,8 @@ struct BackgroundTaskList {
 struct BackgroundTask {
     id: String,
     label: String,
+    runtime_owner_kind: Option<String>,
+    runtime_owner_id: Option<String>,
     pid: u32,
     status: String,
 }
@@ -160,13 +164,14 @@ pub(crate) async fn start_gateway(
         }))?);
     }
     let command = gateway_command(gateway)?;
-    start_background_task_for_user(
+    start_gateway_background_task_for_user(
         paths,
         config,
         &command,
         Some(&gateway_workspace(paths)),
         Some(&gateway.label()),
         Some(0),
+        gateway.id(),
     )
 }
 
@@ -190,6 +195,11 @@ pub(crate) async fn stop_gateway(
         .filter(|task| is_gateway_task(task, gateway) && task.status == "running")
         .cloned()
         .collect::<Vec<_>>();
+    if !matching.is_empty() {
+        // 1. 先按 runtime owner 执行连接关闭策略，再让兼容 JSON 任务状态跟随刷新
+        let state = StateStore::new(paths)?;
+        state.apply_gateway_connection_close_policy(gateway.id())?;
+    }
     for task in &matching {
         stop_background_task_for_user(paths, config, &task.id, false).await?;
     }
@@ -237,6 +247,10 @@ fn find_gateway_task(tasks: &[BackgroundTask], gateway: ManagedGateway) -> Optio
 /// 返回:
 /// - 是否匹配
 fn is_gateway_task(task: &BackgroundTask, gateway: ManagedGateway) -> bool {
+    if task.runtime_owner_kind.is_some() || task.runtime_owner_id.is_some() {
+        return task.runtime_owner_kind.as_deref() == Some("gateway")
+            && task.runtime_owner_id.as_deref() == Some(gateway.id());
+    }
     task.label == gateway.label()
 }
 
@@ -311,6 +325,39 @@ mod tests {
         assert!(!is_gateway_task(&weixin_task, ManagedGateway::Qq));
     }
 
+    /// 验证网关后台任务优先使用 runtime owner 元数据匹配。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn gateway_task_matching_prefers_runtime_owner() {
+        let mut task = task("1", "gateway:weixin", "running", 100);
+        task.runtime_owner_kind = Some("gateway".to_string());
+        task.runtime_owner_id = Some("qq".to_string());
+
+        assert!(is_gateway_task(&task, ManagedGateway::Qq));
+        assert!(!is_gateway_task(&task, ManagedGateway::Weixin));
+    }
+
+    /// 验证非网关 owner 不会因为标签被误判为网关任务。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn gateway_task_matching_rejects_labeled_non_gateway_owner() {
+        let mut task = task("1", "gateway:qq", "running", 100);
+        task.runtime_owner_kind = Some("session".to_string());
+        task.runtime_owner_id = Some("default".to_string());
+
+        assert!(!is_gateway_task(&task, ManagedGateway::Qq));
+    }
+
     /// 验证查找网关任务时选择最新任务。
     ///
     /// 参数:
@@ -374,6 +421,8 @@ mod tests {
         BackgroundTask {
             id: id.to_string(),
             label: label.to_string(),
+            runtime_owner_kind: None,
+            runtime_owner_id: None,
             pid,
             status: status.to_string(),
         }

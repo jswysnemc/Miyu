@@ -5,6 +5,14 @@ use std::path::PathBuf;
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub(crate) struct BackgroundCommandTask {
     pub(crate) id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_process_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_owner_kind: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_owner_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) runtime_process_kind: Option<String>,
     pub(crate) label: String,
     pub(crate) command: String,
     pub(crate) cwd: String,

@@ -187,47 +187,29 @@ pub(super) async fn run_repl(
             input_history.push(input.to_string());
         }
         render_repl_submitted_input(mode, input)?;
-        let registry = build_repl_tool_registry(&config, paths, mode)?;
-        let mut agent = Agent::new(
-            config.clone(),
-            paths,
-            state.clone(),
-            client.clone(),
-            registry,
-            mode,
-        )?;
-        if config.tools.progressive_loading_enabled {
-            let loaded_tools = state.load_loaded_tools()?;
-            agent.restore_loaded_tools(&loaded_tools);
-        }
         let reasoning_mode = render::ReasoningDisplayMode::from_config(&config.display.reasoning);
         let tool_call_mode = render::ToolCallDisplayMode::from_config(&config.display.tool_calls);
-        let mut renderer = render::StreamRenderer::new(
+        let render_options = stream_render_options(&config);
+        let runner_submission = repl_runner_submission(
+            chat_input,
+            mode,
             reasoning_mode,
             tool_call_mode,
-            false,
-            stream_render_options(&config),
+            render_options.clone(),
         );
+        let mut renderer =
+            render::StreamRenderer::new(reasoning_mode, tool_call_mode, false, render_options);
         renderer.start_waiting()?;
         let mut interrupted = false;
-        let chat_result = if let Some(image_url) = chat_input.image_url {
-            let chat =
-                agent.chat_stream_with_image(&chat_input.message, Some(image_url), |event| {
-                    handle_agent_event(&mut renderer, event)
-                });
-            tokio::pin!(chat);
-            tokio::select! {
-                result = &mut chat => result.map(|_| ()),
-                signal = tokio::signal::ctrl_c() => {
-                    signal?;
-                    interrupted = true;
-                    Ok(())
-                }
-            }
-        } else {
-            let chat = agent.chat_stream(&chat_input.message, |event| {
-                handle_agent_event(&mut renderer, event)
-            });
+        let mut runner_output = crate::runner::RunnerOutput::default();
+        let chat_result = {
+            let runner = crate::runner::SessionRunner::new(paths).with_config(config.clone());
+            let mut sink = |event: crate::runner::RunnerEvent| {
+                handle_repl_runner_event(&mut renderer, &event)?;
+                runner_output.push_event(event);
+                Ok(())
+            };
+            let chat = runner.run_submission(runner_submission, &mut sink);
             tokio::pin!(chat);
             tokio::select! {
                 result = &mut chat => result.map(|_| ()),
@@ -238,10 +220,10 @@ pub(super) async fn run_repl(
                 }
             }
         };
-        renderer.finish()?;
-        if config.tools.progressive_loading_enabled {
-            state.save_loaded_tools(&agent.loaded_tools())?;
+        if interrupted {
+            runner_output.push_event(crate::runner::RunnerEvent::Interrupted);
         }
+        renderer.finish()?;
         if interrupted {
             prefill = Some(submitted_input);
             continue;
@@ -250,6 +232,56 @@ pub(super) async fn run_repl(
             render::write_chat_error(&err, false)?;
             continue;
         }
+    }
+    Ok(())
+}
+
+/// 构造 REPL 单轮 runner submission。
+///
+/// 参数:
+/// - `chat_input`: 剪贴板处理后的聊天输入
+/// - `mode`: 当前 Agent 模式
+/// - `reasoning_mode`: 推理内容显示方式
+/// - `tool_call_mode`: 工具调用显示方式
+/// - `render_options`: 流式渲染选项
+///
+/// 返回:
+/// - runner submission
+fn repl_runner_submission(
+    chat_input: clipboard::ClipboardChatInput,
+    mode: AgentMode,
+    reasoning_mode: render::ReasoningDisplayMode,
+    tool_call_mode: render::ToolCallDisplayMode,
+    render_options: render::StreamRenderOptions,
+) -> crate::runner::RunnerSubmission {
+    let user_input = match chat_input.image_url {
+        Some(image_url) => crate::runner::UserInputSubmission::new(chat_input.message, mode)
+            .with_image_url(image_url),
+        None => crate::runner::UserInputSubmission::new(chat_input.message, mode),
+    };
+    crate::runner::RunnerSubmission::user_input(crate::runner::SubmissionSource::Repl, user_input)
+        .with_render_policy(crate::runner::RenderPolicy::new(
+            false,
+            reasoning_mode,
+            tool_call_mode,
+            render_options,
+        ))
+}
+
+/// 将 runner 事件投影到 REPL renderer。
+///
+/// 参数:
+/// - `renderer`: 当前流式 renderer
+/// - `event`: runner 事件
+///
+/// 返回:
+/// - 渲染是否成功
+fn handle_repl_runner_event(
+    renderer: &mut render::StreamRenderer,
+    event: &crate::runner::RunnerEvent,
+) -> Result<()> {
+    if let crate::runner::RunnerEvent::Agent(agent_event) = event {
+        handle_agent_event(renderer, agent_event.clone())?;
     }
     Ok(())
 }
@@ -302,4 +334,39 @@ fn print_repl_help() {
         "{}",
         crate::control_commands::help_text(crate::control_commands::ControlSurface::Repl)
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 REPL 聊天输入会构造成 runner submission。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn repl_chat_input_builds_runner_submission() {
+        let submission = repl_runner_submission(
+            clipboard::ClipboardChatInput {
+                message: "继续".to_string(),
+                image_url: Some("data:image/png;base64,AAAA".to_string()),
+            },
+            AgentMode::Yolo,
+            render::ReasoningDisplayMode::Summary,
+            render::ToolCallDisplayMode::Summary,
+            render::StreamRenderOptions::default(),
+        );
+
+        assert_eq!(submission.source, crate::runner::SubmissionSource::Repl);
+        assert!(matches!(
+            submission.kind,
+            crate::runner::RunnerSubmissionKind::UserInput(crate::runner::UserInputSubmission {
+                image_url: Some(_),
+                ..
+            })
+        ));
+    }
 }

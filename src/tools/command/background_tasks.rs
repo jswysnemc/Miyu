@@ -1,13 +1,59 @@
+use super::background_runtime::{
+    background_runtime_process_id, record_runtime_output_read, sync_runtime_task,
+    sync_runtime_tasks, LogTail,
+};
 use super::background_timeout::{is_unlimited, timeout_seconds_from_args};
 use super::process::{process_exists, spawn_background_shell, terminate_process};
 use super::store::{unix_seconds, BackgroundCommandStore, BackgroundCommandTask};
 use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::paths::MiyuPaths;
+use crate::runtime_recovery::{OwnerKind, ProcessKind};
+use crate::state::StateStore;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+/// 后台任务运行时 owner 元数据。
+#[derive(Debug, Clone)]
+pub(super) struct BackgroundRuntimeOwner {
+    pub(super) owner_kind: OwnerKind,
+    pub(super) owner_id: String,
+    pub(super) process_kind: ProcessKind,
+}
+
+impl BackgroundRuntimeOwner {
+    /// 创建命令模式运行时 owner。
+    ///
+    /// 参数:
+    /// - `session_id`: 会话标识
+    ///
+    /// 返回:
+    /// - 后台任务运行时 owner 元数据
+    pub(super) fn command_mode(session_id: &str) -> Self {
+        Self {
+            owner_kind: OwnerKind::CommandMode,
+            owner_id: session_id.to_string(),
+            process_kind: ProcessKind::BackgroundCommand,
+        }
+    }
+
+    /// 创建网关运行时 owner。
+    ///
+    /// 参数:
+    /// - `gateway_id`: 网关标识
+    ///
+    /// 返回:
+    /// - 后台任务运行时 owner 元数据
+    pub(super) fn gateway(gateway_id: &str) -> Self {
+        Self {
+            owner_kind: OwnerKind::Gateway,
+            owner_id: gateway_id.to_string(),
+            process_kind: ProcessKind::Gateway,
+        }
+    }
+}
 
 /// 启动后台命令。
 ///
@@ -16,6 +62,7 @@ use std::time::Duration;
 /// - `config`: 应用配置
 /// - `paths`: Miyu 路径
 /// - `allowed`: 是否允许命令执行
+/// - `runtime_owner`: 可选运行时 owner 元数据
 ///
 /// 返回:
 /// - JSON 格式任务信息
@@ -24,6 +71,7 @@ pub(super) fn start_background_task(
     config: &AppConfig,
     paths: &MiyuPaths,
     allowed: bool,
+    runtime_owner: Option<BackgroundRuntimeOwner>,
 ) -> Result<String> {
     if !allowed {
         bail!("{}", t("command execution is disabled; set skills.allow_command_execution=true in config.jsonc to enable background commands", "命令执行已禁用；请在 config.jsonc 中设置 skills.allow_command_execution=true 以启用后台命令"));
@@ -62,6 +110,7 @@ pub(super) fn start_background_task(
         timeout_seconds_from_args(&args, config.tools.background_command_timeout_seconds);
     let store = BackgroundCommandStore::new(paths.state_dir.clone());
     store.init()?;
+    let state = StateStore::new(paths)?;
     let now = unix_seconds();
     let id_prefix = sanitize_id(&label);
     let stdout_log = store.logs_dir().join(format!("{now}-{id_prefix}.out.log"));
@@ -70,8 +119,17 @@ pub(super) fn start_background_task(
     let stderr = std::fs::File::create(&stderr_log)?;
     let process = spawn_background_shell(&command, &cwd, stdout, stderr)?;
     let task_id = format!("{now}-{}", process.pid);
+    let runtime_process_id = background_runtime_process_id(&task_id);
     let task = BackgroundCommandTask {
         id: task_id.clone(),
+        runtime_process_id: Some(runtime_process_id),
+        runtime_owner_kind: runtime_owner
+            .as_ref()
+            .map(|owner| owner.owner_kind.as_str().to_string()),
+        runtime_owner_id: runtime_owner.as_ref().map(|owner| owner.owner_id.clone()),
+        runtime_process_kind: runtime_owner
+            .as_ref()
+            .map(|owner| owner.process_kind.as_str().to_string()),
         label,
         command,
         cwd: cwd.display().to_string(),
@@ -85,6 +143,7 @@ pub(super) fn start_background_task(
         timeout_seconds,
     };
     store.upsert(task.clone())?;
+    sync_runtime_task(&state, &task)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "task": task,
@@ -105,6 +164,8 @@ pub(super) async fn list_background_tasks(paths: &MiyuPaths, config: &AppConfig)
     let mut tasks = store.load()?;
     refresh_task_statuses(&mut tasks, config).await;
     store.save(&tasks)?;
+    let state = StateStore::new(paths)?;
+    sync_runtime_tasks(&state, &tasks)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "tasks": tasks,
@@ -140,6 +201,8 @@ pub(super) async fn read_background_task_output(
     let mut tasks = store.load()?;
     refresh_task_statuses(&mut tasks, config).await;
     store.save(&tasks)?;
+    let state = StateStore::new(paths)?;
+    sync_runtime_tasks(&state, &tasks)?;
     let task = find_task(&tasks, &task_id)?;
     let max_bytes = config.tools.background_command_log_max_bytes;
     let stdout = if matches!(stream, "stdout" | "all") {
@@ -152,11 +215,20 @@ pub(super) async fn read_background_task_output(
     } else {
         None
     };
+    if let Some(output) = stdout.as_ref() {
+        record_runtime_output_read(&state, task, "stdout", &task.stdout_log, output)?;
+    }
+    if let Some(output) = stderr.as_ref() {
+        record_runtime_output_read(&state, task, "stderr", &task.stderr_log, output)?;
+    }
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "task": task,
-        "stdout": stdout,
-        "stderr": stderr,
+        "stdout": stdout.as_ref().map(|output| output.text.clone()),
+        "stderr": stderr.as_ref().map(|output| output.text.clone()),
+        "stdout_truncated": stdout.as_ref().map(|output| output.truncated).unwrap_or(false),
+        "stderr_truncated": stderr.as_ref().map(|output| output.truncated).unwrap_or(false),
+        "log_max_bytes": max_bytes,
         "tail_lines": tail_lines,
     }))?)
 }
@@ -201,6 +273,8 @@ pub(super) async fn stop_background_task(
     }
     let task = task.clone();
     store.save(&tasks)?;
+    let state = StateStore::new(paths)?;
+    sync_runtime_tasks(&state, &tasks)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "was_running": was_running,
@@ -229,6 +303,8 @@ pub(super) async fn cleanup_background_tasks(
     let store = BackgroundCommandStore::new(paths.state_dir.clone());
     let mut tasks = store.load()?;
     refresh_task_statuses(&mut tasks, config).await;
+    let state = StateStore::new(paths)?;
+    sync_runtime_tasks(&state, &tasks)?;
     let mut removed = Vec::new();
     tasks.retain(|task| {
         if task.status == "running" {
@@ -309,21 +385,29 @@ fn find_task<'a>(
 ///
 /// 返回:
 /// - 日志文本
-fn read_log_tail(path: &str, tail_lines: usize, max_bytes: u64) -> Result<String> {
+fn read_log_tail(path: &str, tail_lines: usize, max_bytes: u64) -> Result<LogTail> {
     let path = Path::new(path);
     if !path.exists() {
-        return Ok(String::new());
+        return Ok(LogTail::empty(max_bytes.max(1)));
     }
     let metadata = std::fs::metadata(path)?;
-    let start = metadata.len().saturating_sub(max_bytes.max(1));
+    let max_bytes = max_bytes.max(1);
+    let start = metadata.len().saturating_sub(max_bytes);
     let mut file = std::fs::File::open(path)?;
     use std::io::{Read, Seek, SeekFrom};
     file.seek(SeekFrom::Start(start))?;
-    let mut text = String::new();
-    file.read_to_string(&mut text)?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes)?;
+    let text = String::from_utf8_lossy(&bytes).into_owned();
     let lines = text.lines().collect::<Vec<_>>();
     let start = lines.len().saturating_sub(tail_lines);
-    Ok(lines[start..].join("\n"))
+    Ok(LogTail::new(
+        lines[start..].join("\n"),
+        metadata.len() > max_bytes,
+        metadata.len(),
+        bytes.len() as u64,
+        max_bytes,
+    ))
 }
 
 /// 读取必填字符串参数。
@@ -403,6 +487,25 @@ fn sanitize_id(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::StateStore;
+    use std::path::PathBuf;
+
+    fn test_paths(state_dir: PathBuf) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: PathBuf::new(),
+            config_file: PathBuf::new(),
+            secrets_file: PathBuf::new(),
+            skills_dir: PathBuf::new(),
+            data_dir: PathBuf::new(),
+            cache_dir: PathBuf::new(),
+            state_dir,
+            pictures_dir: PathBuf::new(),
+            fish_hook_file: PathBuf::new(),
+            bash_hook_file: PathBuf::new(),
+            zsh_hook_file: PathBuf::new(),
+            powershell_hook_file: PathBuf::new(),
+        }
+    }
 
     #[test]
     fn sanitize_id_keeps_safe_subset() {
@@ -413,6 +516,10 @@ mod tests {
     async fn refresh_keeps_unlimited_running_task() {
         let mut tasks = vec![BackgroundCommandTask {
             id: "task-1".to_string(),
+            runtime_process_id: None,
+            runtime_owner_kind: None,
+            runtime_owner_id: None,
+            runtime_process_kind: None,
             label: "server".to_string(),
             command: "sleep 9999".to_string(),
             cwd: ".".to_string(),
@@ -429,5 +536,84 @@ mod tests {
         refresh_task_statuses(&mut tasks, &AppConfig::default()).await;
 
         assert_eq!(tasks[0].status, "running");
+    }
+
+    #[tokio::test]
+    async fn output_read_records_runtime_event_and_output_cap_recovery() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let store = BackgroundCommandStore::new(paths.state_dir.clone());
+        store.init().unwrap();
+        let stdout_log = store.logs_dir().join("task-1.out.log");
+        let stderr_log = store.logs_dir().join("task-1.err.log");
+        std::fs::write(&stdout_log, "alpha\nbeta\ngamma\n").unwrap();
+        std::fs::write(&stderr_log, "").unwrap();
+        store
+            .save(&[BackgroundCommandTask {
+                id: "task-1".to_string(),
+                runtime_process_id: Some("background_command_task-1".to_string()),
+                runtime_owner_kind: None,
+                runtime_owner_id: None,
+                runtime_process_kind: None,
+                label: "server".to_string(),
+                command: "printf lines".to_string(),
+                cwd: ".".to_string(),
+                pid: 123,
+                pgid: Some(123),
+                status: "exited".to_string(),
+                stdout_log: stdout_log.display().to_string(),
+                stderr_log: stderr_log.display().to_string(),
+                started_at: 0,
+                updated_at: 0,
+                timeout_seconds: 0,
+            }])
+            .unwrap();
+        let mut config = AppConfig::default();
+        config.tools.background_command_log_max_bytes = 8;
+
+        let response = read_background_task_output(
+            json!({
+                "task_id": "task-1",
+                "stream": "stdout",
+                "tail_lines": 10
+            }),
+            &config,
+            &paths,
+        )
+        .await
+        .unwrap();
+        let body: Value = serde_json::from_str(&response).unwrap();
+        let snapshot = StateStore::new(&paths)
+            .unwrap()
+            .session_snapshot(1_000)
+            .unwrap();
+        let failure = snapshot.runtime_recovery.latest_failure.unwrap();
+        let db_path = crate::state::active_state_dir(&paths)
+            .unwrap()
+            .join("conversation.db");
+        let conn = rusqlite::Connection::open(db_path).unwrap();
+        let event_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM runtime_process_events
+                 WHERE process_id = ?1
+                 AND stream = 'stdout'
+                 AND event_kind = 'output_read'",
+                ["background_command_task-1"],
+                |row| row.get(0),
+            )
+            .unwrap();
+
+        assert!(body["stdout"].as_str().unwrap().contains("gamma"));
+        assert_eq!(
+            failure.kind,
+            crate::runtime_recovery::RuntimeRecoveryKind::OutputCapReached
+        );
+        assert_eq!(
+            failure.process_id.as_deref(),
+            Some("background_command_task-1")
+        );
+        assert_eq!(failure.last_safe_seq, Some(1));
+        assert_eq!(event_count, 1);
     }
 }
