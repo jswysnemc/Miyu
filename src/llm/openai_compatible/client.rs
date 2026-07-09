@@ -5,6 +5,9 @@ use super::{
 };
 use crate::config::{AppConfig, ProviderConfig};
 use crate::i18n::text as t;
+use crate::llm::http_debug::{
+    anthropic_request_headers, bearer_request_headers, HttpDebugConfig, HttpDebugRecorder,
+};
 use crate::llm::thinking::{apply_provider_body_options, ThinkingProtocol};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
@@ -39,6 +42,8 @@ pub struct OpenAiCompatibleClient {
     client: Client,
     provider: ProviderConfig,
     api_key: String,
+    /// 可选 HTTP 调试落盘配置（`MIYU_DEBUG_HTTP`）
+    http_debug: Option<HttpDebugConfig>,
 }
 
 impl OpenAiCompatibleClient {
@@ -66,7 +71,45 @@ impl OpenAiCompatibleClient {
             client,
             provider: provider.clone(),
             api_key,
+            http_debug: HttpDebugConfig::from_env(paths),
         })
+    }
+
+    /// 在调试开启时开始一次请求记录。
+    ///
+    /// 参数:
+    /// - `method`: HTTP 方法
+    /// - `url`: 请求 URL
+    /// - `protocol`: 协议标签
+    /// - `headers`: 请求头
+    /// - `body`: 请求体
+    ///
+    /// 返回:
+    /// - 可选记录器
+    fn start_http_debug(
+        &self,
+        method: &str,
+        url: &str,
+        protocol: &str,
+        headers: &[(String, String)],
+        body: &Value,
+    ) -> Option<HttpDebugRecorder> {
+        let config = self.http_debug.as_ref()?;
+        match HttpDebugRecorder::start(
+            config,
+            method,
+            url,
+            &self.provider.id,
+            protocol,
+            headers,
+            body,
+        ) {
+            Ok(recorder) => recorder,
+            Err(err) => {
+                eprintln!("[miyu] HTTP debug start failed: {err:#}");
+                None
+            }
+        }
     }
 
     pub async fn chat_stream<F>(
@@ -141,16 +184,25 @@ impl OpenAiCompatibleClient {
             "{}/chat/completions",
             self.provider.base_url.trim_end_matches('/')
         );
+        let headers = bearer_request_headers(&self.api_key, &[]);
+        let mut debug =
+            self.start_http_debug("POST", &url, "openai-chat", &headers, &request);
         let response = self
             .client
-            .post(url)
+            .post(&url)
             .bearer_auth(&self.api_key)
             .json(&request)
             .send()
             .await?;
         let status = response.status();
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.write_response_headers(status.as_u16(), response.headers());
+        }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            if let Some(debug) = debug.as_ref() {
+                let _ = debug.finish_error(status.as_u16(), &body);
+            }
             bail!(
                 "{} ({status}): {body}",
                 t("chat completions stream request failed", "聊天流式请求失败",)
@@ -169,6 +221,9 @@ impl OpenAiCompatibleClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             for line in buffer.push(&chunk)? {
+                if let Some(debug) = debug.as_mut() {
+                    debug.append_stream_line(&line);
+                }
                 if let Some(done) = handle_sse_line(
                     &line,
                     &mut content,
@@ -180,17 +235,24 @@ impl OpenAiCompatibleClient {
                     &mut on_event,
                 )? {
                     if done {
-                        return finalize_stream_result(
+                        let result = finalize_stream_result(
                             content,
                             reasoning,
                             usage,
                             tool_calls.finish(),
-                        );
+                        )?;
+                        if let Some(debug) = debug.as_ref() {
+                            let _ = debug.finish_ok(&result);
+                        }
+                        return Ok(result);
                     }
                 }
             }
         }
         for line in buffer.finish()? {
+            if let Some(debug) = debug.as_mut() {
+                debug.append_stream_line(&line);
+            }
             let _ = handle_sse_line(
                 &line,
                 &mut content,
@@ -202,7 +264,11 @@ impl OpenAiCompatibleClient {
                 &mut on_event,
             )?;
         }
-        finalize_stream_result(content, reasoning, usage, tool_calls.finish())
+        let result = finalize_stream_result(content, reasoning, usage, tool_calls.finish())?;
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.finish_ok(&result);
+        }
+        Ok(result)
     }
 
     async fn chat_anthropic_stream<F>(
@@ -229,17 +295,26 @@ impl OpenAiCompatibleClient {
             ThinkingProtocol::Anthropic,
         )?;
         let url = format!("{}/messages", self.provider.base_url.trim_end_matches('/'));
+        let headers = anthropic_request_headers(&self.api_key);
+        let mut debug =
+            self.start_http_debug("POST", &url, "anthropic", &headers, &request);
         let response = self
             .client
-            .post(url)
+            .post(&url)
             .header("x-api-key", &self.api_key)
             .header("anthropic-version", "2023-06-01")
             .json(&request)
             .send()
             .await?;
         let status = response.status();
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.write_response_headers(status.as_u16(), response.headers());
+        }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
+            if let Some(debug) = debug.as_ref() {
+                let _ = debug.finish_error(status.as_u16(), &body);
+            }
             bail!(
                 "{} ({status}): {body}",
                 t(
@@ -255,25 +330,42 @@ impl OpenAiCompatibleClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             for data in buffer.push(&chunk)? {
+                if let Some(debug) = debug.as_mut() {
+                    // Anthropic 聚合后的 data 载荷，写成 SSE data 行便于回放
+                    debug.append_stream_line(&format!("data: {data}"));
+                    debug.append_stream_line("");
+                }
                 if handle_anthropic_sse_data(&data, &mut state, &mut *on_event)? {
-                    return finalize_stream_result(
+                    let result = finalize_stream_result(
                         state.content,
                         state.reasoning,
                         state.usage,
                         state.tool_calls.finish(),
-                    );
+                    )?;
+                    if let Some(debug) = debug.as_ref() {
+                        let _ = debug.finish_ok(&result);
+                    }
+                    return Ok(result);
                 }
             }
         }
         for data in buffer.finish()? {
+            if let Some(debug) = debug.as_mut() {
+                debug.append_stream_line(&format!("data: {data}"));
+                debug.append_stream_line("");
+            }
             let _ = handle_anthropic_sse_data(&data, &mut state, &mut *on_event)?;
         }
-        finalize_stream_result(
+        let result = finalize_stream_result(
             state.content,
             state.reasoning,
             state.usage,
             state.tool_calls.finish(),
-        )
+        )?;
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.finish_ok(&result);
+        }
+        Ok(result)
     }
 
     async fn chat_responses_stream<F>(
@@ -303,18 +395,27 @@ impl OpenAiCompatibleClient {
             ThinkingProtocol::OpenAiResponses,
         )?;
         let url = format!("{}/responses", self.provider.base_url.trim_end_matches('/'));
+        let headers = bearer_request_headers(&self.api_key, &[]);
+        let mut debug =
+            self.start_http_debug("POST", &url, "openai-responses", &headers, &request);
         let response = self
             .client
-            .post(url)
+            .post(&url)
             .bearer_auth(&self.api_key)
             .json(&request)
             .send()
             .await?;
         let status = response.status();
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.write_response_headers(status.as_u16(), response.headers());
+        }
         if !status.is_success() {
             let body = response.text().await.unwrap_or_default();
             if responses_unsupported(status.as_u16(), &body) {
                 return Ok(None);
+            }
+            if let Some(debug) = debug.as_ref() {
+                let _ = debug.finish_error(status.as_u16(), &body);
             }
             bail!(
                 "{} ({status}): {body}",
@@ -334,6 +435,9 @@ impl OpenAiCompatibleClient {
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
             for line in buffer.push(&chunk)? {
+                if let Some(debug) = debug.as_mut() {
+                    debug.append_stream_line(&line);
+                }
                 if handle_responses_sse_line(
                     &line,
                     &mut content,
@@ -345,12 +449,19 @@ impl OpenAiCompatibleClient {
                     &mut tool_calls,
                     &mut *on_event,
                 )? {
-                    return finalize_stream_result(content, reasoning, usage, tool_calls.finish())
-                        .map(Some);
+                    let result =
+                        finalize_stream_result(content, reasoning, usage, tool_calls.finish())?;
+                    if let Some(debug) = debug.as_ref() {
+                        let _ = debug.finish_ok(&result);
+                    }
+                    return Ok(Some(result));
                 }
             }
         }
         for line in buffer.finish()? {
+            if let Some(debug) = debug.as_mut() {
+                debug.append_stream_line(&line);
+            }
             let _ = handle_responses_sse_line(
                 &line,
                 &mut content,
@@ -363,7 +474,11 @@ impl OpenAiCompatibleClient {
                 &mut *on_event,
             )?;
         }
-        finalize_stream_result(content, reasoning, usage, tool_calls.finish()).map(Some)
+        let result = finalize_stream_result(content, reasoning, usage, tool_calls.finish())?;
+        if let Some(debug) = debug.as_ref() {
+            let _ = debug.finish_ok(&result);
+        }
+        Ok(Some(result))
     }
 
     fn uses_openai_responses(&self) -> bool {

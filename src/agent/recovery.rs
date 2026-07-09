@@ -285,6 +285,7 @@ async fn extract_session_memory_with_model(
         ),
         ChatMessage::plain("user", input.prompt.clone()),
     ];
+    let _http_debug_session = crate::llm::HttpDebugSessionGuard::new(state.session_id());
     let result = match client
         .chat_stream_events(messages, Vec::new(), |_| Ok(()))
         .await

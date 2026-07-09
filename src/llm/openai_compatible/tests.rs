@@ -82,6 +82,7 @@ mod tests {
             client: reqwest::Client::new(),
             provider,
             api_key: "test".to_string(),
+            http_debug: None,
         };
 
         assert!(client.uses_openai_responses());
@@ -95,6 +96,7 @@ mod tests {
             client: reqwest::Client::new(),
             provider,
             api_key: "test".to_string(),
+            http_debug: None,
         };
 
         assert!(client.uses_openai_responses());

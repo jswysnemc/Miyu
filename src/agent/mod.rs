@@ -343,6 +343,9 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
+        // HTTP 调试按会话落盘时绑定 session_id
+        let _http_debug_session =
+            crate::llm::HttpDebugSessionGuard::new(self.state.session_id());
         let input = clean_user_visible_text(input);
         let mut perf = PerfTrace::new("agent");
         perf.mark("start turn");
