@@ -6,6 +6,19 @@
 
 [中文](./README.md) | **English**
 
+<p align="center">
+  <img alt="release" src="https://img.shields.io/badge/release-v0.1.4-24292f?style=flat-square" />
+  <img alt="license" src="https://img.shields.io/badge/license-MIT-2ea44f?style=flat-square" />
+  <img alt="language" src="https://img.shields.io/badge/language-Rust-dea584?style=flat-square&logo=rust&logoColor=white" />
+  <img alt="edition" src="https://img.shields.io/badge/edition-2021-f74c00?style=flat-square" />
+  <img alt="platform" src="https://img.shields.io/badge/platform-Linux%20%7C%20Windows-0078d4?style=flat-square" />
+  <img alt="ui" src="https://img.shields.io/badge/ui-Terminal%20TUI%20%7C%20Web-6f42c1?style=flat-square" />
+</p>
+<p align="center">
+  <img alt="features" src="https://img.shields.io/badge/features-REPL%20%7C%20Shell%20%7C%20Plugins%20%7C%20Gateways%20%7C%20Memory-e36209?style=flat-square" />
+  <img alt="llm" src="https://img.shields.io/badge/LLM-OpenAI%20%7C%20Anthropic%20%7C%20Responses-0969da?style=flat-square" />
+</p>
+
 A terminal-native anime-style desktop assistant powered by LLMs. Miyu focuses on daily chat, light entertainment, and system troubleshooting—not on being a full coding agent.
 
 ## Who is she?
