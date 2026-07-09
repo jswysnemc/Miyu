@@ -163,8 +163,20 @@ fn format_token_k(value: usize) -> String {
 ///
 /// 返回:
 /// - 带样式的分隔线
+/// 输入框上下分隔线样式。
+///
+/// 使用柔和蓝色，区别于正文里的 dim 水平线（`\x1b[2m`）与代码块青色边框（`\x1b[36m`）。
+const CHROME_RULE_STYLE: &str = "\x1b[38;5;67m";
+
+/// 生成输入框顶/底分隔线。
+///
+/// 参数:
+/// - `cols`: 终端列数
+///
+/// 返回:
+/// - 带颜色的整行分隔线
 pub(super) fn chrome_rule(cols: usize) -> String {
-    format!("\x1b[2m{}\x1b[0m", "─".repeat(cols.max(1)))
+    format!("{CHROME_RULE_STYLE}{}\x1b[0m", "─".repeat(cols.max(1)))
 }
 
 /// 生成左右对齐的状态行。
@@ -246,5 +258,13 @@ mod tests {
         assert_eq!(format_token_k(272_000), "272k");
         assert_eq!(format_token_k(1_500), "1.5k");
         assert_eq!(format_token_k(42), "42");
+    }
+
+    #[test]
+    fn chrome_rule_uses_distinct_color_not_plain_dim() {
+        let line = chrome_rule(8);
+        assert!(line.contains(CHROME_RULE_STYLE));
+        assert!(!line.starts_with("\x1b[2m"));
+        assert_eq!(strip_ansi(&line), "────────");
     }
 }
