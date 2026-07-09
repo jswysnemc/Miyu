@@ -3,6 +3,7 @@ mod event_loop;
 mod history_insert;
 mod reflow;
 mod reflow_state;
+mod slash_panel;
 mod stream;
 mod viewport;
 
@@ -14,6 +15,7 @@ use crate::cli::repl_chrome::ReplChrome;
 use crate::render::transcript::{
     TranscriptMode, TranscriptRenderOptions, TranscriptStore, WelcomeCell,
 };
+use crate::render::work_status::WorkStatus;
 use crate::runner::RunnerEvent;
 use anyhow::Result;
 use std::io;
@@ -265,9 +267,23 @@ impl ReplRuntime {
     /// 返回:
     /// - 操作是否成功
     pub(super) fn record_runner_event(&mut self, event: &RunnerEvent) -> Result<()> {
-        let RunnerEvent::Agent(agent_event) = event else {
-            return Ok(());
+        let agent_event = match event {
+            RunnerEvent::Started => {
+                self.transcript.set_work_status(WorkStatus::WaitingResponse);
+                return self.sync_transcript(true);
+            }
+            RunnerEvent::Agent(agent_event) => agent_event,
+            RunnerEvent::Interrupted | RunnerEvent::Completed(_) | RunnerEvent::Failed(_) => {
+                self.next_live_reasoning_refresh = None;
+                self.transcript.finalize_live_tail();
+                self.transcript.clear_work_status();
+                return self.sync_transcript(false);
+            }
+            RunnerEvent::LoadedToolsChanged(_) | RunnerEvent::FinalSummary(_) => return Ok(()),
         };
+        if let Some(status) = WorkStatus::from_agent_event(agent_event) {
+            self.transcript.set_work_status(status);
+        }
         match agent_event {
             AgentEvent::Chunk(chunk) => {
                 let is_reasoning = chunk.kind == crate::llm::ChatStreamKind::Reasoning;
@@ -417,21 +433,21 @@ impl ReplRuntime {
         if self
             .viewport
             .update(size, self.composer_height_for(size), all_lines.len())
+            && size != previous_viewport.size()
         {
-            if size != previous_viewport.size() {
-                return self.replay(streaming);
-            }
+            return self.replay(streaming);
         }
         match self.stream.sync(all_lines) {
             StreamSync::Unchanged => Ok(()),
             StreamSync::Append(lines) => {
                 let mut stdout = io::stdout();
-                history_insert::append_lines(
+                let outcome = history_insert::append_lines(
                     &mut stdout,
                     &previous_viewport,
                     &self.viewport,
                     &lines,
                 )?;
+                self.viewport.apply_terminal_scroll(outcome.scrolled_rows);
                 self.draw_composer(&mut stdout)
             }
             StreamSync::Rebuild => self.replay(streaming),

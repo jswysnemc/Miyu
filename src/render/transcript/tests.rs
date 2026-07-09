@@ -1,6 +1,7 @@
 use super::line::AnsiLine;
 use super::{TranscriptMode, TranscriptRenderOptions, TranscriptStore};
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
+use crate::render::work_status::WorkStatus;
 use crate::render::{ReasoningDisplayMode, ToolCallDisplayMode};
 
 fn options() -> TranscriptRenderOptions {
@@ -25,6 +26,20 @@ fn ansi_lines_are_prewrapped_at_requested_width() {
     assert!(lines[0].as_str().contains("abc"));
     assert!(lines[1].as_str().contains("def"));
     assert!(lines.iter().all(|line| line.as_str().ends_with("\x1b[0m")));
+}
+
+#[test]
+fn terminal_image_protocols_are_not_split_by_text_width() {
+    let kitty = "\x1b_Gf=100,a=T;abcdefghijklmnopqrstuvwxyz\x1b\\";
+    let iterm = "\x1b]1337;File=inline=1:abcdefghijklmnopqrstuvwxyz\x07";
+
+    let kitty_lines = AnsiLine::wrap_block(kitty, 4);
+    let iterm_lines = AnsiLine::wrap_block(iterm, 4);
+
+    assert_eq!(kitty_lines.len(), 1);
+    assert_eq!(iterm_lines.len(), 1);
+    assert!(kitty_lines[0].as_str().contains(kitty));
+    assert!(iterm_lines[0].as_str().contains(iterm));
 }
 
 #[test]
@@ -55,10 +70,14 @@ fn live_table_is_emitted_once_without_cursor_replacement_sequences() {
         "| Tool | Purpose |\n| --- | --- |\n| read_file | Read files |\n",
     ));
 
-    assert!(store.display_live_tail(80, &options()).is_empty());
+    let preview = store.display_live_tail(80, &options());
+    let preview = preview.iter().map(|line| line.as_str()).collect::<String>();
+    assert!(preview.contains("| Tool | Purpose |"));
+    assert!(!preview.contains('┌'));
 
     store.push_chunk(&chunk(ChatStreamKind::Content, "complete\n"));
-    let lines = store.display_live_tail(80, &options());
+    assert!(store.finalize_live_tail());
+    let lines = store.display_tail(80, &options());
     let rendered = lines.iter().map(|line| line.as_str()).collect::<String>();
 
     assert!(rendered.contains('┌'));
@@ -106,6 +125,55 @@ fn live_tool_argument_preview_is_visible_until_the_call_is_finalized() {
         .display_tail(80, &options())
         .iter()
         .any(|line| line.as_str().contains("README.md")));
+}
+
+#[test]
+fn work_status_is_replaced_without_becoming_history() {
+    let mut store = TranscriptStore::new(100);
+
+    assert!(store.set_work_status(WorkStatus::WaitingResponse));
+    let waiting = store.display_live_tail(80, &options());
+    assert!(waiting[0]
+        .as_str()
+        .contains(WorkStatus::WaitingResponse.label()));
+
+    assert!(store.set_work_status(WorkStatus::Thinking));
+    let thinking = store.display_live_tail(80, &options());
+    assert!(thinking[0].as_str().contains(WorkStatus::Thinking.label()));
+    assert!(!thinking[0]
+        .as_str()
+        .contains(WorkStatus::WaitingResponse.label()));
+
+    assert!(store.clear_work_status());
+    assert!(store.display_live_tail(80, &options()).is_empty());
+}
+
+#[test]
+fn tool_progress_and_result_update_one_lifecycle_cell() {
+    let mut store = TranscriptStore::new(100);
+    store.push_tool_call(
+        "read_file".to_string(),
+        r#"{"path":"README.md"}"#.to_string(),
+    );
+    store.push_tool_progress("read_file".to_string(), "reading".to_string());
+    store.push_tool_result("read_file".to_string(), true, "contents".to_string());
+
+    let rendered = store
+        .display_tail(
+            100,
+            &TranscriptRenderOptions {
+                reasoning_mode: ReasoningDisplayMode::Full,
+                tool_call_mode: ToolCallDisplayMode::Full,
+            },
+        )
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+
+    assert_eq!(rendered.matches("args:").count(), 1);
+    assert_eq!(rendered.matches("output:").count(), 1);
+    assert!(rendered.contains("reading"));
+    assert!(rendered.contains("contents"));
 }
 
 #[test]

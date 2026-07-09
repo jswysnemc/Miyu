@@ -5,6 +5,13 @@ use crate::render::style::{
 };
 use crate::render::table::CellContent;
 
+/// 行内公式在当前输出表面中的渲染策略。
+#[derive(Clone, Copy)]
+pub(crate) enum InlineMathMode {
+    TerminalImage,
+    Source,
+}
+
 /// 渲染 Markdown 行内语法。
 ///
 /// 参数:
@@ -13,6 +20,18 @@ use crate::render::table::CellContent;
 /// 返回:
 /// - 带 ANSI 样式的行内文本
 pub(crate) fn render_inline(text: &str) -> String {
+    render_inline_with_math_mode(text, InlineMathMode::TerminalImage)
+}
+
+/// 按指定公式策略渲染 Markdown 行内语法。
+///
+/// 参数:
+/// - `text`: 原始行内文本
+/// - `math_mode`: 行内公式渲染策略
+///
+/// 返回:
+/// - 带 ANSI 样式的行内文本
+pub(crate) fn render_inline_with_math_mode(text: &str, math_mode: InlineMathMode) -> String {
     let mut output = String::new();
     let chars = text.chars().collect::<Vec<_>>();
     let mut index = 0;
@@ -61,7 +80,12 @@ pub(crate) fn render_inline(text: &str) -> String {
         if index + 1 < chars.len() && chars[index] == '$' && chars[index + 1] == '$' {
             if let Some(end) = find_double_marker(&chars, index + 2, '$') {
                 let formula = chars[index + 2..end].iter().collect::<String>();
-                output.push_str(&asset_block::render_inline_math(&formula));
+                match math_mode {
+                    InlineMathMode::TerminalImage => {
+                        output.push_str(&asset_block::render_inline_math(&formula));
+                    }
+                    InlineMathMode::Source => output.extend(chars[index..end + 2].iter()),
+                }
                 index = end + 2;
                 continue;
             }
@@ -69,7 +93,12 @@ pub(crate) fn render_inline(text: &str) -> String {
         if chars[index] == '$' {
             if let Some(end) = find_marker(&chars, index + 1, '$') {
                 let formula = chars[index + 1..end].iter().collect::<String>();
-                output.push_str(&asset_block::render_inline_math(&formula));
+                match math_mode {
+                    InlineMathMode::TerminalImage => {
+                        output.push_str(&asset_block::render_inline_math(&formula));
+                    }
+                    InlineMathMode::Source => output.extend(chars[index..=end].iter()),
+                }
                 index = end + 1;
                 continue;
             }

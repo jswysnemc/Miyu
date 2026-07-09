@@ -8,6 +8,7 @@ mod store;
 mod tool_cell;
 mod user_echo_cell;
 mod welcome_cell;
+mod work_status_cell;
 
 #[cfg(test)]
 mod tests;

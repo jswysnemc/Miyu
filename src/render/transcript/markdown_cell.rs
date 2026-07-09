@@ -28,6 +28,6 @@ pub(crate) fn render(cell: &MarkdownCell) -> String {
 /// 返回:
 /// - 可安全追加到历史区的 ANSI 文本
 pub(crate) fn render_completed(source: &str) -> String {
-    let mut renderer = MarkdownStreamRenderer::new_stable();
+    let mut renderer = MarkdownStreamRenderer::new_source_preview();
     renderer.push(source).trim_end_matches('\n').to_string()
 }

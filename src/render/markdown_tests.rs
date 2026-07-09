@@ -284,6 +284,18 @@ fn renders_inline_math_formulas_visibly() {
 }
 
 #[test]
+fn source_preview_keeps_inline_math_as_source_until_finalization() {
+    let _guard = ASSET_STUB_LOCK.lock().unwrap();
+    std::env::set_var("MIYU_RENDER_ASSET_TEST_STUB", "1");
+    let mut renderer = MarkdownStreamRenderer::new_source_preview();
+    let output = renderer.push("inline $E=mc^2$ and display $$a^2+b^2=c^2$$\n");
+    std::env::remove_var("MIYU_RENDER_ASSET_TEST_STUB");
+
+    assert_eq!(output, "inline $E=mc^2$ and display $$a^2+b^2=c^2$$\n");
+    assert!(!output.contains("[inline math rendering skipped]"));
+}
+
+#[test]
 fn removes_stray_formula_prefix_at_line_start() {
     let _guard = ASSET_STUB_LOCK.lock().unwrap();
     std::env::set_var("MIYU_RENDER_ASSET_TEST_STUB", "1");

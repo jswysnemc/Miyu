@@ -54,23 +54,22 @@ fn wrap_line(text: &str, width: usize) -> Vec<AnsiLine> {
     let mut current_width = 0usize;
     let mut active_sgr = String::new();
     let fill_to_end = text.contains("\x1b[K");
-    let mut chars = text.chars().peekable();
+    let mut index = 0usize;
 
-    while let Some(ch) = chars.next() {
-        if ch == '\x1b' && chars.peek() == Some(&'[') {
-            let sequence = read_csi_sequence(&mut chars);
+    while index < text.len() {
+        let ch = text[index..].chars().next().unwrap_or_default();
+        if ch == '\x1b' {
+            let end = crate::render::terminal_image::escape_sequence_end(text, index);
+            let sequence = &text[index..end];
             match sequence.chars().last() {
                 Some('m') => {
-                    update_active_sgr(&mut active_sgr, &sequence);
-                    current.push('\x1b');
-                    current.push_str(&sequence);
+                    update_active_sgr(&mut active_sgr, sequence);
+                    current.push_str(sequence);
                 }
                 Some('K') => {}
-                _ => {
-                    current.push('\x1b');
-                    current.push_str(&sequence);
-                }
+                _ => current.push_str(sequence),
             }
+            index = end.max(index + ch.len_utf8());
             continue;
         }
 
@@ -82,6 +81,7 @@ fn wrap_line(text: &str, width: usize) -> Vec<AnsiLine> {
         }
         current.push(ch);
         current_width = current_width.saturating_add(char_width);
+        index += ch.len_utf8();
     }
 
     if !current.is_empty() || lines.is_empty() {
@@ -90,28 +90,17 @@ fn wrap_line(text: &str, width: usize) -> Vec<AnsiLine> {
     lines
 }
 
-/// 读取紧随 ESC 的 CSI 序列主体。
-fn read_csi_sequence(chars: &mut std::iter::Peekable<std::str::Chars<'_>>) -> String {
-    let mut sequence = String::from("[");
-    chars.next();
-    for ch in chars.by_ref() {
-        sequence.push(ch);
-        if ('@'..='~').contains(&ch) {
-            break;
-        }
-    }
-    sequence
-}
-
 /// 更新续行需要恢复的 SGR 样式序列。
 fn update_active_sgr(active_sgr: &mut String, sequence: &str) {
-    let params = sequence.strip_suffix('m').unwrap_or(sequence);
-    let reset = params == "[" || params.split(';').any(|value| value == "0");
+    let Some(body) = sequence.strip_prefix("\x1b[") else {
+        return;
+    };
+    let params = body.strip_suffix('m').unwrap_or(body);
+    let reset = params.is_empty() || params.split(';').any(|value| value == "0");
     if reset {
         active_sgr.clear();
     }
-    if sequence != "[m" && sequence != "[0m" {
-        active_sgr.push('\x1b');
+    if sequence != "\x1b[m" && sequence != "\x1b[0m" {
         active_sgr.push_str(sequence);
     }
 }

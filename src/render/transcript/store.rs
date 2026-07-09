@@ -5,6 +5,8 @@ use super::reasoning_cell;
 use super::tool_cell::ToolCell;
 use super::welcome_cell::WelcomeCell;
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
+use crate::render::tool_view::ToolView;
+use crate::render::work_status::WorkStatus;
 use crate::render::{ReasoningDisplayMode, ToolCallDisplayMode};
 use std::collections::VecDeque;
 
@@ -51,6 +53,8 @@ pub(crate) struct TranscriptStore {
     live_tail: Option<LiveTail>,
     live_tool_call: Option<LiveToolCall>,
     live_animation_frame: usize,
+    active_tool_index: Option<usize>,
+    work_status: Option<WorkStatus>,
     row_cap: usize,
 }
 
@@ -68,6 +72,8 @@ impl TranscriptStore {
             live_tail: None,
             live_tool_call: None,
             live_animation_frame: 0,
+            active_tool_index: None,
+            work_status: None,
             row_cap: row_cap.max(1),
         }
     }
@@ -159,6 +165,29 @@ impl TranscriptStore {
         });
     }
 
+    /// 更新当前单轮工作状态。
+    ///
+    /// 参数:
+    /// - `status`: 新工作状态
+    ///
+    /// 返回:
+    /// - 状态是否发生变化
+    pub(crate) fn set_work_status(&mut self, status: WorkStatus) -> bool {
+        if self.work_status == Some(status) {
+            return false;
+        }
+        self.work_status = Some(status);
+        true
+    }
+
+    /// 清除当前单轮工作状态。
+    ///
+    /// 返回:
+    /// - 是否清除了状态
+    pub(crate) fn clear_work_status(&mut self) -> bool {
+        self.work_status.take().is_some()
+    }
+
     /// 在追加定稿 cell 前收敛当前流式尾部。
     ///
     /// 参数:
@@ -180,10 +209,18 @@ impl TranscriptStore {
     /// 返回:
     /// - 无
     pub(crate) fn push_tool_call(&mut self, name: String, arguments: String) {
+        self.finalize_live_tail();
+        self.live_tool_call = None;
         if name == "edit_file" {
+            self.active_tool_index = None;
             self.push_cell(HistoryCell::diff(arguments));
         } else {
-            self.push_cell(HistoryCell::Tool(ToolCell::Call { name, arguments }));
+            let index = self.cells.len();
+            self.cells
+                .push(HistoryCell::Tool(ToolCell::Invocation(ToolView::running(
+                    name, arguments,
+                ))));
+            self.active_tool_index = Some(index);
         }
     }
 
@@ -197,7 +234,16 @@ impl TranscriptStore {
     /// 返回:
     /// - 无
     pub(crate) fn push_tool_result(&mut self, name: String, ok: bool, output: String) {
-        self.push_cell(HistoryCell::Tool(ToolCell::Result { name, ok, output }));
+        self.finalize_live_tail();
+        if self.update_active_tool(&name, |view| view.finish(ok, output.clone())) {
+            self.active_tool_index = None;
+            return;
+        }
+        let mut view = ToolView::running(name, String::new());
+        view.finish(ok, output);
+        self.push_cell(HistoryCell::Tool(ToolCell::Invocation(view)));
+        self.active_tool_index = None;
+        self.work_status = None;
     }
 
     /// 记录工具进度。
@@ -209,7 +255,13 @@ impl TranscriptStore {
     /// 返回:
     /// - 无
     pub(crate) fn push_tool_progress(&mut self, name: String, message: String) {
-        self.push_cell(HistoryCell::Tool(ToolCell::Progress { name, message }));
+        self.finalize_live_tail();
+        if self.update_active_tool(&name, |view| view.set_progress(message.clone())) {
+            return;
+        }
+        let mut view = ToolView::running(name, String::new());
+        view.set_progress(message);
+        self.push_cell(HistoryCell::Tool(ToolCell::Invocation(view)));
     }
 
     /// 记录上下文压缩开始事件。
@@ -220,6 +272,7 @@ impl TranscriptStore {
     /// 返回:
     /// - 无
     pub(crate) fn push_compaction_started(&mut self, turn_count: usize) {
+        self.active_tool_index = None;
         self.push_cell(HistoryCell::Tool(ToolCell::CompactionStarted {
             turn_count,
         }));
@@ -233,6 +286,7 @@ impl TranscriptStore {
     /// 返回:
     /// - 无
     pub(crate) fn push_compaction_finished(&mut self, applied: bool) {
+        self.active_tool_index = None;
         self.push_cell(HistoryCell::Tool(ToolCell::CompactionFinished { applied }));
     }
 
@@ -267,6 +321,32 @@ impl TranscriptStore {
         self.live_tail = None;
         self.live_tool_call = None;
         self.live_animation_frame = 0;
+        self.active_tool_index = None;
+    }
+
+    /// 更新当前活动工具单元。
+    ///
+    /// 参数:
+    /// - `name`: 工具名称
+    /// - `update`: 工具视图更新函数
+    ///
+    /// 返回:
+    /// - 是否找到可更新的活动工具
+    fn update_active_tool<F>(&mut self, name: &str, update: F) -> bool
+    where
+        F: FnOnce(&mut ToolView),
+    {
+        let Some(index) = self.active_tool_index else {
+            return false;
+        };
+        let Some(HistoryCell::Tool(ToolCell::Invocation(view))) = self.cells.get_mut(index) else {
+            return false;
+        };
+        if !view.is_active_for(name) {
+            return false;
+        }
+        update(view);
+        true
     }
 
     /// 推进 live reasoning 的跳动帧。
@@ -337,6 +417,12 @@ impl TranscriptStore {
         options: &TranscriptRenderOptions,
     ) -> Vec<AnsiLine> {
         let mut lines = Vec::new();
+        if let Some(status) = self.work_status {
+            lines.extend(AnsiLine::wrap_block(
+                &super::work_status_cell::render(status),
+                width,
+            ));
+        }
         if let Some(tail) = &self.live_tail {
             let rendered = match tail.kind {
                 ChatStreamKind::Content => markdown_cell::render_completed(&tail.source),

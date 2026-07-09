@@ -7,6 +7,11 @@ use crossterm::style::Print;
 use crossterm::terminal::{Clear, ClearType};
 use std::io::{self, Write};
 
+/// 历史追加对终端 viewport 的影响。
+pub(super) struct AppendOutcome {
+    pub(super) scrolled_rows: u16,
+}
+
 /// 将完整 transcript 重绘到 composer viewport 上方。
 ///
 /// 参数:
@@ -41,10 +46,10 @@ pub(super) fn append_lines(
     previous_viewport: &InlineViewport,
     viewport: &InlineViewport,
     lines: &[AnsiLine],
-) -> Result<()> {
-    append_lines_to(stdout, previous_viewport, viewport, lines)?;
+) -> Result<AppendOutcome> {
+    let outcome = append_lines_to(stdout, previous_viewport, viewport, lines)?;
     stdout.flush()?;
-    Ok(())
+    Ok(outcome)
 }
 
 /// 将完整 transcript 按行定位到当前历史区域。
@@ -96,9 +101,9 @@ fn append_lines_to<W: Write>(
     previous_viewport: &InlineViewport,
     viewport: &InlineViewport,
     lines: &[AnsiLine],
-) -> Result<()> {
+) -> Result<AppendOutcome> {
     if lines.is_empty() {
-        return Ok(());
+        return Ok(AppendOutcome { scrolled_rows: 0 });
     }
 
     let previous_top = previous_viewport.composer_top();
@@ -114,7 +119,7 @@ fn append_lines_to<W: Write>(
         )?;
     }
     if direct_line_count == lines.len() {
-        return Ok(());
+        return Ok(AppendOutcome { scrolled_rows: 0 });
     }
 
     for line in &lines[direct_line_count..] {
@@ -129,7 +134,12 @@ fn append_lines_to<W: Write>(
             Clear(ClearType::UntilNewLine)
         )?;
     }
-    Ok(())
+    Ok(AppendOutcome {
+        scrolled_rows: lines
+            .len()
+            .saturating_sub(direct_line_count)
+            .min(u16::MAX as usize) as u16,
+    })
 }
 
 #[cfg(test)]
@@ -177,7 +187,7 @@ mod tests {
         viewport.update(TerminalSize { cols: 80, rows: 24 }, 3, 5);
         let mut output = Vec::new();
 
-        append_lines_to(
+        let outcome = append_lines_to(
             &mut output,
             &previous,
             &viewport,
@@ -188,6 +198,7 @@ mod tests {
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\x1b[5;1Hnext\x1b[K"));
         assert!(!output.contains("\x1b[r"));
+        assert_eq!(outcome.scrolled_rows, 0);
     }
 
     /// 验证历史填满后使用完整终端滚动，保留原生 scrollback。
@@ -205,7 +216,7 @@ mod tests {
         viewport.update(TerminalSize { cols: 80, rows: 24 }, 3, 81);
         let mut output = Vec::new();
 
-        append_lines_to(
+        let outcome = append_lines_to(
             &mut output,
             &previous,
             &viewport,
@@ -215,6 +226,7 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("\x1b[24;1H\r\n\x1b[21;1Hnext\x1b[K"));
+        assert_eq!(outcome.scrolled_rows, 1);
     }
 
     /// 验证大块追加先填满空余历史行，再进入终端 scrollback。

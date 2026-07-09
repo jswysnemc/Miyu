@@ -1,11 +1,11 @@
+use super::slash_panel::SlashPanel;
 use super::viewport::InlineViewport;
 use crate::cli::repl_chrome::{chrome_fixed_rows, chrome_rule, ReplChrome};
-use crate::cli::repl_commands::{repl_command_suggestions, ReplCommandSuggestion};
 use crate::cli::repl_input_render::{
     repl_cursor_position_for_cols, repl_line_rows_for_cols, repl_prompt_rows_for_cols,
     repl_visible_input_lines,
 };
-use crate::cli::repl_text::{repl_input_lines, take_chars, visible_width};
+use crate::cli::repl_text::{repl_input_lines, visible_width};
 use crate::cli::REPL_MAX_VISIBLE_INPUT_ROWS;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
@@ -23,8 +23,6 @@ pub(super) struct ComposerFrame {
     is_pasted: bool,
     slash_selection: usize,
 }
-
-const MAX_SLASH_PANEL_ITEMS: usize = 8;
 
 impl ComposerFrame {
     /// 创建当前输入状态的 composer source。
@@ -63,10 +61,12 @@ impl ComposerFrame {
     /// - composer 所需视觉行数
     pub(super) fn height(&self, cols: usize) -> u16 {
         let layout = self.layout(cols);
-        if layout.is_slash_panel() {
-            return 1u16.saturating_add(layout.suggestions.len() as u16);
+        if layout.slash_panel.is_visible() {
+            return 2u16
+                .saturating_add(layout.input_rows)
+                .saturating_add(layout.slash_panel.height());
         }
-        chrome_fixed_rows() + layout.input_rows + u16::from(!layout.suggestions.is_empty())
+        chrome_fixed_rows() + layout.input_rows
     }
 
     /// 将 composer 写入 viewport 底部并恢复输入光标位置。
@@ -92,10 +92,6 @@ impl ComposerFrame {
             )?;
         }
 
-        if layout.is_slash_panel() {
-            return self.draw_slash_panel(output, top, cols, &layout);
-        }
-
         let mut row = top;
         // 2. 顶线、输入正文、底线和状态栏均从 source 按当前宽度重新计算
         queue!(output, MoveTo(0, row), Print(chrome_rule(cols)))?;
@@ -109,7 +105,11 @@ impl ComposerFrame {
 
         queue!(output, MoveTo(0, row), Print(chrome_rule(cols)))?;
         row = row.saturating_add(1);
-        queue!(output, MoveTo(0, row), Print(self.chrome.footer_line(cols)))?;
+        if layout.slash_panel.is_visible() {
+            layout.slash_panel.draw(output, row, cols)?;
+        } else {
+            queue!(output, MoveTo(0, row), Print(self.chrome.footer_line(cols)))?;
+        }
 
         // 3. 历史插入会移动终端光标，最后必须把它放回可继续编辑的位置
         queue!(
@@ -136,10 +136,7 @@ impl ComposerFrame {
         let display_lines =
             repl_visible_input_lines("", &lines, REPL_MAX_VISIBLE_INPUT_ROWS, self.is_pasted);
         let input_rows = repl_prompt_rows_for_cols("", &display_lines, cols).max(1);
-        let suggestions = repl_command_suggestions(&self.input)
-            .into_iter()
-            .take(MAX_SLASH_PANEL_ITEMS)
-            .collect();
+        let slash_panel = SlashPanel::new(&self.input, self.slash_selection);
         let (cursor_col, cursor_row_offset) = if display_lines.len() == lines.len() {
             repl_cursor_position_for_cols("", &self.input, self.cursor, cols)
         } else {
@@ -152,54 +149,10 @@ impl ComposerFrame {
         ComposerLayout {
             display_lines,
             input_rows,
-            suggestions,
+            slash_panel,
             cursor_col,
             cursor_row_offset,
         }
-    }
-
-    /// 绘制 slash 命令面板，并把光标留在命令输入行。
-    ///
-    /// 参数:
-    /// - `output`: 终端输出句柄
-    /// - `top`: composer 顶部行号
-    /// - `cols`: 终端列数
-    /// - `layout`: 当前宽度下的 composer 布局
-    ///
-    /// 返回:
-    /// - 绘制是否成功
-    fn draw_slash_panel<W: Write>(
-        &self,
-        output: &mut W,
-        top: u16,
-        cols: usize,
-        layout: &ComposerLayout,
-    ) -> Result<()> {
-        let input = truncate_to_width(&self.input, cols.saturating_sub(2));
-        queue!(
-            output,
-            MoveTo(0, top),
-            Print(format!("\x1b[48;5;236m> {input}\x1b[K\x1b[0m"))
-        )?;
-        for (index, suggestion) in layout.suggestions.iter().enumerate() {
-            queue!(
-                output,
-                MoveTo(0, top.saturating_add(index as u16 + 1)),
-                Print(format_slash_suggestion(
-                    *suggestion,
-                    cols,
-                    index
-                        == self
-                            .slash_selection
-                            .min(layout.suggestions.len().saturating_sub(1)),
-                ))
-            )?;
-        }
-        let before_cursor = take_chars(&self.input, self.cursor);
-        let cursor_col = (2 + visible_width(&before_cursor)).min(cols.saturating_sub(1)) as u16;
-        queue!(output, MoveTo(cursor_col, top))?;
-        output.flush()?;
-        Ok(())
     }
 }
 
@@ -207,79 +160,9 @@ impl ComposerFrame {
 struct ComposerLayout {
     display_lines: Vec<String>,
     input_rows: u16,
-    suggestions: Vec<ReplCommandSuggestion>,
+    slash_panel: SlashPanel,
     cursor_col: u16,
     cursor_row_offset: u16,
-}
-
-impl ComposerLayout {
-    /// 判断当前输入是否应展示 slash 命令面板。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 是否存在可展示的 slash 命令
-    fn is_slash_panel(&self) -> bool {
-        !self.suggestions.is_empty()
-    }
-}
-
-/// 格式化 slash 面板的一条命令与说明。
-///
-/// 参数:
-/// - `suggestion`: 命令建议
-/// - `cols`: 终端列数
-///
-/// 返回:
-/// - 不超过终端宽度的一行面板文本
-fn format_slash_suggestion(
-    suggestion: ReplCommandSuggestion,
-    cols: usize,
-    selected: bool,
-) -> String {
-    let command_width = 18usize.min(cols.saturating_sub(3));
-    let description_width = cols.saturating_sub(command_width + 3);
-    let description = truncate_to_width(suggestion.description, description_width);
-    if selected {
-        return format!(
-            "\x1b[48;5;238m  \x1b[1m{:<command_width$}\x1b[0m\x1b[48;5;238m\x1b[2m{}\x1b[0m\x1b[48;5;238m\x1b[K\x1b[0m",
-            suggestion.command, description
-        );
-    }
-    format!(
-        "  \x1b[1m{:<command_width$}\x1b[0m\x1b[2m{}\x1b[0m",
-        suggestion.command, description
-    )
-}
-
-/// 将输入或说明截断到一行可见宽度。
-///
-/// 参数:
-/// - `value`: 原始文本
-/// - `width`: 最大显示宽度
-///
-/// 返回:
-/// - 不超过最大宽度的文本
-fn truncate_to_width(value: &str, width: usize) -> String {
-    if visible_width(value) <= width {
-        return value.to_string();
-    }
-    if width <= 3 {
-        return ".".repeat(width);
-    }
-    let mut output = String::new();
-    let mut used = 0usize;
-    for ch in value.chars() {
-        let char_width = visible_width(&ch.to_string());
-        if used.saturating_add(char_width) > width - 3 {
-            break;
-        }
-        output.push(ch);
-        used = used.saturating_add(char_width);
-    }
-    output.push_str("...");
-    output
 }
 
 #[cfg(test)]
@@ -327,7 +210,7 @@ mod tests {
     /// 返回:
     /// - 无
     #[test]
-    fn slash_panel_replaces_footer_with_command_descriptions() {
+    fn slash_panel_keeps_input_frame_visible_above_command_descriptions() {
         let chrome = ReplChrome {
             mode: AgentMode::Yolo,
             context_ratio: 0.0,
@@ -346,6 +229,8 @@ mod tests {
 
         let output = String::from_utf8(output).unwrap();
         assert!(output.contains("/model"));
+        assert!(output.matches('─').count() >= 2);
+        assert!(output.contains("/"));
         assert!(!output.contains("120k"));
     }
 }

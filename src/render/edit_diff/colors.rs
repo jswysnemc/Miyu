@@ -4,8 +4,6 @@ use std::path::Path;
 /// diff 行配色。
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct DiffPalette {
-    pub context_background: u8,
-    pub context_foreground: u8,
     pub delete_background: u8,
     pub delete_foreground: u8,
     pub add_background: u8,
@@ -22,8 +20,6 @@ impl Default for DiffPalette {
     /// - 默认深色终端配色
     fn default() -> Self {
         Self {
-            context_background: 235,
-            context_foreground: 244,
             delete_background: 52,
             delete_foreground: 174,
             add_background: 22,
@@ -41,13 +37,7 @@ impl Default for DiffPalette {
 /// 返回:
 /// - 带 ANSI 样式的上下文行
 pub(crate) fn style_context_line(path: &Path, line: &str) -> String {
-    let palette = DiffPalette::default();
-    style_diff_line(
-        path,
-        line,
-        palette.context_background,
-        palette.context_foreground,
-    )
+    highlight_code_line(language_from_path(path), line)
 }
 
 /// 给 diff 删除行添加样式。
@@ -187,5 +177,13 @@ mod tests {
         assert!(output.contains("\x1b[K"));
         assert!(!output.contains(&" ".repeat(40)));
         assert!(output.ends_with("\x1b[0m") || output.contains("\x1b[K\x1b[0m"));
+    }
+
+    #[test]
+    fn context_lines_keep_terminal_default_background() {
+        let output = style_context_line(Path::new("hello.rs"), "  1    fn main() {}");
+
+        assert!(!output.contains("\x1b[48;5;"));
+        assert!(!output.contains("\x1b[K"));
     }
 }

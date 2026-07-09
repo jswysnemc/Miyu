@@ -6,10 +6,11 @@ pub(crate) use crate::render::markdown_inline::render_inline;
 pub(crate) use crate::render::markdown_inline::render_table_cell;
 #[cfg(test)]
 pub(crate) use crate::render::markdown_inline::render_table_cell_content;
+use crate::render::markdown_inline::{render_inline_with_math_mode, InlineMathMode};
 use crate::render::streaming_asset_block::StreamingAssetBlock;
-use crate::render::streaming_table::StreamingTable;
 use crate::render::style::{HEADER_STYLE, RESET, TERTIARY_STYLE};
 use crate::render::table;
+use crate::render::table::streaming::StreamingTable;
 
 pub(crate) struct MarkdownStreamRenderer {
     buffer: String,
@@ -33,6 +34,19 @@ impl MarkdownStreamRenderer {
     /// - 可稳定重放的 Markdown 渲染器
     pub(crate) fn new_stable() -> Self {
         Self::with_table_replacement(false)
+    }
+
+    /// 创建用于 source-backed 实时尾部的 Markdown 渲染器。
+    ///
+    /// 表格在流式阶段保留原始 Markdown，定稿 history cell 再替换为计算结果。
+    ///
+    /// 返回:
+    /// - 不生成光标回退序列的实时预览渲染器
+    pub(crate) fn new_source_preview() -> Self {
+        Self {
+            buffer: String::new(),
+            line_renderer: MarkdownLineRenderer::new_source_preview(),
+        }
     }
 
     /// 根据表格是否允许替换原始行创建行渲染器。
@@ -93,6 +107,7 @@ struct MarkdownLineRenderer {
     math_buffer: Vec<String>,
     table: StreamingTable,
     asset_block: StreamingAssetBlock,
+    inline_math_mode: InlineMathMode,
 }
 
 impl MarkdownLineRenderer {
@@ -115,8 +130,25 @@ impl MarkdownLineRenderer {
             } else {
                 StreamingTable::new_stable()
             },
-            asset_block: StreamingAssetBlock::new(),
+            asset_block: if replace_streamed_table_rows {
+                StreamingAssetBlock::new()
+            } else {
+                StreamingAssetBlock::new_stable()
+            },
+            inline_math_mode: InlineMathMode::TerminalImage,
         }
+    }
+
+    /// 创建 source-backed 实时预览行渲染器。
+    ///
+    /// 返回:
+    /// - 表格保留原文的行渲染器
+    fn new_source_preview() -> Self {
+        let mut renderer = Self::new(false);
+        renderer.table = StreamingTable::new_source_preview();
+        renderer.asset_block = StreamingAssetBlock::new_source_preview();
+        renderer.inline_math_mode = InlineMathMode::Source;
+        renderer
     }
 
     /// 渲染单行 Markdown。
@@ -203,7 +235,13 @@ impl MarkdownLineRenderer {
         } else {
             self.pending_blank_lines = 0;
             let mut output = self.flush();
-            output.push_str(&render_markdown_line(line));
+            let rendered = match self.inline_math_mode {
+                InlineMathMode::TerminalImage => render_markdown_line(line),
+                InlineMathMode::Source => {
+                    render_markdown_line_with_math_mode(line, self.inline_math_mode)
+                }
+            };
+            output.push_str(&rendered);
             output.push('\n');
             output
         }
@@ -259,21 +297,39 @@ impl MarkdownLineRenderer {
 /// 返回:
 /// - 渲染后的终端文本，不包含结尾换行
 pub(crate) fn render_markdown_line(line: &str) -> String {
+    render_markdown_line_with_math_mode(line, InlineMathMode::TerminalImage)
+}
+
+/// 按指定公式策略渲染单行 Markdown 文本。
+///
+/// 参数:
+/// - `line`: 原始 Markdown 行
+/// - `math_mode`: 行内公式渲染策略
+///
+/// 返回:
+/// - 渲染后的终端文本，不包含结尾换行
+fn render_markdown_line_with_math_mode(line: &str, math_mode: InlineMathMode) -> String {
     let trimmed = line.trim_start();
     let indent = &line[..line.len() - trimmed.len()];
-    if let Some(header) = render_header(trimmed) {
+    if let Some(header) = render_header(trimmed, math_mode) {
         return header;
     }
     if let Some((depth, rest)) = parse_blockquote(trimmed) {
         let bars = "\x1b[32m| \x1b[0m".repeat(depth);
-        return format!("{indent}{bars}\x1b[32m{}\x1b[0m", render_inline(rest));
+        return format!(
+            "{indent}{bars}\x1b[32m{}\x1b[0m",
+            render_inline_for_mode(rest, math_mode)
+        );
     }
     if let Some(rest) = trimmed
         .strip_prefix("- ")
         .or_else(|| trimmed.strip_prefix("* "))
         .or_else(|| trimmed.strip_prefix("+ "))
     {
-        return format!("{indent}{TERTIARY_STYLE}-{RESET} {}", render_inline(rest));
+        return format!(
+            "{indent}{TERTIARY_STYLE}-{RESET} {}",
+            render_inline_for_mode(rest, math_mode)
+        );
     }
     let digits = trimmed.chars().take_while(|ch| ch.is_ascii_digit()).count();
     if digits > 0
@@ -284,13 +340,28 @@ pub(crate) fn render_markdown_line(line: &str) -> String {
         let rest = &trimmed[digits + 2..];
         return format!(
             "{indent}{TERTIARY_STYLE}{marker}{RESET} {}",
-            render_inline(rest)
+            render_inline_for_mode(rest, math_mode)
         );
     }
     if markdown_blocks::is_horizontal_rule(trimmed) {
         return markdown_blocks::horizontal_rule();
     }
-    render_inline(line)
+    render_inline_for_mode(line, math_mode)
+}
+
+/// 根据公式策略选择行内渲染入口。
+///
+/// 参数:
+/// - `text`: 原始行内文本
+/// - `math_mode`: 行内公式渲染策略
+///
+/// 返回:
+/// - 带 ANSI 样式的行内文本
+fn render_inline_for_mode(text: &str, math_mode: InlineMathMode) -> String {
+    match math_mode {
+        InlineMathMode::TerminalImage => render_inline(text),
+        InlineMathMode::Source => render_inline_with_math_mode(text, math_mode),
+    }
 }
 
 /// 解析 Markdown 引用层级。
@@ -317,7 +388,7 @@ fn parse_blockquote(line: &str) -> Option<(usize, &str)> {
 ///
 /// 返回:
 /// - 标题渲染结果
-fn render_header(line: &str) -> Option<String> {
+fn render_header(line: &str, math_mode: InlineMathMode) -> Option<String> {
     let level = line.chars().take_while(|ch| *ch == '#').count();
     if level == 0 || level > 6 || line.as_bytes().get(level) != Some(&b' ') {
         return None;
@@ -325,7 +396,7 @@ fn render_header(line: &str) -> Option<String> {
     let prefix = "#".repeat(level);
     Some(format!(
         "{HEADER_STYLE}{prefix} {}{RESET}",
-        render_inline(&line[level + 1..])
+        render_inline_for_mode(&line[level + 1..], math_mode)
     ))
 }
 

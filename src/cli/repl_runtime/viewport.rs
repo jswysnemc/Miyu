@@ -65,6 +65,7 @@ impl InlineViewport {
         composer_height: u16,
         history_rows: usize,
     ) -> bool {
+        self.origin_row = self.origin_row.min(size.rows.saturating_sub(1));
         let next_height = composer_height.min(size.rows);
         let available_rows = size.rows.saturating_sub(self.origin_row);
         let max_history_height = available_rows.saturating_sub(next_height);
@@ -76,6 +77,27 @@ impl InlineViewport {
         self.composer_height = next_height;
         self.history_height = next_history_height;
         changed
+    }
+
+    /// 记录完整终端滚动对受管区域原点的影响。
+    ///
+    /// 参数:
+    /// - `rows`: 本次追加触发的终端滚动行数
+    pub(super) fn apply_terminal_scroll(&mut self, rows: u16) {
+        if rows == 0 {
+            return;
+        }
+        let moved = rows.min(self.origin_row);
+        self.origin_row = self.origin_row.saturating_sub(moved);
+        let max_history_height = self
+            .size
+            .rows
+            .saturating_sub(self.origin_row)
+            .saturating_sub(self.composer_height);
+        self.history_height = self
+            .history_height
+            .saturating_add(moved)
+            .min(max_history_height);
     }
 
     /// 返回当前终端尺寸。
@@ -170,5 +192,25 @@ mod tests {
 
         assert_eq!(viewport.history_height(), 20);
         assert_eq!(viewport.composer_top(), 20);
+    }
+
+    /// 验证终端滚动后受管区域原点同步上移，composer 位置保持不变。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn terminal_scroll_moves_origin_without_moving_composer() {
+        let mut viewport = InlineViewport::new();
+        viewport.origin_row = 5;
+        viewport.update(TerminalSize { cols: 80, rows: 24 }, 3, 80);
+        let composer_top = viewport.composer_top();
+
+        viewport.apply_terminal_scroll(2);
+
+        assert_eq!(viewport.origin_row(), 3);
+        assert_eq!(viewport.composer_top(), composer_top);
     }
 }

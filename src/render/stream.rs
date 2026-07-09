@@ -25,7 +25,9 @@ use crate::render::tool_call_blocks::{
     write_command_tool_call_block, write_edit_tool_call_block, write_edit_tool_call_diff_block,
 };
 use crate::render::tool_event_line::{tool_event_label, tool_event_text};
+use crate::render::tool_view;
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
+use crate::render::work_status::WorkStatus;
 use anyhow::Result;
 use crossterm::execute;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
@@ -57,6 +59,7 @@ pub struct StreamRenderer {
     streaming_edit_progress: HashSet<usize>,
     pending_streamed_edit_blocks: usize,
     streaming_command_block: StreamingCommandBlock,
+    work_status: Option<WorkStatus>,
 }
 
 impl StreamRenderer {
@@ -93,6 +96,7 @@ impl StreamRenderer {
             streaming_edit_progress: HashSet::new(),
             pending_streamed_edit_blocks: 0,
             streaming_command_block: StreamingCommandBlock::new(),
+            work_status: None,
         }
     }
 
@@ -105,8 +109,9 @@ impl StreamRenderer {
             return Ok(());
         }
         self.hide_cursor()?;
+        self.work_status = Some(WorkStatus::WaitingResponse);
         self.wait_spinner = Some(WaitSpinner::start(
-            t("thinking", "思考").to_string(),
+            WorkStatus::WaitingResponse.label().to_string(),
             SpinnerStyle::Scanner,
             wait_spinner_detail_line(&self.options),
         ));
@@ -140,8 +145,13 @@ impl StreamRenderer {
             self.finalize_tools_summary()?;
             self.summary.add_reasoning_text(&text)?;
             self.mode = Some(ChatStreamKind::Reasoning);
+            self.work_status = Some(WorkStatus::Thinking);
             return Ok(());
         }
+        self.work_status = Some(match chunk.kind {
+            ChatStreamKind::Reasoning => WorkStatus::Thinking,
+            ChatStreamKind::Content => WorkStatus::Working,
+        });
         self.stop_waiting()?;
         self.finish_live_tool_status()?;
         if self.mode != Some(chunk.kind) {
@@ -173,6 +183,7 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.work_status = Some(WorkStatus::Working);
         self.stop_waiting()?;
         let background_command_start =
             name == "background_command" && is_background_command_start(arguments);
@@ -215,8 +226,11 @@ impl StreamRenderer {
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             self.summary.clear_live_lines()?;
             let mut stdout = io::stdout();
-            writeln!(stdout, "{}", tool_event_text(&event_label, "run"))?;
-            write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
+            writeln!(
+                stdout,
+                "{}",
+                tool_view::render_call(name, arguments, self.tool_call_mode)
+            )?;
             stdout.flush()?;
         }
         Ok(())
@@ -233,6 +247,7 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.work_status = Some(WorkStatus::Working);
         self.stop_waiting()?;
         if self.tool_call_mode == ToolCallDisplayMode::Hidden {
             return Ok(());
@@ -318,6 +333,7 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.work_status = Some(WorkStatus::Working);
         self.stop_waiting()?;
         let status = if ok { "ok" } else { "err" };
         let event_label = self
@@ -362,13 +378,11 @@ impl StreamRenderer {
             return Ok(());
         }
         self.finish_live_tool_status()?;
-        if name == "run_command" {
-            if self.tool_call_mode == ToolCallDisplayMode::Full {
-                let mut stdout = io::stdout();
-                write_command_result_blocks(&mut stdout, output)?;
-                stdout.flush()?;
-                return Ok(());
-            }
+        if name == "run_command" && self.tool_call_mode == ToolCallDisplayMode::Full {
+            let mut stdout = io::stdout();
+            write_command_result_blocks(&mut stdout, output)?;
+            stdout.flush()?;
+            return Ok(());
         }
         if command_block_result && ok {
             if let Some(label) = background_result_label {
@@ -386,15 +400,16 @@ impl StreamRenderer {
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             let mut stdout = io::stdout();
-            writeln!(
-                stdout,
-                "{}",
-                tool_event_text(
-                    background_result_label.as_deref().unwrap_or(&event_label),
-                    status
-                )
-            )?;
-            write_tool_payload(&mut stdout, t("output", "输出"), output)?;
+            if let Some(label) = background_result_label.as_deref() {
+                writeln!(stdout, "{}", tool_event_text(label, status))?;
+                write_tool_payload(&mut stdout, t("output", "输出"), output)?;
+            } else {
+                writeln!(
+                    stdout,
+                    "{}",
+                    tool_view::render_result(name, ok, output, self.tool_call_mode)
+                )?;
+            }
             stdout.flush()?;
         } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
             self.summary.note_tool_result(name, ok);
@@ -421,6 +436,7 @@ impl StreamRenderer {
         if self.plain {
             return Ok(());
         }
+        self.work_status = Some(WorkStatus::Working);
         if message == "__external_output__" {
             self.prepare_for_external_output()?;
             return Ok(());
@@ -569,6 +585,7 @@ impl StreamRenderer {
         }
         self.finalize_tools_summary()?;
         self.mode = None;
+        self.work_status = None;
         self.show_cursor()?;
         Ok(())
     }
@@ -588,12 +605,23 @@ impl StreamRenderer {
                     writeln!(stdout)?;
                 }
                 execute!(stdout, SetForegroundColor(Color::DarkCyan))?;
-                writeln!(stdout, "{TOOL_BULLET} {}", t("thinking", "思考"))?;
+                writeln!(
+                    stdout,
+                    "{TOOL_BULLET} {}",
+                    self.work_status.unwrap_or(WorkStatus::Thinking).label()
+                )?;
             }
             ChatStreamKind::Content => {
                 if self.mode == Some(ChatStreamKind::Reasoning) {
                     execute!(stdout, ResetColor)?;
                     writeln!(stdout)?;
+                }
+                if !self.plain {
+                    writeln!(
+                        stdout,
+                        "\x1b[2m{TOOL_BULLET} {}\x1b[0m",
+                        self.work_status.unwrap_or(WorkStatus::Working).label()
+                    )?;
                 }
             }
         }
