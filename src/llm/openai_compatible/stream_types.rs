@@ -372,19 +372,78 @@ impl ToolCallAccumulator {
             .collect()
     }
 }
+/// SSE 行级字节缓冲：在完整换行边界再解码 UTF-8，避免 TCP/HTTP 分片切断多字节字符时
+/// 被 `from_utf8_lossy` 替换成 U+FFFD（终端上的菱形问号）。
 #[derive(Default)]
-struct SseBuffer {
-    buffer: String,
+struct Utf8LineBuffer {
+    buffer: Vec<u8>,
+}
+
+impl Utf8LineBuffer {
+    /// 追加流式字节，吐出所有已完整接收的行（不含换行符）。
+    ///
+    /// 参数:
+    /// - `bytes`: 本轮网络 chunk
+    ///
+    /// 返回:
+    /// - 已完整的 UTF-8 行列表；末尾不完整行仍留在内部缓冲
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
+        // 1. 先按字节追加，不在 chunk 边界做 UTF-8 解码
+        self.buffer.extend_from_slice(bytes);
+        let mut lines = Vec::new();
+        // 2. 仅在 `\n` 处分行；行内字节必须是合法 UTF-8
+        while let Some(index) = self.buffer.iter().position(|byte| *byte == b'\n') {
+            let mut line = self.buffer.drain(..=index).collect::<Vec<_>>();
+            if line.last() == Some(&b'\n') {
+                line.pop();
+            }
+            if line.last() == Some(&b'\r') {
+                line.pop();
+            }
+            lines.push(
+                std::str::from_utf8(&line)
+                    .context("invalid utf-8 in streaming response")?
+                    .to_string(),
+            );
+        }
+        Ok(lines)
+    }
+
+    /// 冲刷尾部残留（无换行结尾的最后一行）。
+    ///
+    /// 返回:
+    /// - 若仅有空白则空列表；否则单行内容
+    fn finish(mut self) -> Result<Vec<String>> {
+        if self.buffer.iter().all(|byte| byte.is_ascii_whitespace()) {
+            return Ok(Vec::new());
+        }
+        if self.buffer.last() == Some(&b'\r') {
+            self.buffer.pop();
+        }
+        Ok(vec![std::str::from_utf8(&self.buffer)
+            .context("invalid utf-8 in streaming response")?
+            .to_string()])
+    }
+}
+
+/// Anthropic 风格 SSE：在行缓冲之上聚合 `data:` 字段为事件载荷。
+#[derive(Default)]
+struct SseDataBuffer {
+    lines: Utf8LineBuffer,
     data_lines: Vec<String>,
 }
 
-impl SseBuffer {
-    fn push(&mut self, text: &str) -> Result<Vec<String>> {
-        self.buffer.push_str(text);
+impl SseDataBuffer {
+    /// 追加原始字节并返回已闭合的 SSE data 载荷。
+    ///
+    /// 参数:
+    /// - `bytes`: 本轮网络 chunk
+    ///
+    /// 返回:
+    /// - 完整 SSE data 事件列表（多行 data 已用 `\n` 拼接）
+    fn push(&mut self, bytes: &[u8]) -> Result<Vec<String>> {
         let mut events = Vec::new();
-        while let Some(index) = self.buffer.find('\n') {
-            let line = self.buffer[..index].trim_end_matches('\r').to_string();
-            self.buffer.drain(..=index);
+        for line in self.lines.push(bytes)? {
             if let Some(event) = self.push_line(&line) {
                 events.push(event);
             }
@@ -392,10 +451,13 @@ impl SseBuffer {
         Ok(events)
     }
 
+    /// 结束流时冲刷未闭合的行与 data 缓冲。
+    ///
+    /// 返回:
+    /// - 剩余完整事件
     fn finish(mut self) -> Result<Vec<String>> {
         let mut events = Vec::new();
-        if !self.buffer.trim().is_empty() {
-            let line = self.buffer.trim_end_matches('\r').to_string();
+        for line in std::mem::take(&mut self.lines).finish()? {
             if let Some(event) = self.push_line(&line) {
                 events.push(event);
             }
@@ -406,6 +468,13 @@ impl SseBuffer {
         Ok(events)
     }
 
+    /// 处理单行 SSE 文本，空行表示事件结束。
+    ///
+    /// 参数:
+    /// - `line`: 已解码的一行（无换行）
+    ///
+    /// 返回:
+    /// - 事件闭合时返回 data 载荷，否则 `None`
     fn push_line(&mut self, line: &str) -> Option<String> {
         if line.is_empty() {
             if self.data_lines.is_empty() {

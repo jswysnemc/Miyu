@@ -157,7 +157,8 @@ impl OpenAiCompatibleClient {
             );
         }
 
-        let mut buffer = String::new();
+        // 按字节缓冲再按行解码，避免多字节 UTF-8 被 chunk 切断后变成 U+FFFD
+        let mut buffer = Utf8LineBuffer::default();
         let mut content = String::new();
         let mut content_emitted = 0usize;
         let mut reasoning = String::new();
@@ -167,10 +168,7 @@ impl OpenAiCompatibleClient {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(index) = buffer.find('\n') {
-                let line = buffer[..index].trim_end_matches('\r').to_string();
-                buffer.drain(..=index);
+            for line in buffer.push(&chunk)? {
                 if let Some(done) = handle_sse_line(
                     &line,
                     &mut content,
@@ -192,9 +190,9 @@ impl OpenAiCompatibleClient {
                 }
             }
         }
-        if !buffer.trim().is_empty() {
+        for line in buffer.finish()? {
             let _ = handle_sse_line(
-                buffer.trim_end_matches('\r'),
+                &line,
                 &mut content,
                 &mut content_emitted,
                 &mut reasoning,
@@ -252,11 +250,11 @@ impl OpenAiCompatibleClient {
         }
 
         let mut state = AnthropicStreamState::default();
-        let mut buffer = SseBuffer::default();
+        let mut buffer = SseDataBuffer::default();
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            for data in buffer.push(&String::from_utf8_lossy(&chunk))? {
+            for data in buffer.push(&chunk)? {
                 if handle_anthropic_sse_data(&data, &mut state, &mut *on_event)? {
                     return finalize_stream_result(
                         state.content,
@@ -324,7 +322,7 @@ impl OpenAiCompatibleClient {
             );
         }
 
-        let mut buffer = String::new();
+        let mut buffer = Utf8LineBuffer::default();
         let mut content = String::new();
         let mut content_emitted = 0usize;
         let mut reasoning = String::new();
@@ -335,10 +333,7 @@ impl OpenAiCompatibleClient {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk?;
-            buffer.push_str(&String::from_utf8_lossy(&chunk));
-            while let Some(index) = buffer.find('\n') {
-                let line = buffer[..index].trim_end_matches('\r').to_string();
-                buffer.drain(..=index);
+            for line in buffer.push(&chunk)? {
                 if handle_responses_sse_line(
                     &line,
                     &mut content,
@@ -354,6 +349,19 @@ impl OpenAiCompatibleClient {
                         .map(Some);
                 }
             }
+        }
+        for line in buffer.finish()? {
+            let _ = handle_responses_sse_line(
+                &line,
+                &mut content,
+                &mut content_emitted,
+                &mut reasoning,
+                &mut reasoning_emitted,
+                &mut usage,
+                &mut content_started,
+                &mut tool_calls,
+                &mut *on_event,
+            )?;
         }
         finalize_stream_result(content, reasoning, usage, tool_calls.finish()).map(Some)
     }
