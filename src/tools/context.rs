@@ -38,9 +38,9 @@ fn tool_context_char_limit(tool_name: &str) -> usize {
         | "search_knowledge_base_by_name"
         | "read_knowledge_base_file"
         | "grep"
-        | "search_text"
+        | "search_text" // 历史别名，仍按搜索类截断
         | "glob"
-        | "find_files"
+        | "find_files" // 历史别名，仍按搜索类截断
         | "read_file" => SEARCH_TOOL_CONTEXT_MAX_CHARS,
         _ => DEFAULT_TOOL_CONTEXT_MAX_CHARS,
     }
@@ -62,9 +62,9 @@ mod tests {
     }
 
     #[test]
-    fn tool_output_for_context_uses_search_limit_for_aliases() {
+    fn tool_output_for_context_uses_search_limit_for_grep() {
         let output = "x".repeat(SEARCH_TOOL_CONTEXT_MAX_CHARS + 1);
-        let clipped = tool_output_for_context("search_text", &output);
+        let clipped = tool_output_for_context("grep", &output);
         let retained_output = "x".repeat(SEARCH_TOOL_CONTEXT_MAX_CHARS);
 
         assert!(clipped.contains("tool output clipped"));

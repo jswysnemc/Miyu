@@ -21,9 +21,7 @@ const EXPLORE_ALLOWED: &[&str] = &[
     "check_os_info",
     "read_file",
     "glob",
-    "find_files",
     "grep",
-    "search_text",
     "web_search",
     "web_fetch",
 ];

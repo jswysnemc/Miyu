@@ -7,9 +7,7 @@ pub(crate) const BASE_TOOL_NAMES: &[&str] = &[
     "check_os_info",
     "read_file",
     "glob",
-    "find_files",
     "grep",
-    "search_text",
 ];
 
 /// 判断工具是否属于基础工具集合。
