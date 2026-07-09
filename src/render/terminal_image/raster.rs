@@ -37,6 +37,165 @@ fn load_image_rgba(path: &Path) -> Result<RasterImage> {
     })
 }
 
+/// 裁掉四周全透明边距，避免 Mermaid 等图因大画布占过多终端行列。
+///
+/// 参数:
+/// - `image`: 原图
+///
+/// 返回:
+/// - 裁剪后的图片；若全透明则返回 1×1 透明像素
+fn crop_transparent_bounds(image: &RasterImage) -> RasterImage {
+    if image.width == 0 || image.height == 0 || image.pixels.is_empty() {
+        return RasterImage {
+            pixels: vec![Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            }],
+            width: 1,
+            height: 1,
+        };
+    }
+    let mut min_x = image.width;
+    let mut min_y = image.height;
+    let mut max_x = 0usize;
+    let mut max_y = 0usize;
+    let mut found = false;
+    for y in 0..image.height {
+        for x in 0..image.width {
+            let index = y * image.width + x;
+            if image.pixels[index].a >= ANSI_ALPHA_THRESHOLD {
+                found = true;
+                min_x = min_x.min(x);
+                min_y = min_y.min(y);
+                max_x = max_x.max(x);
+                max_y = max_y.max(y);
+            }
+        }
+    }
+    if !found {
+        return RasterImage {
+            pixels: vec![Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            }],
+            width: 1,
+            height: 1,
+        };
+    }
+    // 1. 保留极少边距；边距过大会在甘特图等下方留下「假空白」
+    let pad = 1usize;
+    let min_x = min_x.saturating_sub(pad);
+    let min_y = min_y.saturating_sub(pad);
+    let max_x = (max_x + pad).min(image.width.saturating_sub(1));
+    let max_y = (max_y + pad).min(image.height.saturating_sub(1));
+    let width = max_x.saturating_sub(min_x).saturating_add(1).max(1);
+    let height = max_y.saturating_sub(min_y).saturating_add(1).max(1);
+    let mut pixels = Vec::with_capacity(width.saturating_mul(height));
+    for y in min_y..=max_y {
+        let row = y * image.width;
+        for x in min_x..=max_x {
+            pixels.push(image.pixels[row + x]);
+        }
+    }
+    RasterImage {
+        pixels,
+        width,
+        height,
+    }
+}
+
+/// 将图片等比缩放到不超过终端最大单元格占位对应的像素尺寸。
+///
+/// 参数:
+/// - `image`: 原图
+/// - `max_cols`: 最大列数
+/// - `max_rows`: 最大行数
+/// - `cell_pw`: 单格像素宽
+/// - `cell_ph`: 单格像素高
+///
+/// 返回:
+/// - 缩放后的图片；未超限时返回原图
+fn fit_raster_to_max_cells(
+    image: RasterImage,
+    max_cols: usize,
+    max_rows: usize,
+    cell_pw: usize,
+    cell_ph: usize,
+) -> RasterImage {
+    let (cell_pw, cell_ph) = normalize_mono_cell_pixels(cell_pw, cell_ph);
+    let max_px_w = max_cols.saturating_mul(cell_pw).max(1);
+    let max_px_h = max_rows.saturating_mul(cell_ph).max(1);
+    if image.width <= max_px_w && image.height <= max_px_h {
+        return image;
+    }
+    let scale_w = max_px_w as f32 / image.width.max(1) as f32;
+    let scale_h = max_px_h as f32 / image.height.max(1) as f32;
+    let scale = scale_w.min(scale_h).min(1.0);
+    let new_w = ((image.width as f32) * scale).round().max(1.0) as usize;
+    let new_h = ((image.height as f32) * scale).round().max(1.0) as usize;
+    resize_raster_image(&image, new_w, new_h)
+}
+
+/// 将 RGBA 图缩放到目标像素尺寸。
+///
+/// 参数:
+/// - `image`: 原图
+/// - `new_width`: 目标宽
+/// - `new_height`: 目标高
+///
+/// 返回:
+/// - 缩放后的图片
+fn resize_raster_image(image: &RasterImage, new_width: usize, new_height: usize) -> RasterImage {
+    let new_width = new_width.max(1);
+    let new_height = new_height.max(1);
+    let mut pixels = Vec::with_capacity(new_width.saturating_mul(new_height));
+    for y in 0..new_height {
+        for x in 0..new_width {
+            pixels.push(sample_resized_pixel(image, x, y, new_width, new_height));
+        }
+    }
+    RasterImage {
+        pixels,
+        width: new_width,
+        height: new_height,
+    }
+}
+
+/// 将 RGBA 位图写入 PNG 文件。
+///
+/// 参数:
+/// - `path`: 输出路径
+/// - `image`: RGBA 图片
+///
+/// 返回:
+/// - 写入是否成功
+fn write_raster_png(path: &Path, image: &RasterImage) -> Result<()> {
+    let width = u32::try_from(image.width).context("image width is too large")?;
+    let height = u32::try_from(image.height).context("image height is too large")?;
+    let file = fs::File::create(path)
+        .with_context(|| format!("failed to create {}", path.display()))?;
+    let writer = std::io::BufWriter::new(file);
+    let mut encoder = png::Encoder::new(writer, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder
+        .write_header()
+        .with_context(|| format!("failed to write png header {}", path.display()))?;
+    let bytes = image
+        .pixels
+        .iter()
+        .flat_map(|pixel| [pixel.r, pixel.g, pixel.b, pixel.a])
+        .collect::<Vec<_>>();
+    writer
+        .write_image_data(&bytes)
+        .with_context(|| format!("failed to write png data {}", path.display()))?;
+    Ok(())
+}
+
 /// 将 PNG 像素缩放并量化为 sixel 可用的 216 色调色板索引。
 ///
 /// 参数:

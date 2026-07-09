@@ -184,12 +184,6 @@ fn normalize_mono_cell_pixels(cell_pw: usize, cell_ph: usize) -> (usize, usize) 
 
 /// 计算表格内联图占用的终端单元格宽高。
 ///
-/// 策略（针对等宽字体）：
-/// 1. 校正单元格像素高宽比
-/// 2. 列宽：`round` 自然宽度后与 `max_cols` 取小，减轻宽度富余
-/// 3. 行高：按缩放到该列宽后的像素高推算，并加安全余量
-/// 4. 若仍超 `max_rows`，以行高反推列宽
-///
 /// 参数:
 /// - `image_width`: 图片像素宽
 /// - `image_height`: 图片像素高
@@ -208,6 +202,39 @@ fn table_image_cell_dimensions(
     max_cols: usize,
     max_rows: usize,
 ) -> (usize, usize) {
+    image_cell_dimensions(
+        image_width,
+        image_height,
+        cell_pw,
+        cell_ph,
+        max_cols,
+        max_rows,
+        TABLE_IMAGE_ROW_PAD,
+    )
+}
+
+/// 计算图片在终端中的单元格占位（宽优先 + 等宽字体校正）。
+///
+/// 参数:
+/// - `image_width`: 图片像素宽
+/// - `image_height`: 图片像素高
+/// - `cell_pw`: 单字符格像素宽
+/// - `cell_ph`: 单字符格像素高
+/// - `max_cols`: 最大列数
+/// - `max_rows`: 最大行数
+/// - `row_pad`: 行高额外余量
+///
+/// 返回:
+/// - `(列数 c, 行数 r)`
+fn image_cell_dimensions(
+    image_width: usize,
+    image_height: usize,
+    cell_pw: usize,
+    cell_ph: usize,
+    max_cols: usize,
+    max_rows: usize,
+    row_pad: usize,
+) -> (usize, usize) {
     let (cell_pw, cell_ph) = normalize_mono_cell_pixels(cell_pw, cell_ph);
     let image_width = image_width.max(1);
     let image_height = image_height.max(1);
@@ -222,9 +249,7 @@ fn table_image_cell_dimensions(
         numerator.div_ceil(denominator).max(1)
     };
     let with_pad = |base: usize| -> usize {
-        base.saturating_add(TABLE_IMAGE_ROW_PAD)
-            .min(max_rows)
-            .max(1)
+        base.saturating_add(row_pad).min(max_rows).max(1)
     };
 
     // 1. 列宽：四舍五入取自然列，减轻 ceil 带来的宽度富余
@@ -233,8 +258,8 @@ fn table_image_cell_dimensions(
     let base_rows = base_rows_for_cols(cols);
 
     // 2. 加余量后超上限：以可用行高反推列宽
-    if with_pad(base_rows) > max_rows || base_rows > max_rows.saturating_sub(TABLE_IMAGE_ROW_PAD) {
-        let usable_rows = max_rows.saturating_sub(TABLE_IMAGE_ROW_PAD).max(1);
+    if with_pad(base_rows) > max_rows || base_rows > max_rows.saturating_sub(row_pad) {
+        let usable_rows = max_rows.saturating_sub(row_pad).max(1);
         let numerator = image_width
             .saturating_mul(usable_rows)
             .saturating_mul(cell_ph);

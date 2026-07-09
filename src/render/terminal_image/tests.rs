@@ -36,7 +36,8 @@ mod tests {
         write_test_rgba_png(&path, 16, 32, &pixels);
         let output = render_kitty_image(&path).unwrap();
         assert!(output.contains("\x1b_Gf=100,a=T,q=2,c="));
-        assert!(output.contains(",r="));
+        // 块级图只声明 c，高度由比例决定，避免 r 过大在图下 letterbox 空白
+        assert!(!output.contains(",r="));
         assert!(output.ends_with('\n'));
         let trailing_newlines = output.chars().rev().take_while(|ch| *ch == '\n').count();
         assert!(trailing_newlines >= 2);
@@ -252,6 +253,120 @@ mod tests {
         assert_eq!(cols_bad, cols_ok);
         assert_eq!(rows_bad, rows_ok);
         assert!(rows_ok >= 3);
+    }
+
+    #[test]
+    fn crop_transparent_bounds_removes_empty_margins() {
+        // 8x8 画布，仅右下 2x2 不透明
+        let mut pixels = vec![
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            };
+            64
+        ];
+        for y in 6..8 {
+            for x in 6..8 {
+                pixels[y * 8 + x] = Rgba {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                };
+            }
+        }
+        let image = RasterImage {
+            pixels,
+            width: 8,
+            height: 8,
+        };
+        let cropped = crop_transparent_bounds(&image);
+        // pad=1：内容 [6,7] 向外扩到 [5,7] => 3x3
+        assert_eq!(cropped.width, 3);
+        assert_eq!(cropped.height, 3);
+        assert!(cropped.pixels.iter().any(|p| p.a >= ANSI_ALPHA_THRESHOLD));
+    }
+
+    #[test]
+    fn kitty_render_uses_cropped_content_not_full_transparent_canvas() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("wide.png");
+        // 64x16 画布，左侧 8x8 不透明；裁剪后应明显小于原宽
+        let mut pixels = vec![
+            Rgba {
+                r: 0,
+                g: 0,
+                b: 0,
+                a: 0,
+            };
+            64 * 16
+        ];
+        for y in 0..8 {
+            for x in 0..8 {
+                pixels[y * 64 + x] = Rgba {
+                    r: 0,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                };
+            }
+        }
+        write_test_rgba_png(&path, 64, 16, &pixels);
+        let output = render_kitty_image(&path).unwrap();
+        assert!(output.contains("\x1b_Gf=100,a=T,q=2,c="));
+        let c_value = output
+            .split(",c=")
+            .nth(1)
+            .and_then(|rest| rest.split(',').next())
+            .and_then(|value| value.parse::<usize>().ok())
+            .expect("c= value");
+        assert!(
+            c_value <= 4,
+            "expected cropped kitty width, got c={c_value}"
+        );
+    }
+
+    #[test]
+    fn kitty_render_reserves_aspect_rows_without_r_param() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("gantt_like.png");
+        // 宽短图：模拟甘特图，不应在下方预留远超内容的空白行
+        let width = 400u32;
+        let height = 120u32;
+        let pixels = std::iter::repeat(Rgba {
+            r: 200,
+            g: 200,
+            b: 220,
+            a: 255,
+        })
+        .take((width * height) as usize)
+        .collect::<Vec<_>>();
+        write_test_rgba_png(&path, width, height, &pixels);
+        let output = render_kitty_image(&path).unwrap();
+        // 只传 c，不传 r，避免 letterbox 空白
+        assert!(output.contains(",c="));
+        assert!(!output.contains(",r="));
+        let trailing = output.chars().rev().take_while(|ch| *ch == '\n').count();
+        // 默认 8x16：高 120 => 约 8 行；允许少量取整偏差
+        assert!(
+            trailing <= 12,
+            "expected compact row reservation for short image, got {trailing} newlines"
+        );
+        assert!(trailing >= 1);
+    }
+
+    #[test]
+    fn kitty_cell_dimensions_match_aspect_not_independent_ceil() {
+        // 400x100，格 8x16：若宽高各自 ceil 会得到 (50, 7)
+        // 按比例从 c 推 r 也应接近 7，且不会无故变成接近 max_rows
+        let (cols, rows) = kitty_cell_dimensions(400, 100);
+        assert!(cols >= 1);
+        assert!(rows >= 1);
+        // 行数应与比例一致：rows ≈ cols * 8 * 100 / (400 * 16) = cols / 8
+        let expected = (cols * 8 * 100).div_ceil(400 * 16).max(1);
+        assert_eq!(rows, expected);
     }
 
     fn write_test_rgba_png(path: &Path, width: u32, height: u32, pixels: &[Rgba]) {

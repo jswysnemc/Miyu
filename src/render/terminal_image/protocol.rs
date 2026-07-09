@@ -184,30 +184,68 @@ fn supports_windows_terminal_sixel() -> bool {
             .unwrap_or(false)
 }
 
-/// 计算 Kitty 图片在终端中占用的单元格宽高。
+/// 块级 Kitty 图在终端中的最大占位（列/行）。
+///
+/// 仅作「超出才缩小」的上限，不主动压到半屏（避免图本身变小，却仍留下空白）。
+///
+/// 返回:
+/// - `(max_cols, max_rows, cell_pw, cell_ph)`
+fn kitty_block_limits() -> (usize, usize, usize, usize) {
+    let (cell_pw, cell_ph) = terminal_cell_pixel_size();
+    let (cell_pw, cell_ph) = normalize_mono_cell_pixels(cell_pw, cell_ph);
+    let (term_cols, term_rows) = terminal::size()
+        .map(|(cols, rows)| (usize::from(cols), usize::from(rows)))
+        .unwrap_or((80, 24));
+    let max_cols = term_cols.saturating_sub(2).max(1);
+    // 几乎可用全高，只留一点边距；真正空白靠「按比例算 r」消除
+    let max_rows = term_rows.saturating_sub(2).clamp(4, 120);
+    (max_cols, max_rows, cell_pw, cell_ph)
+}
+
+/// 计算 Kitty 块级图片的列数，以及与图片宽高比一致的行数。
+///
+/// 行数由列宽反推，避免 `ceil(宽)` 与 `ceil(高)` 各自取整后 `r` 偏大，
+/// 在图下方留下一块「空白占位」。
 ///
 /// 参数:
 /// - `pixel_width`: 图片像素宽度
 /// - `pixel_height`: 图片像素高度
 ///
 /// 返回:
-/// - `(列数, 行数)`，已按终端尺寸等比约束
+/// - `(列数 c, 行数 r)`
 fn kitty_cell_dimensions(pixel_width: usize, pixel_height: usize) -> (usize, usize) {
-    let (cell_pw, cell_ph) = terminal_cell_pixel_size();
-    let (term_cols, term_rows) = terminal::size()
-        .map(|(cols, rows)| (usize::from(cols), usize::from(rows)))
-        .unwrap_or((80, 24));
-    // 1. 预留提示符与边距，避免图片顶满整屏
-    let max_cols = term_cols.saturating_sub(2).max(1);
-    let max_rows = term_rows.saturating_sub(4).clamp(1, 60);
-    // 2. 按单元格像素尺寸换算自然占位
-    let natural_cols = pixel_width.div_ceil(cell_pw.max(1)).max(1);
-    let natural_rows = pixel_height.div_ceil(cell_ph.max(1)).max(1);
-    if natural_cols <= max_cols && natural_rows <= max_rows {
-        return (natural_cols, natural_rows);
+    let (max_cols, max_rows, cell_pw, cell_ph) = kitty_block_limits();
+    let pixel_width = pixel_width.max(1);
+    let pixel_height = pixel_height.max(1);
+    let cell_pw = cell_pw.max(1);
+    let cell_ph = cell_ph.max(1);
+
+    // 1. 先定列宽（不超过终端）
+    let mut cols = pixel_width.div_ceil(cell_pw).max(1).min(max_cols);
+    // 2. 行高严格按宽高比：r = ceil(h * c * cell_pw / (w * cell_ph))
+    let mut rows = pixel_height
+        .saturating_mul(cols)
+        .saturating_mul(cell_pw)
+        .div_ceil(pixel_width.saturating_mul(cell_ph).max(1))
+        .max(1);
+
+    // 3. 仅当确实超出终端高度时再压列宽
+    if rows > max_rows {
+        rows = max_rows;
+        cols = pixel_width
+            .saturating_mul(rows)
+            .saturating_mul(cell_ph)
+            .div_ceil(pixel_height.saturating_mul(cell_pw).max(1))
+            .max(1)
+            .min(max_cols);
+        rows = pixel_height
+            .saturating_mul(cols)
+            .saturating_mul(cell_pw)
+            .div_ceil(pixel_width.saturating_mul(cell_ph).max(1))
+            .max(1)
+            .min(max_rows);
     }
-    // 3. 超出终端时等比缩小到可用区域
-    fit_dimensions(natural_cols, natural_rows, max_cols, max_rows)
+    (cols, rows)
 }
 
 /// 编码 Kitty 图形协议载荷（不含光标占位换行）。
@@ -262,15 +300,23 @@ fn encode_kitty_png(path: &Path, cols: Option<usize>, rows: Option<usize>) -> Re
 /// 返回:
 /// - Kitty 图形协议转义序列，末尾带足够换行以占位
 fn render_kitty_image(path: &Path) -> Result<String> {
-    // 1. 读取像素尺寸并换算终端单元格占位
-    let (raw_width, raw_height) = image::image_dimensions(path)
-        .with_context(|| format!("failed to read image dimensions {}", path.display()))?;
-    let pixel_width = usize::try_from(raw_width).unwrap_or(1).max(1);
-    let pixel_height = usize::try_from(raw_height).unwrap_or(1).max(1);
-    let (cols, rows) = kitty_cell_dimensions(pixel_width, pixel_height);
-    // 2. 发送带 c/r 的 Kitty 图片载荷
-    let mut output = encode_kitty_png(path, Some(cols), Some(rows))?;
-    // 3. 预留与图片等高的行，防止后续输出覆盖删除图片
+    // 1. 加载并裁掉透明边距（去掉大画布四周空白，不是把图内容缩小）
+    let image = load_image_rgba(path)?;
+    let image = crop_transparent_bounds(&image);
+    // 2. 仅当超出终端可用区域时才缩小，避免「为了压高度把图压扁」
+    let (max_cols, max_rows, cell_pw, cell_ph) = kitty_block_limits();
+    let image = fit_raster_to_max_cells(image, max_cols, max_rows, cell_pw, cell_ph);
+    let temp = tempfile::Builder::new()
+        .prefix("miyu-kitty-")
+        .suffix(".png")
+        .tempfile()
+        .context("failed to create temporary kitty image")?;
+    write_raster_png(temp.path(), &image)?;
+    // 3. c 定宽；r 按宽高比计算。Kitty 只传 c，高度由终端按比例决定，
+    //    避免同时传偏大的 r 时在图下方 letterbox 出空白
+    let (cols, rows) = kitty_cell_dimensions(image.width, image.height);
+    let mut output = encode_kitty_png(temp.path(), Some(cols), None)?;
+    // 4. 换行数与比例推算的 r 一致（不再多预留）
     for _ in 0..rows {
         output.push('\n');
     }
