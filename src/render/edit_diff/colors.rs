@@ -1,6 +1,4 @@
 use crate::render::code_block::highlight_code_line;
-use crate::render::table::visible_width;
-use crossterm::terminal;
 use std::path::Path;
 
 /// diff 行配色。
@@ -105,7 +103,13 @@ pub(crate) fn style_removed_count(count: usize) -> String {
     format!("\x1b[31m-{count}\x1b[0m")
 }
 
-/// 给 diff 行添加全宽背景和代码高亮。
+/// 给 diff 行添加背景和代码高亮。
+///
+/// 背景铺满策略：
+/// - 不使用「按当前终端宽度填充空格」。缩放后 scrollback reflow 会把
+///   带背景的空格拆成错位色块（见终端改宽后的碎绿条）。
+/// - 在内容后以当前背景执行 `EL`（擦到行尾），由终端把剩余列画成背景，
+///   不把固定宽度写进缓冲区。
 ///
 /// 参数:
 /// - `path`: 文件路径，用于推断语言
@@ -114,18 +118,13 @@ pub(crate) fn style_removed_count(count: usize) -> String {
 /// - `foreground`: ANSI 256 色前景
 ///
 /// 返回:
-/// - 带 ANSI 样式的全宽 diff 行
+/// - 带 ANSI 样式的 diff 行
 fn style_diff_line(path: &Path, line: &str, background: u8, foreground: u8) -> String {
     let highlighted = highlight_code_line(language_from_path(path), line);
     let highlighted = keep_diff_background_after_reset(&highlighted, background, foreground);
-    let width = terminal::size()
-        .map(|(width, _)| usize::from(width))
-        .unwrap_or(100)
-        .max(1);
-    let padding = width.saturating_sub(visible_width(&highlighted));
+    // `\x1b[K` = Erase to end of line，在已设置的背景下铺满本行剩余列
     format!(
-        "\x1b[48;5;{background}m\x1b[38;5;{foreground}m{highlighted}\x1b[48;5;{background}m{}\x1b[0m",
-        " ".repeat(padding)
+        "\x1b[48;5;{background}m\x1b[38;5;{foreground}m{highlighted}\x1b[48;5;{background}m\x1b[K\x1b[0m"
     )
 }
 
@@ -179,5 +178,14 @@ mod tests {
         let output = style_added_line(Path::new("main.rs"), "  1 +  fn main() {}");
 
         assert!(output.contains("\x1b[0m\x1b[48;5;22m\x1b[38;5;108m"));
+    }
+
+    #[test]
+    fn fills_line_with_erase_not_space_padding() {
+        let output = style_added_line(Path::new("hello.txt"), "  1 +  hello");
+        // 用 EL 铺满，避免写入与终端等宽的大量空格
+        assert!(output.contains("\x1b[K"));
+        assert!(!output.contains(&" ".repeat(40)));
+        assert!(output.ends_with("\x1b[0m") || output.contains("\x1b[K\x1b[0m"));
     }
 }
