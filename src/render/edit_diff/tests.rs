@@ -24,6 +24,24 @@ fn renders_patch_update_as_edited() {
 }
 
 #[test]
+fn repl_diff_keeps_terminal_erase_to_line_end() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("sample.txt");
+    std::fs::write(&path, "old\n").unwrap();
+    let args = json!({
+        "patch": format!(
+            "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",
+            path.display()
+        )
+    })
+    .to_string();
+
+    let output = render_for_test(&args).unwrap();
+
+    assert!(output.contains("\x1b[K"));
+}
+
+#[test]
 fn renders_partial_json_patch_when_patch_string_is_closed() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("sample.txt");

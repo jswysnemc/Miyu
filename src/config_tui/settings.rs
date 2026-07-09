@@ -78,6 +78,10 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
             ),
             config.display.wait_show_thinking_level,
         ),
+        Field::new(
+            t("REPL transcript row cap", "REPL 历史重放行数上限"),
+            config.display.repl_transcript_row_cap.to_string(),
+        ),
     ];
     if run_form(
         stdout,
@@ -100,6 +104,7 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         config.display.readable_tool_names = parse_bool_field(&fields[12].value)?;
         config.display.wait_show_model = parse_bool_field(&fields[13].value)?;
         config.display.wait_show_thinking_level = parse_bool_field(&fields[14].value)?;
+        config.display.repl_transcript_row_cap = fields[15].value.trim().parse::<usize>()?.max(1);
     }
     Ok(())
 }

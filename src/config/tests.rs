@@ -106,6 +106,13 @@ fn display_wait_detail_options_can_be_disabled() {
 }
 
 #[test]
+fn display_repl_transcript_row_cap_defaults_to_bounded_value() {
+    let display: DisplayConfig = serde_json::from_str(r#"{"tool_calls":"summary"}"#).unwrap();
+
+    assert_eq!(display.repl_transcript_row_cap, 5_000);
+}
+
+#[test]
 fn progressive_tool_loading_defaults_disabled() {
     let config = AppConfig::default();
     assert!(!config.tools.progressive_loading_enabled);

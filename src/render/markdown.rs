@@ -22,9 +22,30 @@ impl MarkdownStreamRenderer {
     /// 返回:
     /// - 新的流式渲染器
     pub(crate) fn new() -> Self {
+        Self::with_table_replacement(true)
+    }
+
+    /// 创建用于 source 重放的 Markdown 渲染器。
+    ///
+    /// 表格在闭合前保持缓冲，避免生成仅适用于实时终端的光标回退序列。
+    ///
+    /// 返回:
+    /// - 可稳定重放的 Markdown 渲染器
+    pub(crate) fn new_stable() -> Self {
+        Self::with_table_replacement(false)
+    }
+
+    /// 根据表格是否允许替换原始行创建行渲染器。
+    ///
+    /// 参数:
+    /// - `replace_streamed_table_rows`: 是否生成流式表格替换控制序列
+    ///
+    /// 返回:
+    /// - 初始化后的 Markdown 渲染器
+    fn with_table_replacement(replace_streamed_table_rows: bool) -> Self {
         Self {
             buffer: String::new(),
-            line_renderer: MarkdownLineRenderer::new(),
+            line_renderer: MarkdownLineRenderer::new(replace_streamed_table_rows),
         }
     }
 
@@ -79,7 +100,7 @@ impl MarkdownLineRenderer {
     ///
     /// 返回:
     /// - 新的按行渲染器
-    fn new() -> Self {
+    fn new(replace_streamed_table_rows: bool) -> Self {
         Self {
             in_code_block: false,
             in_math_block: false,
@@ -89,7 +110,11 @@ impl MarkdownLineRenderer {
             just_closed_code_block: false,
             pending_blank_lines: 0,
             math_buffer: Vec::new(),
-            table: StreamingTable::new(),
+            table: if replace_streamed_table_rows {
+                StreamingTable::new()
+            } else {
+                StreamingTable::new_stable()
+            },
             asset_block: StreamingAssetBlock::new(),
         }
     }

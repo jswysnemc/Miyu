@@ -41,6 +41,8 @@ pub struct DisplayConfig {
     pub wait_show_model: bool,
     #[serde(default = "default_true")]
     pub wait_show_thinking_level: bool,
+    #[serde(default = "default_repl_transcript_row_cap")]
+    pub repl_transcript_row_cap: usize,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -61,6 +63,8 @@ struct RawDisplayConfig {
     wait_show_model: Option<bool>,
     #[serde(default)]
     wait_show_thinking_level: Option<bool>,
+    #[serde(default)]
+    repl_transcript_row_cap: Option<usize>,
 }
 
 impl<'de> Deserialize<'de> for DisplayConfig {
@@ -89,6 +93,9 @@ impl<'de> Deserialize<'de> for DisplayConfig {
             readable_tool_names: raw.readable_tool_names.unwrap_or_else(default_true),
             wait_show_model: raw.wait_show_model.unwrap_or_else(default_true),
             wait_show_thinking_level: raw.wait_show_thinking_level.unwrap_or_else(default_true),
+            repl_transcript_row_cap: raw
+                .repl_transcript_row_cap
+                .unwrap_or_else(default_repl_transcript_row_cap),
         })
     }
 }

@@ -2,15 +2,18 @@ use super::repl_text::visible_width;
 use super::*;
 use crate::config::AppConfig;
 use crate::state::StateStore;
+use std::process::Command;
 
 /// REPL 底栏与输入框 chrome 状态。
 #[derive(Debug, Clone)]
 pub(super) struct ReplChrome {
     pub(super) mode: AgentMode,
-    pub(super) model: String,
-    pub(super) thinking: String,
     pub(super) context_ratio: f32,
     pub(super) context_window_tokens: usize,
+    pub(super) model: String,
+    pub(super) thinking: String,
+    pub(super) directory: String,
+    pub(super) git_branch: Option<String>,
 }
 
 impl ReplChrome {
@@ -23,26 +26,23 @@ impl ReplChrome {
     ///
     /// 返回:
     /// - chrome 状态
-    pub(super) fn from_runtime(
-        config: &AppConfig,
-        state: &StateStore,
-        mode: AgentMode,
-    ) -> Self {
-        let provider = config.provider(None).ok();
-        let model = provider
-            .map(|item| item.default_model.clone())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "-".to_string());
-        let thinking = provider
-            .map(|item| item.thinking_level.clone())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "auto".to_string());
+    pub(super) fn from_runtime(config: &AppConfig, state: &StateStore, mode: AgentMode) -> Self {
         let context_limit = config.active_context_chars().unwrap_or(128_000);
         let snapshot = state.session_snapshot(context_limit).ok();
+        let provider = config.provider(None).ok();
+        let model = provider
+            .map(|provider| provider.default_model.trim().to_string())
+            .filter(|model| !model.is_empty())
+            .unwrap_or_else(|| "-".to_string());
+        let thinking = provider
+            .map(|provider| provider.thinking_level.trim().to_string())
+            .filter(|level| !level.is_empty())
+            .unwrap_or_else(|| "auto".to_string());
+        let directory = std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "?".to_string());
         Self {
             mode,
-            model,
-            thinking,
             context_ratio: snapshot
                 .as_ref()
                 .map(|item| item.context_token_ratio)
@@ -51,6 +51,10 @@ impl ReplChrome {
                 .as_ref()
                 .map(|item| item.context_window_tokens)
                 .unwrap_or(context_limit),
+            model,
+            thinking,
+            directory: directory.clone(),
+            git_branch: current_git_branch(&directory),
         }
     }
 
@@ -72,14 +76,6 @@ impl ReplChrome {
             "{pct:.1}%/{} (auto)",
             format_token_k(self.context_window_tokens)
         )
-    }
-
-    /// 右侧模型与思考等级文案。
-    ///
-    /// 返回:
-    /// - 如 `gpt-4o · xhigh`
-    pub(super) fn model_status(&self) -> String {
-        format!("{} · {}", self.model, self.thinking)
     }
 
     /// 模式纯文本（用于宽度计算）。
@@ -104,7 +100,7 @@ impl ReplChrome {
         }
     }
 
-    /// 底栏整行：`yolo  0.0%/272k (auto) … model · thinking`。
+    /// 底栏整行：模式、上下文、模型、思考等级、目录和 Git 分支。
     ///
     /// 参数:
     /// - `cols`: 终端列数
@@ -114,24 +110,22 @@ impl ReplChrome {
     pub(super) fn footer_line(&self, cols: usize) -> String {
         let cols = cols.max(1);
         let context = self.context_status();
-        let right = self.model_status();
-        let left_w = visible_width(self.mode_plain()) + 2 + visible_width(&context);
-        let right_w = visible_width(&right);
-        if left_w + right_w + 1 >= cols {
-            return format!(
-                "{}  \x1b[2m{} {}\x1b[0m",
-                self.mode_status(),
-                context,
-                right
-            );
+        let left = format!("{}  {}", self.mode_plain(), context);
+        let mut right = format!("{} · {} · {}", self.model, self.thinking, self.directory);
+        if let Some(branch) = &self.git_branch {
+            right.push_str(" · ");
+            right.push_str(branch);
         }
-        let gap = cols.saturating_sub(left_w + right_w);
+        let right = truncate_to_width(&right, cols.saturating_sub(visible_width(&left) + 3));
+        let gap = cols
+            .saturating_sub(visible_width(&left) + visible_width(&right))
+            .max(1);
         format!(
             "{}  \x1b[2m{}{}{}\x1b[0m",
             self.mode_status(),
             context,
             " ".repeat(gap),
-            right
+            right,
         )
     }
 }
@@ -154,6 +148,54 @@ fn format_token_k(value: usize) -> String {
     } else {
         value.to_string()
     }
+}
+
+/// 读取当前目录的 Git 分支名。
+///
+/// 参数:
+/// - `directory`: 当前工作目录
+///
+/// 返回:
+/// - 位于 Git 仓库时返回分支名
+fn current_git_branch(directory: &str) -> Option<String> {
+    let output = Command::new("git")
+        .args(["-C", directory, "branch", "--show-current"])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    (!branch.is_empty()).then_some(branch)
+}
+
+/// 将 footer 的右侧信息截断到当前终端宽度。
+///
+/// 参数:
+/// - `value`: 原始信息文本
+/// - `width`: 最大显示宽度
+///
+/// 返回:
+/// - 不超过最大宽度的文本
+fn truncate_to_width(value: &str, width: usize) -> String {
+    if visible_width(value) <= width {
+        return value.to_string();
+    }
+    if width <= 3 {
+        return ".".repeat(width);
+    }
+    let mut output = String::new();
+    let mut used = 0usize;
+    for ch in value.chars() {
+        let char_width = visible_width(&ch.to_string());
+        if used.saturating_add(char_width) > width - 3 {
+            break;
+        }
+        output.push(ch);
+        used = used.saturating_add(char_width);
+    }
+    output.push_str("...");
+    output
 }
 
 /// 生成全宽浅色分隔线。
@@ -222,16 +264,18 @@ mod tests {
     fn footer_puts_mode_before_context() {
         let chrome = ReplChrome {
             mode: AgentMode::Yolo,
-            model: "gpt".into(),
-            thinking: "xhigh".into(),
             context_ratio: 0.0,
             context_window_tokens: 272_000,
+            model: "gpt".to_string(),
+            thinking: "xhigh".to_string(),
+            directory: "/workspace".to_string(),
+            git_branch: Some("main".to_string()),
         };
-        let line = chrome.footer_line(48);
+        let line = chrome.footer_line(80);
         let plain = strip_ansi(&line);
         assert!(plain.starts_with("yolo"));
         assert!(plain.contains("0.0%/272k (auto)"));
-        assert!(plain.contains("gpt · xhigh"));
+        assert!(plain.contains("gpt · xhigh · /workspace · main"));
     }
 
     fn strip_ansi(text: &str) -> String {

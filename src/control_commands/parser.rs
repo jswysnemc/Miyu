@@ -10,12 +10,23 @@ pub enum ControlSurface {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub enum ControlCommand {
     Help,
-    New { title: String },
+    New {
+        title: String,
+    },
     /// 恢复/切换会话；`id` 为空时由 REPL/CLI 交互选择
-    Resume { id: Option<String> },
-    Compact { keep_tail_turns: usize },
-    Clear { all: bool },
-    Model { selection: Option<usize> },
+    Resume {
+        id: Option<String>,
+    },
+    Compact {
+        keep_tail_turns: usize,
+    },
+    Clear {
+        all: bool,
+    },
+    ClearMemory,
+    Model {
+        selection: Option<usize>,
+    },
 }
 
 /// 解析 REPL 或网关控制命令。
@@ -58,9 +69,7 @@ pub fn parse_control_command(
         }));
     }
     if matches_surface_alias(&name, surface, "clear", &["清空"]) {
-        return Ok(Some(ControlCommand::Clear {
-            all: parse_clear_args(rest)?,
-        }));
+        return parse_clear_command(rest, surface).map(Some);
     }
     if matches_surface_alias(&name, surface, "model", &["模型"]) {
         return Ok(Some(ControlCommand::Model {
@@ -119,11 +128,19 @@ fn matches_surface_alias(
 ///
 /// 返回:
 /// - 是否清空全部记忆
-fn parse_clear_args(input: &str) -> Result<bool> {
+fn parse_clear_command(input: &str, surface: ControlSurface) -> Result<ControlCommand> {
     let parts = input.split_whitespace().collect::<Vec<_>>();
     match parts.as_slice() {
-        [] => Ok(false),
-        [scope] if scope.eq_ignore_ascii_case("all") || *scope == "全部" => Ok(true),
+        [] => Ok(ControlCommand::Clear { all: false }),
+        [scope] if scope.eq_ignore_ascii_case("all") || *scope == "全部" => {
+            Ok(ControlCommand::Clear { all: true })
+        }
+        [scope]
+            if surface == ControlSurface::Repl
+                && (scope.eq_ignore_ascii_case("memory") || *scope == "记忆") =>
+        {
+            Ok(ControlCommand::ClearMemory)
+        }
         [scope] => bail!("unknown clear scope: {scope}"),
         _ => bail!("too many clear arguments"),
     }
@@ -178,6 +195,14 @@ mod tests {
         assert_eq!(
             parse_control_command("/模型 2", ControlSurface::Gateway).unwrap(),
             Some(ControlCommand::Model { selection: Some(2) })
+        );
+    }
+
+    #[test]
+    fn repl_parses_memory_clear_scope() {
+        assert_eq!(
+            parse_control_command("/clear memory", ControlSurface::Repl).unwrap(),
+            Some(ControlCommand::ClearMemory)
         );
     }
 

@@ -26,6 +26,7 @@ mod streaming_replace;
 mod streaming_table;
 mod style;
 mod table;
+pub(crate) mod transcript;
 pub(crate) mod terminal_image;
 mod tool_call_blocks;
 mod tool_call_preview;

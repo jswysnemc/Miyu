@@ -50,6 +50,11 @@ pub(crate) async fn handle_gateway_command(
             crate::control_commands::compact_conversation_from_paths(paths, keep_tail_turns).await?
         }
         ControlCommand::Clear { all } => crate::control_commands::clear_state(paths, all)?,
+        ControlCommand::ClearMemory => t(
+            "memory clearing is available in the local REPL",
+            "记忆清理仅可在本地 REPL 使用",
+        )
+        .to_string(),
         ControlCommand::Model { selection } => {
             crate::control_commands::run_model_command(paths, selection, ControlSurface::Gateway)?
                 .message

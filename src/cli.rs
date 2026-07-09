@@ -53,6 +53,7 @@ mod repl_input_navigation;
 mod repl_input_render;
 #[cfg(test)]
 mod repl_input_tests;
+mod repl_runtime;
 mod repl_text;
 mod reset;
 mod sessions;
@@ -69,7 +70,7 @@ use init::{remove_shell_hooks, run_init, InitKind};
 use input_flags::parse_message_input_flags;
 use kb_commands::{run_kb, run_update_default_kb};
 pub(crate) use localization::parse;
-use memory_commands::run_memory;
+use memory_commands::{clear_memory, run_memory};
 use message::{join_message, prepare_clipboard_chat_input};
 use providers::{apply_thinking_override, run_providers, run_set, run_set_thinking};
 use render_options::stream_render_options;
@@ -80,7 +81,8 @@ use repl_commands::{complete_repl_command, repl_command_rest, repl_command_sugge
 use repl_editor::edit_input_buffer;
 use repl_input::read_repl_input;
 use repl_input_navigation::{move_cursor_down_by_visual_row, move_cursor_up_by_visual_row};
-use repl_input_render::{clear_repl_input, move_after_repl_input, render_repl_input};
+use repl_input_render::{clear_repl_input, render_repl_input};
+use repl_runtime::{process_stream_tick, ReplRuntime};
 use repl_text::*;
 use reset::run_reset;
 use sessions::run_sessions;
@@ -160,7 +162,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Ps(args)) => run_background_commands(&paths, args).await,
         Some(Command::Gateway(args)) => run_gateway(&paths, args).await,
         Some(Command::Set(args)) => run_set(&paths, args),
-        Some(Command::Clear(args)) => run_reset(&paths, args.scope.as_deref()),
+        Some(Command::Clear(args)) => run_reset(&paths, args.scope.as_deref(), args.memory),
         Some(Command::Compact(args)) => {
             let keep_tail_turns = args
                 .keep_tail_turns

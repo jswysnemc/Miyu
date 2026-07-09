@@ -16,6 +16,22 @@ pub(super) async fn run_repl(
     let mut mode = initial_mode;
     let mut input_history = load_repl_input_history(&state)?;
     let mut prefill = None::<String>;
+    let initial_transcript_options = render::transcript::TranscriptRenderOptions {
+        reasoning_mode: render::ReasoningDisplayMode::from_config(&config.display.reasoning),
+        tool_call_mode: render::ToolCallDisplayMode::from_config(&config.display.tool_calls),
+    };
+    let mut runtime = ReplRuntime::new(
+        config.display.repl_transcript_row_cap,
+        initial_transcript_options,
+    );
+    runtime.record_welcome(
+        env!("CARGO_PKG_VERSION").to_string(),
+        repl_welcome_model(&config),
+        std::env::current_dir()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|_| "~".to_string()),
+        format!("{} mode", mode.label()),
+    )?;
     // 1. 循环外创建 Agent，避免每轮重建 MemoryStore / 工具注册表
     let initial_registry = build_repl_tool_registry(&config, paths, mode)?;
     let mut agent = Agent::new(
@@ -27,21 +43,32 @@ pub(super) async fn run_repl(
         mode,
     )?;
 
-    println!(
-        "\x1b[2m{}\x1b[0m",
+    runtime.record_meta(
         t(
             "Tab mode · Enter send · Shift+Enter newline · Ctrl+V paste",
             "Tab 模式 · Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴",
         )
-    );
+        .to_string(),
+    )?;
     crate::default_kb::check_update_if_due(paths).ok();
     if let Ok(Some(message)) = crate::default_kb::notice_if_update_available(paths) {
-        println!("\x1b[2m{message}\x1b[0m");
+        runtime.record_meta(message)?;
     }
     loop {
         // 每轮刷新底栏上下文/模型信息
         let mut chrome = ReplChrome::from_runtime(&config, &state, mode);
-        let submission = match read_repl_input(mode, prefill.take(), &input_history, &mut chrome)? {
+        let transcript_options = render::transcript::TranscriptRenderOptions {
+            reasoning_mode: render::ReasoningDisplayMode::from_config(&config.display.reasoning),
+            tool_call_mode: render::ToolCallDisplayMode::from_config(&config.display.tool_calls),
+        };
+        runtime.update_options(config.display.repl_transcript_row_cap, transcript_options);
+        let submission = match read_repl_input(
+            mode,
+            prefill.take(),
+            &input_history,
+            &mut chrome,
+            &mut runtime,
+        )? {
             Some(submission) => {
                 mode = submission.mode;
                 submission
@@ -62,17 +89,20 @@ pub(super) async fn run_repl(
         ) {
             Ok(Some(command)) => {
                 match command {
-                    crate::control_commands::ControlCommand::Help => print_repl_help(),
+                    crate::control_commands::ControlCommand::Help => {
+                        runtime.record_meta(crate::control_commands::help_text(
+                            crate::control_commands::ControlSurface::Repl,
+                        ))?;
+                    }
                     crate::control_commands::ControlCommand::New { title } => {
-                        println!(
-                            "{}",
-                            crate::control_commands::create_new_session(paths, &title)?
-                        );
+                        let message = crate::control_commands::create_new_session(paths, &title)?;
                         state = StateStore::new(paths)?;
                         state.init_files()?;
                         agent.replace_state(state.clone())?;
                         input_history = load_repl_input_history(&state)?;
                         prefill = None;
+                        runtime.clear()?;
+                        runtime.record_meta(message)?;
                     }
                     crate::control_commands::ControlCommand::Resume { id } => {
                         let session_id = match id {
@@ -80,21 +110,22 @@ pub(super) async fn run_repl(
                             None => match sessions::select_session_id_interactively(paths) {
                                 Ok(id) => id,
                                 Err(err) => {
-                                    eprintln!("{err}");
+                                    runtime.record_meta(err.to_string())?;
                                     continue;
                                 }
                             },
                         };
                         match crate::control_commands::resume_session(paths, &session_id) {
                             Ok(message) => {
-                                println!("{message}");
                                 state = StateStore::new(paths)?;
                                 state.init_files()?;
                                 agent.replace_state(state.clone())?;
                                 input_history = load_repl_input_history(&state)?;
                                 prefill = None;
+                                runtime.clear()?;
+                                runtime.record_meta(message)?;
                             }
-                            Err(err) => eprintln!("{err}"),
+                            Err(err) => runtime.record_meta(err.to_string())?,
                         }
                     }
                     crate::control_commands::ControlCommand::Compact { keep_tail_turns } => {
@@ -107,11 +138,11 @@ pub(super) async fn run_repl(
                             keep_tail_turns,
                         )
                         .await?;
-                        println!("{message}");
+                        runtime.record_meta(message)?;
                         input_history = load_repl_input_history(&state)?;
                     }
                     crate::control_commands::ControlCommand::Clear { all } => {
-                        println!("{}", crate::control_commands::clear_state(paths, all)?);
+                        let message = crate::control_commands::clear_state(paths, all)?;
                         input_history.clear();
                         // 2. 会话清空后刷新 Agent 状态；all 时重建记忆
                         state = StateStore::new(paths)?;
@@ -120,6 +151,13 @@ pub(super) async fn run_repl(
                         if all {
                             agent.reset_memory()?;
                         }
+                        runtime.clear()?;
+                        runtime.record_meta(message)?;
+                    }
+                    crate::control_commands::ControlCommand::ClearMemory => {
+                        let message = clear_memory(paths, false)?;
+                        agent.reset_memory()?;
+                        runtime.record_meta(message)?;
                     }
                     crate::control_commands::ControlCommand::Model { selection } => {
                         let selection = match selection {
@@ -127,13 +165,15 @@ pub(super) async fn run_repl(
                             None => match model_select::select_model_index_interactively(paths) {
                                 Ok(index) => index,
                                 Err(err) => {
-                                    eprintln!("{err}");
+                                    runtime.record_meta(err.to_string())?;
                                     continue;
                                 }
                             },
                         };
                         let Some(selection) = selection else {
-                            println!("{}", t("model selection cancelled", "已取消模型选择"));
+                            runtime.record_meta(
+                                t("model selection cancelled", "已取消模型选择").to_string(),
+                            )?;
                             continue;
                         };
                         match crate::control_commands::run_model_command(
@@ -142,7 +182,7 @@ pub(super) async fn run_repl(
                             crate::control_commands::ControlSurface::Repl,
                         ) {
                             Ok(result) => {
-                                println!("{}", result.message);
+                                runtime.record_meta(result.message)?;
                                 if result.changed {
                                     reload_repl_agent(
                                         paths,
@@ -152,10 +192,12 @@ pub(super) async fn run_repl(
                                         mode,
                                         thinking_override.as_deref(),
                                     )?;
-                                    println!("{}", t("configuration reloaded", "配置已重新加载"));
+                                    runtime.record_meta(
+                                        t("configuration reloaded", "配置已重新加载").to_string(),
+                                    )?;
                                 }
                             }
-                            Err(err) => eprintln!("{err}"),
+                            Err(err) => runtime.record_meta(err.to_string())?,
                         }
                     }
                 }
@@ -163,22 +205,24 @@ pub(super) async fn run_repl(
             }
             Ok(None) => {}
             Err(err) => {
-                eprintln!("{err}");
+                runtime.record_meta(err.to_string())?;
                 continue;
             }
         }
         if input.eq_ignore_ascii_case("/help") {
-            print_repl_help();
+            runtime.record_meta(crate::control_commands::help_text(
+                crate::control_commands::ControlSurface::Repl,
+            ))?;
             continue;
         }
         if input.eq_ignore_ascii_case("/plan") {
             mode = AgentMode::Plan;
-            println!("{}: {}", t("mode", "模式"), mode.label());
+            runtime.record_meta(format!("{}: {}", t("mode", "模式"), mode.label()))?;
             continue;
         }
         if input.eq_ignore_ascii_case("/yolo") {
             mode = AgentMode::Yolo;
-            println!("{}: {}", t("mode", "模式"), mode.label());
+            runtime.record_meta(format!("{}: {}", t("mode", "模式"), mode.label()))?;
             continue;
         }
         if input.eq_ignore_ascii_case("/providers") {
@@ -191,7 +235,7 @@ pub(super) async fn run_repl(
                 mode,
                 thinking_override.as_deref(),
             )?;
-            println!("{}", t("configuration reloaded", "配置已重新加载"));
+            runtime.record_meta(t("configuration reloaded", "配置已重新加载").to_string())?;
             continue;
         }
         if input.eq_ignore_ascii_case("/config") {
@@ -204,30 +248,35 @@ pub(super) async fn run_repl(
                 mode,
                 thinking_override.as_deref(),
             )?;
-            println!("{}", t("configuration reloaded", "配置已重新加载"));
+            runtime.record_meta(t("configuration reloaded", "配置已重新加载").to_string())?;
             continue;
         }
         if input.eq_ignore_ascii_case("/undo") {
             let (removed, prompt) = state.undo_last_turn()?;
-            println!("{}: {removed}", t("undone messages", "已撤销消息数"));
+            runtime.record_meta(format!(
+                "{}: {removed}",
+                t("undone messages", "已撤销消息数")
+            ))?;
             prefill = prompt;
             continue;
         }
         if input.eq_ignore_ascii_case("/clear") {
-            run_reset(paths, None)?;
+            run_reset(paths, None, false)?;
             input_history.clear();
             state = StateStore::new(paths)?;
             state.init_files()?;
             agent.replace_state(state.clone())?;
+            runtime.clear()?;
             continue;
         }
         if input.eq_ignore_ascii_case("/clear all") {
-            run_reset(paths, Some("all"))?;
+            run_reset(paths, Some("all"), false)?;
             input_history.clear();
             state = StateStore::new(paths)?;
             state.init_files()?;
             agent.replace_state(state.clone())?;
             agent.reset_memory()?;
+            runtime.clear()?;
             continue;
         }
         if let Some(rest) = repl_command_rest(input, "/thinking") {
@@ -236,7 +285,7 @@ pub(super) async fn run_repl(
                 .next()
                 .map(std::string::ToString::to_string);
             if let Err(err) = run_set_thinking(paths, SetThinkingArgs { level }) {
-                eprintln!("{err}");
+                runtime.record_meta(err.to_string())?;
                 continue;
             }
             reload_repl_agent(
@@ -247,7 +296,7 @@ pub(super) async fn run_repl(
                 mode,
                 thinking_override.as_deref(),
             )?;
-            println!("{}", t("configuration reloaded", "配置已重新加载"));
+            runtime.record_meta(t("configuration reloaded", "配置已重新加载").to_string())?;
             continue;
         }
         if input.eq_ignore_ascii_case("/ps") {
@@ -264,15 +313,15 @@ pub(super) async fn run_repl(
         if !input.trim().is_empty() {
             input_history.push(input.to_string());
         }
-        render_repl_submitted_input(mode, input)?;
+        runtime.record_user(mode, input.to_string())?;
         // 3. 模式变化时换工具表；每轮只做轻量 prepare
         if agent.mode() != mode {
             let registry = build_repl_tool_registry(&config, paths, mode)?;
             agent.switch_mode(mode, registry);
         }
         agent.prepare_for_turn()?;
-        let reasoning_mode = render::ReasoningDisplayMode::from_config(&config.display.reasoning);
-        let tool_call_mode = render::ToolCallDisplayMode::from_config(&config.display.tool_calls);
+        let reasoning_mode = transcript_options.reasoning_mode;
+        let tool_call_mode = transcript_options.tool_call_mode;
         let render_options = stream_render_options(&config);
         let runner_submission = repl_runner_submission(
             chat_input,
@@ -281,39 +330,41 @@ pub(super) async fn run_repl(
             tool_call_mode,
             render_options.clone(),
         );
-        let mut renderer =
-            render::StreamRenderer::new(reasoning_mode, tool_call_mode, false, render_options);
-        renderer.start_waiting()?;
         let mut interrupted = false;
-        let mut runner_output = crate::runner::RunnerOutput::default();
         let chat_result = {
             let runner = crate::runner::SessionRunner::new(paths).with_config(config.clone());
+            let runtime = std::cell::RefCell::new(&mut runtime);
             let mut sink = |event: crate::runner::RunnerEvent| {
-                handle_repl_runner_event(&mut renderer, &event)?;
-                runner_output.push_event(event);
-                Ok(())
+                runtime.borrow_mut().record_runner_event(&event)
             };
             let chat = runner.run_submission_with_agent(runner_submission, &mut agent, &mut sink);
             tokio::pin!(chat);
-            tokio::select! {
-                result = &mut chat => result.map(|_| ()),
-                signal = tokio::signal::ctrl_c() => {
-                    signal?;
-                    interrupted = true;
-                    Ok(())
+            let mut resize_tick = tokio::time::interval(Duration::from_millis(25));
+            resize_tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let ctrl_c = tokio::signal::ctrl_c();
+            tokio::pin!(ctrl_c);
+            loop {
+                tokio::select! {
+                    result = &mut chat => break result.map(|_| ()),
+                    signal = &mut ctrl_c => {
+                        signal?;
+                        interrupted = true;
+                        break Ok(());
+                    }
+                    _ = resize_tick.tick() => {
+                        let mut runtime_ref = runtime.borrow_mut();
+                        process_stream_tick(&mut *runtime_ref)?;
+                    }
                 }
             }
         };
-        if interrupted {
-            runner_output.push_event(crate::runner::RunnerEvent::Interrupted);
-        }
-        renderer.finish()?;
+        runtime.finish_stream()?;
         if interrupted {
             prefill = Some(submitted_input);
             continue;
         }
         if let Err(err) = chat_result {
-            render::write_chat_error(&err, false)?;
+            runtime.record_meta(err.to_string())?;
             continue;
         }
     }
@@ -352,47 +403,20 @@ fn repl_runner_submission(
         ))
 }
 
-/// 将 runner 事件投影到 REPL renderer。
+/// 返回欢迎面板中展示的当前模型名称。
 ///
 /// 参数:
-/// - `renderer`: 当前流式 renderer
-/// - `event`: runner 事件
+/// - `config`: 当前应用配置
 ///
 /// 返回:
-/// - 渲染是否成功
-fn handle_repl_runner_event(
-    renderer: &mut render::StreamRenderer,
-    event: &crate::runner::RunnerEvent,
-) -> Result<()> {
-    if let crate::runner::RunnerEvent::Agent(agent_event) = event {
-        handle_agent_event(renderer, agent_event.clone())?;
-    }
-    Ok(())
-}
-
-/// 渲染 REPL 中已提交的输入行。
-///
-/// 参数:
-/// - `mode`: 当前 Agent 模式
-/// - `input`: 用户提交的输入内容
-///
-/// 返回:
-/// - 渲染是否成功
-fn render_repl_submitted_input(mode: AgentMode, input: &str) -> Result<()> {
-    let lines = repl_input_lines(input);
-    // 提交后以极简前缀回显，与新输入框风格一致
-    let prefix = match mode {
-        AgentMode::Yolo => "\x1b[38;5;208m·\x1b[0m ",
-        AgentMode::Plan => "\x1b[36m·\x1b[0m ",
-    };
-    for (index, line) in lines.iter().enumerate() {
-        if index == 0 {
-            println!("{prefix}{line}");
-        } else {
-            println!("  {line}");
-        }
-    }
-    Ok(())
+/// - 当前模型名称，未配置时返回占位符
+fn repl_welcome_model(config: &AppConfig) -> String {
+    config
+        .provider(None)
+        .ok()
+        .map(|provider| provider.default_model.trim().to_string())
+        .filter(|model| !model.is_empty())
+        .unwrap_or_else(|| "-".to_string())
 }
 
 /// 重载配置与客户端，并同步到复用中的 Agent。
@@ -431,13 +455,6 @@ pub(super) fn load_repl_input_history(state: &StateStore) -> Result<Vec<String>>
         .map(|entry| strip_terminal_control_sequences(&entry.content))
         .filter(|content| !content.trim().is_empty())
         .collect())
-}
-
-fn print_repl_help() {
-    println!(
-        "{}",
-        crate::control_commands::help_text(crate::control_commands::ControlSurface::Repl)
-    );
 }
 
 #[cfg(test)]

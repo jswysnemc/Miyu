@@ -6,6 +6,7 @@ use crate::render::table;
 pub(crate) struct StreamingTable {
     lines: Vec<String>,
     raw_visual_rows: usize,
+    replace_streamed_rows: bool,
 }
 
 impl StreamingTable {
@@ -17,6 +18,21 @@ impl StreamingTable {
         Self {
             lines: Vec::new(),
             raw_visual_rows: 0,
+            replace_streamed_rows: true,
+        }
+    }
+
+    /// 创建用于 source 重放的稳定表格渲染状态。
+    ///
+    /// 稳定模式在表格确认前不输出原始行，避免把光标上移替换序列写入可重放 transcript。
+    ///
+    /// 返回:
+    /// - 不产生终端回退控制序列的表格状态
+    pub(crate) fn new_stable() -> Self {
+        Self {
+            lines: Vec::new(),
+            raw_visual_rows: 0,
+            replace_streamed_rows: false,
         }
     }
 
@@ -49,7 +65,11 @@ impl StreamingTable {
     pub(crate) fn push_line(&mut self, line: &str) -> String {
         self.lines.push(line.to_string());
         self.raw_visual_rows += raw_visual_rows(line);
-        format!("{line}\n")
+        if self.replace_streamed_rows {
+            format!("{line}\n")
+        } else {
+            String::new()
+        }
     }
 
     /// 结束当前表格并返回最终替换渲染。
@@ -72,9 +92,13 @@ impl StreamingTable {
     /// 返回:
     /// - 包含清除原始行控制序列和最终表格文本的输出
     fn render_current(&mut self) -> String {
-        // 1. 先清除流式阶段已经输出的原始 Markdown 行
-        let mut output = clear_rendered_rows(self.raw_visual_rows);
-        // 2. 再按完整表格一次性计算列宽并输出最终渲染
+        let mut output = if self.replace_streamed_rows {
+            // 1. 流式模式先清除已写入的原始 Markdown 行
+            clear_rendered_rows(self.raw_visual_rows)
+        } else {
+            String::new()
+        };
+        // 2. source 重放与流式模式都按完整表格一次性计算列宽
         output.push_str(&table::render_table(&self.lines, render_table_cell_content));
         output
     }
@@ -106,5 +130,18 @@ mod tests {
 
         assert!(output.starts_with("\x1b[1A\r\x1b[2K"));
         assert!(output.contains("sudo pacman -S neovim"));
+    }
+
+    #[test]
+    fn stable_table_waits_for_confirmation_without_cursor_replacement() {
+        let mut table = StreamingTable::new_stable();
+
+        assert!(table.push_line("| a | b |").is_empty());
+        assert!(table.push_line("| - | - |").is_empty());
+        assert!(table.push_line("| 1 | 2 |").is_empty());
+        let output = table.finish();
+
+        assert!(output.contains('┌'));
+        assert!(!output.contains("\x1b[1A"));
     }
 }

@@ -29,7 +29,12 @@ pub(super) fn run_sessions(paths: &MiyuPaths, args: SessionsArgs) -> Result<()> 
 /// 返回:
 /// - 是否成功
 pub(super) fn run_resume(paths: &MiyuPaths, args: ResumeArgs) -> Result<()> {
-    let session_id = match args.id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+    let session_id = match args
+        .id
+        .as_deref()
+        .map(str::trim)
+        .filter(|id| !id.is_empty())
+    {
         Some(id) => id.to_string(),
         None => select_session_id_interactively(paths)?,
     };

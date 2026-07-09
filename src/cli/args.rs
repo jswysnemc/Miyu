@@ -80,6 +80,9 @@ pub struct MessageArgs {
 
 #[derive(Debug, Args)]
 pub struct ClearArgs {
+    #[arg(long, conflicts_with = "scope")]
+    pub memory: bool,
+
     pub scope: Option<String>,
 }
 
@@ -230,6 +233,32 @@ pub struct MemoryRememberArgs {
     pub content: Vec<String>,
     #[arg(short, long, default_value = "manual")]
     pub source: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{ClearArgs, Cli, Command};
+    use clap::Parser;
+
+    /// 验证 clear 命令可仅清空助手记忆。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn parses_clear_memory_flag() {
+        let cli = Cli::try_parse_from(["miyu", "clear", "--memory"]).unwrap();
+
+        assert!(matches!(
+            cli.command,
+            Some(Command::Clear(ClearArgs {
+                memory: true,
+                scope: None
+            }))
+        ));
+    }
 }
 
 #[derive(Debug, Args)]

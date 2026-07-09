@@ -13,7 +13,7 @@ pub(super) fn repl_commands() -> &'static [&'static str] {
 ///
 /// 返回:
 /// - 可补全的斜杠菜单
-pub(super) fn repl_command_suggestions(input: &str) -> Vec<&'static str> {
+pub(super) fn repl_command_suggestions(input: &str) -> Vec<ReplCommandSuggestion> {
     if !input.starts_with('/') {
         return Vec::new();
     }
@@ -21,6 +21,10 @@ pub(super) fn repl_command_suggestions(input: &str) -> Vec<&'static str> {
         .iter()
         .copied()
         .filter(|command| command.starts_with(input))
+        .map(|command| ReplCommandSuggestion {
+            command,
+            description: command_description(command),
+        })
         .collect()
 }
 
@@ -34,9 +38,121 @@ pub(super) fn repl_command_suggestions(input: &str) -> Vec<&'static str> {
 pub(super) fn complete_repl_command(input: &str) -> Option<&'static str> {
     let suggestions = repl_command_suggestions(input);
     if suggestions.len() == 1 {
-        suggestions.first().copied()
+        suggestions.first().map(|suggestion| suggestion.command)
     } else {
         None
+    }
+}
+
+/// 返回 slash 命令在当前语言下的说明文本。
+///
+/// 参数:
+/// - `command`: slash 命令文本
+///
+/// 返回:
+/// - 适合 command palette 右侧展示的简短说明
+fn command_description(command: &str) -> &'static str {
+    let zh = is_zh();
+    match command {
+        "/help" => {
+            if zh {
+                "显示可用命令"
+            } else {
+                "show available commands"
+            }
+        }
+        "/new" => {
+            if zh {
+                "创建新会话"
+            } else {
+                "start a new session"
+            }
+        }
+        "/resume" => {
+            if zh {
+                "恢复或切换会话"
+            } else {
+                "resume or switch sessions"
+            }
+        }
+        "/compact" => {
+            if zh {
+                "压缩较早的会话内容"
+            } else {
+                "compact older conversation history"
+            }
+        }
+        "/clear" => {
+            if zh {
+                "清空会话；/clear memory 清空记忆"
+            } else {
+                "clear conversation; /clear memory clears memory"
+            }
+        }
+        "/model" => {
+            if zh {
+                "选择当前模型"
+            } else {
+                "choose the active model"
+            }
+        }
+        "/providers" => {
+            if zh {
+                "切换服务商或模型"
+            } else {
+                "switch provider or model"
+            }
+        }
+        "/config" => {
+            if zh {
+                "打开配置界面"
+            } else {
+                "open configuration"
+            }
+        }
+        "/ps" => {
+            if zh {
+                "管理后台任务"
+            } else {
+                "manage background tasks"
+            }
+        }
+        "/thinking" => {
+            if zh {
+                "设置思考强度"
+            } else {
+                "set reasoning effort"
+            }
+        }
+        "/plan" => {
+            if zh {
+                "切换到只读规划模式"
+            } else {
+                "switch to read-only planning mode"
+            }
+        }
+        "/yolo" => {
+            if zh {
+                "切换到 YOLO 模式"
+            } else {
+                "switch to YOLO mode"
+            }
+        }
+        "/undo" => {
+            if zh {
+                "撤销上一轮并恢复输入"
+            } else {
+                "undo the last turn and restore input"
+            }
+        }
+        "/exit" => {
+            if zh {
+                "退出 REPL"
+            } else {
+                "leave the REPL"
+            }
+        }
+        _ => "",
     }
 }
 
@@ -99,4 +215,21 @@ mod tests {
     fn ps_command_completes_background_manager() {
         assert_eq!(complete_repl_command("/ps"), Some("/ps"));
     }
+
+    #[test]
+    fn suggestions_include_command_descriptions() {
+        let suggestions = repl_command_suggestions("/mo");
+
+        assert_eq!(suggestions.len(), 1);
+        assert_eq!(suggestions[0].command, "/model");
+        assert!(!suggestions[0].description.is_empty());
+    }
+}
+use crate::i18n::is_zh;
+
+/// slash 命令面板中的单条说明。
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct ReplCommandSuggestion {
+    pub(super) command: &'static str,
+    pub(super) description: &'static str,
 }

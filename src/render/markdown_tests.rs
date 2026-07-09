@@ -374,7 +374,10 @@ fn table_cell_renders_images_as_compact_placeholder() {
 fn table_cell_content_renders_mixed_text_math_as_image() {
     let content = render_table_cell_content("公式 $E=mc^2$ 在这里");
     assert!(content.is_image);
-    assert!(content.math_source.as_deref().is_some_and(|s| s.starts_with("mixed:")));
+    assert!(content
+        .math_source
+        .as_deref()
+        .is_some_and(|s| s.starts_with("mixed:")));
     assert!(content.width >= 1);
     assert!(!content.lines.is_empty());
 }
@@ -383,7 +386,10 @@ fn table_cell_content_renders_mixed_text_math_as_image() {
 fn table_cell_content_renders_pure_math_as_image() {
     let content = render_table_cell_content("$E=mc^2$");
     assert!(content.is_image);
-    assert!(content.math_source.as_deref().is_some_and(|s| s.starts_with("pure:")));
+    assert!(content
+        .math_source
+        .as_deref()
+        .is_some_and(|s| s.starts_with("pure:")));
 }
 
 #[test]

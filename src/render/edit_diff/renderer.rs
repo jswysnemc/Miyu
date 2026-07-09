@@ -32,7 +32,7 @@ pub(crate) fn write_edit_file_diff_block(stdout: &mut io::Stdout, arguments: &st
 ///
 /// 返回:
 /// - Codex 风格 diff 文本
-fn render_edit_file_diff(arguments: &str) -> Option<String> {
+pub(crate) fn render_edit_file_diff(arguments: &str) -> Option<String> {
     let preview = preview_from_arguments(arguments).ok()?;
     Some(render_patch_preview(&preview))
 }

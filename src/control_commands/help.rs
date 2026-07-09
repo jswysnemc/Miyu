@@ -23,7 +23,7 @@ pub fn help_text(surface: ControlSurface) -> String {
 /// 返回:
 /// - 帮助行列表
 fn shared_help_lines(surface: ControlSurface) -> Vec<String> {
-    vec![
+    let mut lines = vec![
         t("Session:", "会话:").to_string(),
         format!(
             "  {}  {}",
@@ -74,7 +74,17 @@ fn shared_help_lines(surface: ControlSurface) -> Vec<String> {
             command_label(surface, "/help", "/帮助"),
             t("show this help", "显示此帮助")
         ),
-    ]
+    ];
+    if surface == ControlSurface::Repl {
+        lines.push(format!(
+            "  /clear memory  {}",
+            t(
+                "clear assistant memory without deleting the session",
+                "仅清空助手记忆，保留当前会话"
+            )
+        ));
+    }
+    lines
 }
 
 /// 返回当前入口的命令展示文本。

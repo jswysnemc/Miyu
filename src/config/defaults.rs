@@ -79,6 +79,7 @@ impl Default for DisplayConfig {
             readable_tool_names: default_true(),
             wait_show_model: default_true(),
             wait_show_thinking_level: default_true(),
+            repl_transcript_row_cap: default_repl_transcript_row_cap(),
         }
     }
 }
@@ -478,6 +479,10 @@ pub(super) fn default_reasoning_display() -> String {
 
 pub(super) fn default_tool_call_display() -> String {
     "summary".to_string()
+}
+
+pub(super) fn default_repl_transcript_row_cap() -> usize {
+    5_000
 }
 
 pub(super) fn default_memory_association_facts() -> usize {
