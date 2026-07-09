@@ -24,7 +24,9 @@ pub(crate) struct ProjectionEstimate {
 pub(crate) struct ProjectionStats {
     pub session_id: String,
     pub turn_count: usize,
+    #[allow(dead_code)]
     pub has_compaction_summary: bool,
+    #[allow(dead_code)]
     pub compacted_turns: usize,
     pub checkpoint_count: usize,
     pub checkpoint_covered_turns: usize,
@@ -49,8 +51,10 @@ pub(crate) struct DynamicContextSource {
 /// provider 请求投影视图。
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedRequest {
+    #[allow(dead_code)]
     pub kind: ProjectionKind,
     pub messages: Vec<ChatMessage>,
+    #[allow(dead_code)]
     pub tool_count: usize,
     pub estimate: ProjectionEstimate,
     pub dynamic_sources: Vec<DynamicContextSource>,
@@ -67,6 +71,7 @@ pub(crate) struct ProjectedBaseContext {
 /// 命令摘要投影视图。
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedSessionSummary {
+    #[allow(dead_code)]
     pub kind: ProjectionKind,
     pub estimate: ProjectionEstimate,
     pub stats: ProjectionStats,

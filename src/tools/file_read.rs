@@ -1,5 +1,7 @@
 use super::{ToolRegistry, ToolSpec};
+use crate::config::AppConfig;
 use crate::i18n::text as t;
+use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::io::{BufRead, BufReader, Read};
@@ -11,12 +13,12 @@ const MAX_BATCH_FILES: usize = 10;
 const MAX_READ_LINES: usize = 2_000;
 const MAX_LINE_CHARS: usize = 2_000;
 
-pub fn register(registry: &mut ToolRegistry) {
+pub fn register(registry: &mut ToolRegistry, config: AppConfig, paths: MiyuPaths) {
     registry.register(ToolSpec::new(
         "read_file",
         t(
-            "Read one or more UTF-8 text files by 1-based line offset, or list directory pages. Use path for one target or files for batch reads. Large files are paged and binary files are refused.",
-            "按 1 起始行号读取一个或多个 UTF-8 文本文件，或分页列出目录。单个目标使用 path，批量读取使用 files。大文件会分页，二进制文件会被拒绝。",
+            "Read one or more UTF-8 text files by 1-based line offset, list directory pages, or analyze local images with the vision model. Use path for one target or files for batch reads.",
+            "按 1 起始行号读取一个或多个 UTF-8 文本文件、分页列出目录，或使用视觉模型分析本地图片。单个目标使用 path，批量读取使用 files。",
         ),
         json!({
             "type": "object",
@@ -33,6 +35,10 @@ pub fn register(registry: &mut ToolRegistry) {
                     "type": "integer",
                     "description": t("Maximum lines or directory entries. Defaults to 2000.", "最多读取行数或目录项数量。默认 2000。")
                 },
+                "image_prompt": {
+                    "type": "string",
+                    "description": t("Optional prompt used when path points to a local image.", "当 path 指向本地图片时使用的可选读图提示。")
+                },
                 "files": {
                     "type": "array",
                     "description": t("Batch file or directory pages. Each item supports path, offset, and limit.", "批量文件或目录分页。每一项支持 path、offset、limit。"),
@@ -41,7 +47,8 @@ pub fn register(registry: &mut ToolRegistry) {
                         "properties": {
                             "path": {"type": "string", "description": t("File or directory path.", "文件或目录路径。")},
                             "offset": {"type": "integer", "description": t("Starting line or directory entry, 1-based.", "起始行或目录项，1 起始。")},
-                            "limit": {"type": "integer", "description": t("Maximum lines or directory entries.", "最多读取行数或目录项数量。")}
+                            "limit": {"type": "integer", "description": t("Maximum lines or directory entries.", "最多读取行数或目录项数量。")},
+                            "image_prompt": {"type": "string", "description": t("Optional prompt used when path points to a local image.", "当 path 指向本地图片时使用的可选读图提示。")}
                         },
                         "required": ["path"],
                         "additionalProperties": false
@@ -51,7 +58,11 @@ pub fn register(registry: &mut ToolRegistry) {
             },
             "additionalProperties": false
         }),
-        |args| async move { read_file(args) },
+        move |args| {
+            let config = config.clone();
+            let paths = paths.clone();
+            async move { read_file(args, config, paths).await }
+        },
     ));
 }
 
@@ -59,28 +70,31 @@ pub fn register(registry: &mut ToolRegistry) {
 ///
 /// 参数:
 /// - `args`: 工具参数，支持 path 或 files
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
 ///
 /// 返回:
 /// - JSON 格式读取结果
-fn read_file(args: Value) -> Result<String> {
+async fn read_file(args: Value, config: AppConfig, paths: MiyuPaths) -> Result<String> {
     if let Some(files) = args.get("files") {
-        return read_files(files);
+        return read_files(files, &config, &paths).await;
     }
     let request = ReadRequest::from_value(&args)?;
-    Ok(serde_json::to_string_pretty(&read_page(
-        &request,
-        MAX_READ_BYTES,
-    )?)?)
+    Ok(serde_json::to_string_pretty(
+        &read_page(&request, MAX_READ_BYTES, &config, &paths).await?,
+    )?)
 }
 
 /// 批量读取多个文件或目录分页。
 ///
 /// 参数:
 /// - `files`: 批量读取项
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
 ///
 /// 返回:
 /// - JSON 格式批量读取结果
-fn read_files(files: &Value) -> Result<String> {
+async fn read_files(files: &Value, config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
     let Some(items) = files.as_array() else {
         bail!("files must be an array")
     };
@@ -105,13 +119,19 @@ fn read_files(files: &Value) -> Result<String> {
         let remaining = MAX_BATCH_BYTES
             .saturating_sub(used_bytes)
             .min(MAX_READ_BYTES);
-        let result = match ReadRequest::from_value(item)
-            .and_then(|request| read_page(&request, remaining))
-        {
-            Ok(value) => {
-                used_bytes += value.to_string().len();
-                value
-            }
+        let result = match ReadRequest::from_value(item) {
+            Ok(request) => match read_page(&request, remaining, config, paths).await {
+                Ok(value) => {
+                    used_bytes += value.to_string().len();
+                    value
+                }
+                Err(err) => json!({
+                    "ok": false,
+                    "type": "error",
+                    "path": item.get("path").and_then(Value::as_str).unwrap_or_default(),
+                    "error": err.to_string(),
+                }),
+            },
             Err(err) => json!({
                 "ok": false,
                 "type": "error",
@@ -133,6 +153,7 @@ struct ReadRequest {
     path: PathBuf,
     offset: usize,
     limit: usize,
+    image_prompt: Option<String>,
 }
 
 impl ReadRequest {
@@ -156,6 +177,12 @@ impl ReadRequest {
                 .and_then(Value::as_u64)
                 .unwrap_or(MAX_READ_LINES as u64)
                 .clamp(1, MAX_READ_LINES as u64) as usize,
+            image_prompt: args
+                .get("image_prompt")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(ToString::to_string),
         })
     }
 }
@@ -165,10 +192,17 @@ impl ReadRequest {
 /// 参数:
 /// - `request`: 读取请求
 /// - `byte_budget`: 本次读取最大字节预算
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
 ///
 /// 返回:
 /// - JSON 值形式的分页内容
-fn read_page(request: &ReadRequest, byte_budget: usize) -> Result<Value> {
+async fn read_page(
+    request: &ReadRequest,
+    byte_budget: usize,
+    config: &AppConfig,
+    paths: &MiyuPaths,
+) -> Result<Value> {
     if request.path.is_dir() {
         return read_directory_page(request);
     }
@@ -179,8 +213,57 @@ fn read_page(request: &ReadRequest, byte_budget: usize) -> Result<Value> {
             request.path.display()
         )
     }
+    if is_image_file(&request.path) {
+        return read_image_page(request, config, paths).await;
+    }
     ensure_not_binary_file(&request.path)?;
     read_text_page(request, byte_budget)
+}
+
+/// 使用视觉模型读取图片内容。
+///
+/// 参数:
+/// - `request`: 读取请求
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+///
+/// 返回:
+/// - 图片分析 JSON
+async fn read_image_page(
+    request: &ReadRequest,
+    config: &AppConfig,
+    paths: &MiyuPaths,
+) -> Result<Value> {
+    let prompt = request
+        .image_prompt
+        .as_deref()
+        .unwrap_or("请简洁描述这张图片，并指出重要细节。");
+    let description =
+        super::vision::analyze_local_image_with_prompt(config, paths, &request.path, prompt)
+            .await?;
+    Ok(json!({
+        "type": "image-analysis",
+        "path": request.path.display().to_string(),
+        "prompt": prompt,
+        "content": description,
+    }))
+}
+
+/// 判断路径是否为常见图片文件。
+///
+/// 参数:
+/// - `path`: 文件路径
+///
+/// 返回:
+/// - 是否为图片文件
+fn is_image_file(path: &Path) -> bool {
+    matches!(
+        path.extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase)
+            .as_deref(),
+        Some("png" | "jpg" | "jpeg" | "webp" | "gif" | "bmp")
+    )
 }
 
 /// 读取目录分页。
@@ -341,18 +424,43 @@ fn expand_path(value: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::config::AppConfig;
+    use crate::paths::MiyuPaths;
 
-    #[test]
-    fn read_file_paginates_text() {
+    fn test_paths(root: &Path) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: root.join("config"),
+            config_file: root.join("config/config.jsonc"),
+            secrets_file: root.join("config/secrets.jsonc"),
+            skills_dir: root.join("config/skills"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            state_dir: root.join("state"),
+            pictures_dir: root.join("pictures"),
+            fish_hook_file: root.join("fish/miyu.fish"),
+            bash_hook_file: root.join("shell/bash-hook.sh"),
+            zsh_hook_file: root.join("shell/zsh-hook.zsh"),
+            powershell_hook_file: root.join("shell/powershell-hook.ps1"),
+        }
+    }
+
+    #[tokio::test]
+    async fn read_file_paginates_text() {
         let cwd = std::env::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
+        let paths = test_paths(temp.path());
         let path = temp.path().join("sample.txt");
         std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
-        let result = read_file(json!({
-            "path": path.display().to_string(),
-            "offset": 2,
-            "limit": 1,
-        }))
+        let result = read_file(
+            json!({
+                "path": path.display().to_string(),
+                "offset": 2,
+                "limit": 1,
+            }),
+            AppConfig::default(),
+            paths,
+        )
+        .await
         .unwrap();
         let data: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(data["type"], "text-page");
@@ -361,20 +469,26 @@ mod tests {
         assert_eq!(data["next"], 3);
     }
 
-    #[test]
-    fn read_file_reads_multiple_files() {
+    #[tokio::test]
+    async fn read_file_reads_multiple_files() {
         let cwd = std::env::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
+        let paths = test_paths(temp.path());
         let first = temp.path().join("first.txt");
         let second = temp.path().join("second.txt");
         std::fs::write(&first, "a1\na2\n").unwrap();
         std::fs::write(&second, "b1\nb2\n").unwrap();
-        let result = read_file(json!({
-            "files": [
-                {"path": first.display().to_string(), "offset": 2, "limit": 1},
-                {"path": second.display().to_string(), "limit": 1}
-            ]
-        }))
+        let result = read_file(
+            json!({
+                "files": [
+                    {"path": first.display().to_string(), "offset": 2, "limit": 1},
+                    {"path": second.display().to_string(), "limit": 1}
+                ]
+            }),
+            AppConfig::default(),
+            paths,
+        )
+        .await
         .unwrap();
         let data: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(data["type"], "multi-text-page");
@@ -384,20 +498,26 @@ mod tests {
         assert_eq!(data["results"][1]["next"], 2);
     }
 
-    #[test]
-    fn read_file_batch_keeps_item_errors_local() {
+    #[tokio::test]
+    async fn read_file_batch_keeps_item_errors_local() {
         let cwd = std::env::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
+        let paths = test_paths(temp.path());
         let text = temp.path().join("sample.txt");
         let bin = temp.path().join("sample.bin");
         std::fs::write(&text, "ok\n").unwrap();
         std::fs::write(&bin, [0, 1, 2, 3]).unwrap();
-        let result = read_file(json!({
-            "files": [
-                {"path": text.display().to_string()},
-                {"path": bin.display().to_string()}
-            ]
-        }))
+        let result = read_file(
+            json!({
+                "files": [
+                    {"path": text.display().to_string()},
+                    {"path": bin.display().to_string()}
+                ]
+            }),
+            AppConfig::default(),
+            paths,
+        )
+        .await
         .unwrap();
         let data: Value = serde_json::from_str(&result).unwrap();
         assert_eq!(data["results"][0]["type"], "text-page");
@@ -408,12 +528,19 @@ mod tests {
             .contains("cannot read binary file"));
     }
 
-    #[test]
-    fn read_file_rejects_binary() {
+    #[tokio::test]
+    async fn read_file_rejects_binary() {
         let cwd = std::env::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
+        let paths = test_paths(temp.path());
         let path = temp.path().join("sample.bin");
         std::fs::write(&path, [0, 1, 2, 3]).unwrap();
-        assert!(read_file(json!({"path": path.display().to_string()})).is_err());
+        assert!(read_file(
+            json!({"path": path.display().to_string()}),
+            AppConfig::default(),
+            paths
+        )
+        .await
+        .is_err());
     }
 }

@@ -1,9 +1,13 @@
 use crate::render::asset_block;
 use crate::render::code_block::{highlight_code_line, render_code_footer, render_code_header};
 use crate::render::markdown_blocks;
+pub(crate) use crate::render::markdown_inline::render_inline;
 #[cfg(test)]
 pub(crate) use crate::render::markdown_inline::render_table_cell;
-pub(crate) use crate::render::markdown_inline::{render_inline, render_table_cell_content};
+#[cfg(test)]
+pub(crate) use crate::render::markdown_inline::render_table_cell_content;
+use crate::render::streaming_asset_block::StreamingAssetBlock;
+use crate::render::streaming_table::StreamingTable;
 use crate::render::style::{HEADER_STYLE, RESET, TERTIARY_STYLE};
 use crate::render::table;
 
@@ -66,7 +70,8 @@ struct MarkdownLineRenderer {
     just_closed_code_block: bool,
     pending_blank_lines: usize,
     math_buffer: Vec<String>,
-    table_buffer: Vec<String>,
+    table: StreamingTable,
+    asset_block: StreamingAssetBlock,
 }
 
 impl MarkdownLineRenderer {
@@ -84,7 +89,8 @@ impl MarkdownLineRenderer {
             just_closed_code_block: false,
             pending_blank_lines: 0,
             math_buffer: Vec::new(),
-            table_buffer: Vec::new(),
+            table: StreamingTable::new(),
+            asset_block: StreamingAssetBlock::new(),
         }
     }
 
@@ -107,7 +113,9 @@ impl MarkdownLineRenderer {
                 let lang = std::mem::take(&mut self.code_lang);
                 let lines = std::mem::take(&mut self.code_buffer);
                 if self.code_is_asset {
-                    asset_block::render_asset_block(&lang, &lines)
+                    let raw_close = self.asset_block.push_line(line);
+                    let rendered = asset_block::render_asset_block(&lang, &lines);
+                    raw_close + &self.asset_block.finish(rendered)
                 } else {
                     self.just_closed_code_block = true;
                     render_code_footer(&lines)
@@ -126,7 +134,8 @@ impl MarkdownLineRenderer {
                 self.code_is_asset = asset_block::is_asset_language(&self.code_lang);
                 self.code_buffer.clear();
                 if self.code_is_asset {
-                    pending
+                    self.asset_block.reset();
+                    pending + &self.asset_block.push_line(line)
                 } else {
                     pending + &render_code_header(&self.code_lang)
                 }
@@ -134,32 +143,38 @@ impl MarkdownLineRenderer {
         } else if self.in_code_block {
             self.code_buffer.push(line.to_string());
             if self.code_is_asset {
-                String::new()
+                self.asset_block.push_line(line)
             } else {
                 format!("{}\n", highlight_code_line(&self.code_lang, line))
             }
         } else if line.trim().is_empty() {
+            let output = if self.table.is_active() {
+                self.table.finish()
+            } else {
+                String::new()
+            };
             self.pending_blank_lines += 1;
-            String::new()
+            output
         } else if line.trim() == "$$" {
             if self.in_math_block {
                 self.in_math_block = false;
-                let output = asset_block::render_math_block(&self.math_buffer);
+                let raw_close = self.asset_block.push_line(line);
+                let rendered = asset_block::render_math_block(&self.math_buffer);
                 self.math_buffer.clear();
-                output
+                raw_close + &self.asset_block.finish(rendered)
             } else {
                 let pending = self.flush();
                 self.in_math_block = true;
                 self.math_buffer.clear();
-                pending
+                self.asset_block.reset();
+                pending + &self.asset_block.push_line(line)
             }
         } else if self.in_math_block {
             self.math_buffer.push(line.to_string());
-            String::new()
+            self.asset_block.push_line(line)
         } else if table::looks_like_table_row(line) {
             self.pending_blank_lines = 0;
-            self.table_buffer.push(line.to_string());
-            String::new()
+            self.table.push_line(line)
         } else {
             self.pending_blank_lines = 0;
             let mut output = self.flush();
@@ -179,32 +194,25 @@ impl MarkdownLineRenderer {
             let lang = std::mem::take(&mut self.code_lang);
             let lines = std::mem::take(&mut self.code_buffer);
             if self.code_is_asset {
-                asset_block::render_asset_block(&lang, &lines)
+                let rendered = asset_block::render_asset_block(&lang, &lines);
+                self.asset_block.finish(rendered)
             } else {
                 render_code_footer(&lines)
             }
         } else if self.in_math_block {
             self.in_math_block = false;
-            let output = asset_block::render_math_block(&self.math_buffer);
+            let rendered = asset_block::render_math_block(&self.math_buffer);
             self.math_buffer.clear();
-            output
-        } else if self.table_buffer.is_empty() {
+            self.asset_block.finish(rendered)
+        } else if !self.table.is_active() {
             self.take_pending_blank_lines()
+        } else if self.table.is_confirmed() {
+            let mut output = self.table.finish();
+            output.push_str(&self.take_pending_blank_lines());
+            output
         } else {
-            let mut output = self.take_pending_blank_lines();
-            let lines = std::mem::take(&mut self.table_buffer);
-            if lines.len() >= 2
-                && table::is_table_separator(lines.get(1).map(String::as_str).unwrap_or(""))
-            {
-                output.push_str(&table::render_table(&lines, render_table_cell_content));
-                output
-            } else {
-                for line in lines {
-                    output.push_str(&render_markdown_line(&line));
-                    output.push('\n');
-                }
-                output
-            }
+            self.table.finish();
+            self.take_pending_blank_lines()
         }
     }
 

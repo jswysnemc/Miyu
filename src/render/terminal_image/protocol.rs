@@ -161,9 +161,6 @@ fn supports_kitty_graphics() -> bool {
         || std::env::var("TERM")
             .map(|term| term.contains("xterm-kitty"))
             .unwrap_or(false)
-        || std::env::var("TERM_PROGRAM")
-            .map(|program| program == "WezTerm")
-            .unwrap_or(false)
 }
 
 /// 判断当前终端是否支持 iTerm2 图片协议。
@@ -187,23 +184,60 @@ fn supports_windows_terminal_sixel() -> bool {
             .unwrap_or(false)
 }
 
-/// 使用 Kitty 图形协议渲染图片。
+/// 计算 Kitty 图片在终端中占用的单元格宽高。
+///
+/// 参数:
+/// - `pixel_width`: 图片像素宽度
+/// - `pixel_height`: 图片像素高度
+///
+/// 返回:
+/// - `(列数, 行数)`，已按终端尺寸等比约束
+fn kitty_cell_dimensions(pixel_width: usize, pixel_height: usize) -> (usize, usize) {
+    let (cell_pw, cell_ph) = terminal_cell_pixel_size();
+    let (term_cols, term_rows) = terminal::size()
+        .map(|(cols, rows)| (usize::from(cols), usize::from(rows)))
+        .unwrap_or((80, 24));
+    // 1. 预留提示符与边距，避免图片顶满整屏
+    let max_cols = term_cols.saturating_sub(2).max(1);
+    let max_rows = term_rows.saturating_sub(4).clamp(1, 60);
+    // 2. 按单元格像素尺寸换算自然占位
+    let natural_cols = pixel_width.div_ceil(cell_pw.max(1)).max(1);
+    let natural_rows = pixel_height.div_ceil(cell_ph.max(1)).max(1);
+    if natural_cols <= max_cols && natural_rows <= max_rows {
+        return (natural_cols, natural_rows);
+    }
+    // 3. 超出终端时等比缩小到可用区域
+    fit_dimensions(natural_cols, natural_rows, max_cols, max_rows)
+}
+
+/// 编码 Kitty 图形协议载荷（不含光标占位换行）。
 ///
 /// 参数:
 /// - `path`: 图片文件路径
+/// - `cols`: 可选显示列数
+/// - `rows`: 可选显示行数
 ///
 /// 返回:
 /// - Kitty 图形协议转义序列
-fn render_kitty_image(path: &Path) -> Result<String> {
+fn encode_kitty_png(path: &Path, cols: Option<usize>, rows: Option<usize>) -> Result<String> {
     let bytes =
         fs::read(path).with_context(|| format!("failed to read image {}", path.display()))?;
     let encoded = general_purpose::STANDARD.encode(bytes);
+    // 1. 组装尺寸与静默参数，避免 Kitty 回写响应干扰 REPL
+    let mut control = String::from("f=100,a=T,q=2");
+    if let Some(cols) = cols.filter(|value| *value > 0) {
+        control.push_str(&format!(",c={cols}"));
+    }
+    if let Some(rows) = rows.filter(|value| *value > 0) {
+        control.push_str(&format!(",r={rows}"));
+    }
     let mut output = String::new();
     let mut chunks = encoded.as_bytes().chunks(KITTY_CHUNK_SIZE).peekable();
+    // 2. 首包携带完整控制键，后续分包只传 m 续传标记
     if let Some(first) = chunks.next() {
         let more = if chunks.peek().is_some() { 1 } else { 0 };
         output.push_str(&format!(
-            "\x1b_Gf=100,a=T,m={more};{}\x1b\\",
+            "\x1b_G{control},m={more};{}\x1b\\",
             String::from_utf8_lossy(first)
         ));
     }
@@ -214,7 +248,32 @@ fn render_kitty_image(path: &Path) -> Result<String> {
             String::from_utf8_lossy(chunk)
         ));
     }
-    output.push('\n');
+    Ok(output)
+}
+
+/// 使用 Kitty 图形协议渲染图片。
+///
+/// Kitty 放置图片后不会自动下移光标；若不按显示高度预留空行，
+/// 后续文本写入同一单元格会覆盖并删除图片。
+///
+/// 参数:
+/// - `path`: 图片文件路径
+///
+/// 返回:
+/// - Kitty 图形协议转义序列，末尾带足够换行以占位
+fn render_kitty_image(path: &Path) -> Result<String> {
+    // 1. 读取像素尺寸并换算终端单元格占位
+    let (raw_width, raw_height) = image::image_dimensions(path)
+        .with_context(|| format!("failed to read image dimensions {}", path.display()))?;
+    let pixel_width = usize::try_from(raw_width).unwrap_or(1).max(1);
+    let pixel_height = usize::try_from(raw_height).unwrap_or(1).max(1);
+    let (cols, rows) = kitty_cell_dimensions(pixel_width, pixel_height);
+    // 2. 发送带 c/r 的 Kitty 图片载荷
+    let mut output = encode_kitty_png(path, Some(cols), Some(rows))?;
+    // 3. 预留与图片等高的行，防止后续输出覆盖删除图片
+    for _ in 0..rows {
+        output.push('\n');
+    }
     Ok(output)
 }
 

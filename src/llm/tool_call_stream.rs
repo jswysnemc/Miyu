@@ -9,6 +9,10 @@ const TARGET_KEYS: &[&str] = &[
     "tool_name",
     "include",
     "pattern",
+    "command",
+    "patch",
+    "content",
+    "replacement",
 ];
 
 #[derive(Debug, Default)]
@@ -21,6 +25,7 @@ struct ToolCallProgressEntry {
     emitted: bool,
     last_name: String,
     last_arguments_bytes: usize,
+    target_started: bool,
     target_seen: bool,
 }
 
@@ -48,15 +53,23 @@ impl ToolCallProgressTracker {
         let name_changed = !name.trim().is_empty() && entry.last_name != name;
         let size_changed =
             arguments_bytes.saturating_sub(entry.last_arguments_bytes) >= PROGRESS_BYTE_STEP;
+        let target_started = entry.target_started || has_started_target_field(arguments);
         let target_seen = entry.target_seen || has_complete_target_field(arguments);
+        let target_started_changed = target_started && !entry.target_started;
         let target_changed = target_seen && !entry.target_seen;
         let first_visible = !entry.emitted && (!name.trim().is_empty() || arguments_bytes > 0);
-        if !(first_visible || name_changed || size_changed || target_changed) {
+        if !(first_visible
+            || name_changed
+            || size_changed
+            || target_started_changed
+            || target_changed)
+        {
             return None;
         }
         entry.emitted = true;
         entry.last_name = name.to_string();
         entry.last_arguments_bytes = arguments_bytes;
+        entry.target_started = target_started;
         entry.target_seen = target_seen;
         Some(ToolCallStreamProgress {
             index,
@@ -66,6 +79,19 @@ impl ToolCallProgressTracker {
             arguments_preview: arguments.chars().take(ARGUMENTS_PREVIEW_CHARS).collect(),
         })
     }
+}
+
+/// 判断参数片段是否已经开始包含 target 字段。
+///
+/// 参数:
+/// - `arguments`: 当前累计参数文本
+///
+/// 返回:
+/// - 是否存在已经开始的 target 字符串字段
+fn has_started_target_field(arguments: &str) -> bool {
+    TARGET_KEYS
+        .iter()
+        .any(|key| started_json_string_field(arguments, key))
 }
 
 /// 判断参数片段是否已经包含完整 target 字段。
@@ -79,6 +105,26 @@ fn has_complete_target_field(arguments: &str) -> bool {
     TARGET_KEYS
         .iter()
         .any(|key| complete_json_string_field(arguments, key))
+}
+
+/// 判断 JSON 片段中指定字符串字段是否已经开始。
+///
+/// 参数:
+/// - `raw`: JSON 参数片段
+/// - `key`: 字段名
+///
+/// 返回:
+/// - 字符串字段是否已经进入值内容
+fn started_json_string_field(raw: &str, key: &str) -> bool {
+    let pattern = format!("\"{}\"", key);
+    let Some(key_index) = raw.find(&pattern) else {
+        return false;
+    };
+    let after_key = &raw[key_index + pattern.len()..];
+    let Some(colon_index) = after_key.find(':') else {
+        return false;
+    };
+    after_key[colon_index + 1..].trim_start().starts_with('"')
 }
 
 /// 判断 JSON 片段中指定字符串字段是否已经闭合。
@@ -161,9 +207,10 @@ mod tests {
         let initial = tracker.update(0, "write_file", "").unwrap();
         assert_eq!(initial.name.as_deref(), Some("write_file"));
 
-        assert!(tracker
+        let started = tracker
             .update(0, "write_file", r#"{"path":"src/mai"#)
-            .is_none());
+            .unwrap();
+        assert_eq!(started.arguments_preview, r#"{"path":"src/mai"#);
 
         let target = tracker
             .update(0, "write_file", r#"{"path":"src/main.rs","content":""#)
@@ -172,5 +219,63 @@ mod tests {
             target.arguments_preview,
             r#"{"path":"src/main.rs","content":""#
         );
+    }
+
+    #[test]
+    fn tracker_emits_when_command_field_is_complete() {
+        let mut tracker = ToolCallProgressTracker::default();
+
+        let initial = tracker.update(0, "run_command", "").unwrap();
+        assert_eq!(initial.name.as_deref(), Some("run_command"));
+
+        let started = tracker
+            .update(0, "run_command", r#"{"command":"pwd"#)
+            .unwrap();
+        assert_eq!(started.arguments_preview, r#"{"command":"pwd"#);
+
+        let target = tracker
+            .update(0, "run_command", r#"{"command":"pwd","yield_time_ms":"#)
+            .unwrap();
+        assert_eq!(
+            target.arguments_preview,
+            r#"{"command":"pwd","yield_time_ms":"#
+        );
+    }
+
+    #[test]
+    fn tracker_emits_when_patch_field_is_complete() {
+        let mut tracker = ToolCallProgressTracker::default();
+
+        let initial = tracker.update(0, "edit_file", "").unwrap();
+        assert_eq!(initial.name.as_deref(), Some("edit_file"));
+
+        let started = tracker
+            .update(0, "edit_file", r#"{"patch":"*** Begin Patch"#)
+            .unwrap();
+        assert!(started.arguments_preview.contains("*** Begin Patch"));
+
+        let target = tracker
+            .update(
+                0,
+                "edit_file",
+                r#"{"patch":"*** Begin Patch\n*** End Patch","path":"#,
+            )
+            .unwrap();
+        assert!(target.arguments_preview.contains("*** Begin Patch"));
+    }
+
+    #[test]
+    fn tracker_emits_when_target_field_starts() {
+        let mut tracker = ToolCallProgressTracker::default();
+
+        let initial = tracker.update(0, "run_command", "").unwrap();
+        assert_eq!(initial.name.as_deref(), Some("run_command"));
+
+        assert!(tracker.update(0, "run_command", r#"{"com"#).is_none());
+
+        let target = tracker
+            .update(0, "run_command", r#"{"command":"echo"#)
+            .unwrap();
+        assert_eq!(target.arguments_preview, r#"{"command":"echo"#);
     }
 }

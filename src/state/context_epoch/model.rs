@@ -51,6 +51,7 @@ pub struct ContextSourceInput {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum ContextSourceInputState {
     Available(String),
+    #[allow(dead_code)]
     Blocked(String),
 }
 
@@ -78,6 +79,7 @@ impl ContextSourceInput {
     ///
     /// 返回:
     /// - Context Source 输入
+    #[allow(dead_code)]
     pub fn blocked(key: impl Into<String>, reason: impl Into<String>) -> Self {
         Self {
             key: key.into(),

@@ -13,6 +13,7 @@ use crate::llm::{
 };
 use crate::memory::MemoryStore;
 use crate::paths::MiyuPaths;
+use crate::perf_trace::PerfTrace;
 use crate::state::request_projection::{
     project_provider_base_context_projection, project_provider_turn_from_base_projection,
     project_provider_turn_from_messages, DynamicContextSource, ProjectedBaseContext,
@@ -66,6 +67,13 @@ pub enum AgentEvent {
         name: String,
         message: String,
     },
+    CompactionStarted {
+        turn_count: usize,
+    },
+    CompactionFinished {
+        applied: bool,
+    },
+    FlushContent,
     ExternalOutput,
 }
 
@@ -223,16 +231,21 @@ impl Agent {
         F: FnMut(AgentEvent) -> Result<()>,
     {
         let input = clean_user_visible_text(input);
+        let mut perf = PerfTrace::new("agent");
+        perf.mark("start turn");
         let turn_id = new_turn_id();
         self.state.start_turn(&turn_id, &input)?;
+        perf.mark("state start_turn");
         let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
         let auto_meme_plan =
             memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
                 .await?;
+        perf.mark("auto meme plan");
         let association_prompt = self
             .memory
             .association(&input)?
             .map(|association| self.memory.format_association(&association));
+        perf.mark("memory association");
         let auto_meme_reminder = auto_meme_plan.as_ref().map(|plan| plan.reminder.as_str());
         let mut messages = self.chat_messages_for_turn(
             &turn_id,
@@ -241,10 +254,13 @@ impl Agent {
             association_prompt.as_deref(),
             auto_meme_reminder,
         )?;
+        perf.mark("build initial messages");
+        let mut on_event = on_event;
         if self
-            .compact_conversation_if_needed(&turn_id, &messages)
+            .compact_conversation_if_needed(&turn_id, &messages, &mut on_event)
             .await?
         {
+            perf.mark("compaction completed");
             messages = self.chat_messages_for_turn(
                 &turn_id,
                 &input,
@@ -252,8 +268,8 @@ impl Agent {
                 association_prompt.as_deref(),
                 auto_meme_reminder,
             )?;
+            perf.mark("rebuild messages after compaction");
         }
-        let mut on_event = on_event;
         let mut used_tools = Vec::new();
         let mut persisted_tool_reports = Vec::new();
         let result = match self
@@ -263,6 +279,7 @@ impl Agent {
                 &mut used_tools,
                 &mut persisted_tool_reports,
                 &mut on_event,
+                &mut perf,
             )
             .await
         {
@@ -300,6 +317,7 @@ impl Agent {
                         &mut used_tools,
                         &mut persisted_tool_reports,
                         &mut on_event,
+                        &mut perf,
                     )
                     .await
                 {
@@ -313,6 +331,8 @@ impl Agent {
             }
             Err(err) => return Err(err),
         };
+        on_event(AgentEvent::FlushContent)?;
+        perf.mark("final content flushed");
         if let Some(plan) = auto_meme_plan {
             on_event(AgentEvent::ExternalOutput)?;
             memes::render_auto_meme(&self.config, &self.paths, &plan.event).await?;
@@ -322,12 +342,17 @@ impl Agent {
             self.state
                 .append_tool_report_context(&turn_id, &tool_name, &report)?;
         }
+        perf.mark("persist tool reports");
         guard.complete(&result.content, result.reasoning.as_deref())?;
-        let _ = self.extract_session_memory_with_model().await;
+        perf.mark("complete turn");
+        self.spawn_session_memory_extraction();
+        perf.mark("session memory extraction spawned");
         self.memory.process_after_turn(&input, &result.content)?;
+        perf.mark("memory process after turn");
         if let Some(usage) = &result.usage {
             self.state.add_usage(usage)?;
         }
+        perf.mark("usage saved");
         Ok(result)
     }
 
@@ -338,6 +363,7 @@ impl Agent {
         used_tools: &mut Vec<String>,
         persisted_tool_reports: &mut Vec<(String, String)>,
         on_event: &mut F,
+        perf: &mut PerfTrace,
     ) -> Result<ChatResult>
     where
         F: FnMut(AgentEvent) -> Result<()>,
@@ -367,6 +393,7 @@ impl Agent {
             } else {
                 Vec::new()
             };
+            perf.mark(&format!("round {tool_round} tool definitions"));
             let ordered_messages = system_messages_first(messages.clone());
             let projection = project_provider_turn_from_messages(
                 &ordered_messages,
@@ -375,15 +402,38 @@ impl Agent {
             );
             self.state
                 .enforce_provider_projection(Some(turn_id), &projection)?;
+            perf.mark(&format!("round {tool_round} provider projection"));
+            let mut saw_reasoning = false;
+            let mut saw_content = false;
+            let mut saw_tool_progress = false;
+            perf.mark(&format!("round {tool_round} model request start"));
             let result = self
                 .client
                 .chat_stream_events(ordered_messages, definitions.clone(), |event| match event {
-                    ChatStreamEvent::Chunk(chunk) => on_event(AgentEvent::Chunk(chunk)),
+                    ChatStreamEvent::Chunk(chunk) => {
+                        match chunk.kind {
+                            ChatStreamKind::Reasoning if !saw_reasoning => {
+                                saw_reasoning = true;
+                                perf.mark(&format!("round {tool_round} first reasoning chunk"));
+                            }
+                            ChatStreamKind::Content if !saw_content => {
+                                saw_content = true;
+                                perf.mark(&format!("round {tool_round} first content chunk"));
+                            }
+                            _ => {}
+                        }
+                        on_event(AgentEvent::Chunk(chunk))
+                    }
                     ChatStreamEvent::ToolCallProgress(progress) => {
+                        if !saw_tool_progress {
+                            saw_tool_progress = true;
+                            perf.mark(&format!("round {tool_round} first tool args chunk"));
+                        }
                         on_event(AgentEvent::ToolCallProgress(progress))
                     }
                 })
                 .await?;
+            perf.mark(&format!("round {tool_round} model request done"));
             if result.tool_calls.is_empty() || !self.tools_enabled {
                 return Ok(result);
             }
@@ -395,6 +445,7 @@ impl Agent {
                 tool_event_seq += 1;
                 self.record_tool_call_started(turn_id, tool_event_seq, &call)?;
                 used_tools.push(call.function.name.clone());
+                perf.mark(&format!("tool {} call recorded", call.function.name));
                 on_event(AgentEvent::ToolCall {
                     name: call.function.name.clone(),
                     arguments: call.function.arguments.clone(),
@@ -493,6 +544,7 @@ impl Agent {
                     continue;
                 }
                 let (progress_tx, mut progress_rx) = mpsc::unbounded_channel();
+                perf.mark(&format!("tool {} start", call.function.name));
                 let tool_future = self.tools.call_with_progress(
                     &call.function.name,
                     &call.function.arguments,
@@ -515,6 +567,7 @@ impl Agent {
                                         ok: true,
                                         output: output.clone(),
                                     })?;
+                                    perf.mark(&format!("tool {} result event", call.function.name));
                                     if let Some(report) = extract_persistable_tool_report(
                                         &call.function.name,
                                         &output,
@@ -536,6 +589,7 @@ impl Agent {
                                         ok: false,
                                         output: format!("tool error: {err}"),
                                     })?;
+                                    perf.mark(&format!("tool {} error event", call.function.name));
                                     format!("tool error: {err}")
                                 }
                             };
@@ -556,6 +610,7 @@ impl Agent {
                     &output,
                     &context_output,
                 )?;
+                perf.mark(&format!("tool {} result persisted", call.function.name));
                 messages.push(ChatMessage::tool(call.id, context_output));
             }
         }

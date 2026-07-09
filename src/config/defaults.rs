@@ -319,6 +319,7 @@ impl Default for ToolsConfig {
         Self {
             enabled: default_true(),
             max_rounds: 0,
+            command_shell: String::new(),
             progressive_loading_enabled: false,
             background_commands_enabled: default_true(),
             background_command_timeout_seconds: default_background_command_timeout_seconds(),

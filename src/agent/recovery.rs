@@ -1,7 +1,10 @@
-use super::Agent;
-use crate::llm::ChatMessage;
+use super::{Agent, AgentEvent};
+use crate::llm::{ChatMessage, OpenAiCompatibleClient};
+use crate::perf_trace::PerfTrace;
 use crate::state::request_projection::{project_provider_turn_from_messages, ProjectedRequest};
-use crate::state::{CompactionApplyOutcome, CompactionRequest, FailureKind, RecoveryStatus};
+use crate::state::{
+    CompactionApplyOutcome, CompactionRequest, FailureKind, RecoveryStatus, StateStore,
+};
 use anyhow::Result;
 
 impl Agent {
@@ -17,6 +20,7 @@ impl Agent {
         &self,
         turn_id: &str,
         messages: &[ChatMessage],
+        on_event: &mut impl FnMut(AgentEvent) -> Result<()>,
     ) -> Result<bool> {
         let projection = project_provider_turn_from_messages(messages, 0, self.context_tokens);
         if !self.state.should_attempt_auto_compaction()? {
@@ -30,6 +34,9 @@ impl Agent {
         else {
             return Ok(false);
         };
+        on_event(AgentEvent::CompactionStarted {
+            turn_count: request.turn_count(),
+        })?;
         let summary = match self.create_compaction_summary(&request).await {
             Ok(summary) => summary,
             Err(err) => {
@@ -40,6 +47,7 @@ impl Agent {
                     projection.estimate.message_chars,
                     projection.estimate.context_limit_chars,
                 )?;
+                on_event(AgentEvent::CompactionFinished { applied: false })?;
                 return Ok(false);
             }
         };
@@ -49,12 +57,19 @@ impl Agent {
             &projection,
             Some(turn_id),
         )? {
-            CompactionApplyOutcome::Applied => Ok(true),
+            CompactionApplyOutcome::Applied => {
+                on_event(AgentEvent::CompactionFinished { applied: true })?;
+                Ok(true)
+            }
             CompactionApplyOutcome::RejectedOverBudget if request.is_memory_first() => {
-                self.compact_with_legacy_fallback(turn_id, &projection)
+                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                self.compact_with_legacy_fallback(turn_id, &projection, on_event)
                     .await
             }
-            CompactionApplyOutcome::RejectedOverBudget => Ok(false),
+            CompactionApplyOutcome::RejectedOverBudget => {
+                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                Ok(false)
+            }
         }
     }
 
@@ -70,6 +85,7 @@ impl Agent {
         &self,
         turn_id: &str,
         projection: &ProjectedRequest,
+        on_event: &mut impl FnMut(AgentEvent) -> Result<()>,
     ) -> Result<bool> {
         let Some(request) = self.state.select_legacy_compaction_for_projection(
             projection,
@@ -79,6 +95,9 @@ impl Agent {
         else {
             return Ok(false);
         };
+        on_event(AgentEvent::CompactionStarted {
+            turn_count: request.turn_count(),
+        })?;
         let summary = match self.create_compaction_summary(&request).await {
             Ok(summary) => summary,
             Err(err) => {
@@ -89,6 +108,7 @@ impl Agent {
                     projection.estimate.message_chars,
                     projection.estimate.context_limit_chars,
                 )?;
+                on_event(AgentEvent::CompactionFinished { applied: false })?;
                 return Ok(false);
             }
         };
@@ -98,8 +118,14 @@ impl Agent {
             projection,
             Some(turn_id),
         )? {
-            CompactionApplyOutcome::Applied => Ok(true),
-            CompactionApplyOutcome::RejectedOverBudget => Ok(false),
+            CompactionApplyOutcome::Applied => {
+                on_event(AgentEvent::CompactionFinished { applied: true })?;
+                Ok(true)
+            }
+            CompactionApplyOutcome::RejectedOverBudget => {
+                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                Ok(false)
+            }
         }
     }
 
@@ -215,45 +241,68 @@ impl Agent {
         )
     }
 
-    /// 使用独立模型请求提取 Session Memory。
+    /// 后台启动 Session Memory 模型提取。
     ///
     /// 参数:
     /// - 无
     ///
     /// 返回:
-    /// - 提取是否成功
-    pub(super) async fn extract_session_memory_with_model(&self) -> Result<bool> {
-        let Some(input) = self
-            .state
-            .prepare_session_memory_model_extraction(self.context_tokens)?
-        else {
-            return Ok(false);
-        };
-        let messages = vec![
-            ChatMessage::system(
-                "You are a session memory extraction worker. Update durable conversation memory only. Do not answer the user task.",
-            ),
-            ChatMessage::plain("user", input.prompt.clone()),
-        ];
-        let result = match self
-            .client
-            .chat_stream_events(messages, Vec::new(), |_| Ok(()))
-            .await
-        {
-            Ok(result) => result,
-            Err(err) => {
-                self.state
-                    .record_session_memory_model_extraction_failure(&input, &format!("{err:#}"))?;
-                return Ok(false);
-            }
-        };
-        if let Some(usage) = &result.usage {
-            self.state.add_usage(usage)?;
-        }
-        self.state
-            .apply_session_memory_model_extraction(&input, &result.content)?;
-        Ok(true)
+    /// - 无
+    pub(super) fn spawn_session_memory_extraction(&self) {
+        let state = self.state.clone();
+        let client = self.client.clone();
+        let context_tokens = self.context_tokens;
+        tokio::spawn(async move {
+            let _ = extract_session_memory_with_model(state, client, context_tokens).await;
+        });
     }
+}
+
+/// 使用独立模型请求提取 Session Memory。
+///
+/// 参数:
+/// - `state`: 状态仓储
+/// - `client`: 模型客户端
+/// - `context_tokens`: 当前主模型上下文窗口字符数
+///
+/// 返回:
+/// - 提取是否成功
+async fn extract_session_memory_with_model(
+    state: StateStore,
+    client: OpenAiCompatibleClient,
+    context_tokens: usize,
+) -> Result<bool> {
+    let mut perf = PerfTrace::new("session-memory");
+    perf.mark("start");
+    let Some(input) = state.prepare_session_memory_model_extraction(context_tokens)? else {
+        perf.mark("skip");
+        return Ok(false);
+    };
+    perf.mark("prepared");
+    let messages = vec![
+        ChatMessage::system(
+            "You are a session memory extraction worker. Update durable conversation memory only. Do not answer the user task.",
+        ),
+        ChatMessage::plain("user", input.prompt.clone()),
+    ];
+    let result = match client
+        .chat_stream_events(messages, Vec::new(), |_| Ok(()))
+        .await
+    {
+        Ok(result) => result,
+        Err(err) => {
+            state.record_session_memory_model_extraction_failure(&input, &format!("{err:#}"))?;
+            perf.mark("failed");
+            return Ok(false);
+        }
+    };
+    perf.mark("model done");
+    if let Some(usage) = &result.usage {
+        state.add_auxiliary_usage(usage)?;
+    }
+    state.apply_session_memory_model_extraction(&input, &result.content)?;
+    perf.mark("applied");
+    Ok(true)
 }
 
 /// 识别压缩失败类型。

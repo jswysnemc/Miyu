@@ -12,6 +12,13 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
             t("Tool max rounds", "工具最大轮数"),
             config.tools.max_rounds.to_string(),
         ),
+        Field::new(
+            t(
+                "Command shell, empty uses user shell",
+                "命令执行 Shell，留空使用用户 Shell",
+            ),
+            config.tools.command_shell.clone(),
+        ),
         Field::boolean(
             t("Progressive tool loading", "渐进式工具加载"),
             config.tools.progressive_loading_enabled,
@@ -79,19 +86,20 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
     )? {
         config.tools.enabled = parse_bool_field(&fields[0].value)?;
         config.tools.max_rounds = fields[1].value.trim().parse::<usize>()?;
-        config.tools.progressive_loading_enabled = parse_bool_field(&fields[2].value)?;
-        config.tools.background_commands_enabled = parse_bool_field(&fields[3].value)?;
-        config.tools.background_command_timeout_seconds = fields[4].value.trim().parse::<u64>()?;
-        config.tools.background_command_log_max_bytes = fields[5].value.trim().parse::<u64>()?;
+        config.tools.command_shell = fields[2].value.trim().to_string();
+        config.tools.progressive_loading_enabled = parse_bool_field(&fields[3].value)?;
+        config.tools.background_commands_enabled = parse_bool_field(&fields[4].value)?;
+        config.tools.background_command_timeout_seconds = fields[5].value.trim().parse::<u64>()?;
+        config.tools.background_command_log_max_bytes = fields[6].value.trim().parse::<u64>()?;
         config.tools.background_command_stop_grace_seconds =
-            fields[6].value.trim().parse::<u64>()?;
-        config.skills.enabled = parse_bool_field(&fields[7].value)?;
-        config.skills.allow_command_execution = parse_bool_field(&fields[8].value)?;
-        config.display.reasoning = fields[9].value.trim().to_string();
-        config.display.tool_calls = fields[10].value.trim().to_string();
-        config.display.readable_tool_names = parse_bool_field(&fields[11].value)?;
-        config.display.wait_show_model = parse_bool_field(&fields[12].value)?;
-        config.display.wait_show_thinking_level = parse_bool_field(&fields[13].value)?;
+            fields[7].value.trim().parse::<u64>()?;
+        config.skills.enabled = parse_bool_field(&fields[8].value)?;
+        config.skills.allow_command_execution = parse_bool_field(&fields[9].value)?;
+        config.display.reasoning = fields[10].value.trim().to_string();
+        config.display.tool_calls = fields[11].value.trim().to_string();
+        config.display.readable_tool_names = parse_bool_field(&fields[12].value)?;
+        config.display.wait_show_model = parse_bool_field(&fields[13].value)?;
+        config.display.wait_show_thinking_level = parse_bool_field(&fields[14].value)?;
     }
     Ok(())
 }

@@ -45,9 +45,7 @@ pub fn parse_control_command(
             keep_tail_turns: parse_compaction_args(rest)?,
         }));
     }
-    if matches_surface_alias(&name, surface, "clear", &["清空"])
-        || matches_surface_alias(&name, surface, "reset", &[])
-    {
+    if matches_surface_alias(&name, surface, "clear", &["清空"]) {
         return Ok(Some(ControlCommand::Clear {
             all: parse_clear_args(rest)?,
         }));

@@ -1,4 +1,4 @@
-use crate::render::style::{ASSET_ERROR_STYLE, INLINE_CODE_STYLE, RESET, SECONDARY_STYLE};
+use crate::render::style::{ASSET_ERROR_STYLE, INLINE_CODE_STYLE, RESET};
 use crate::render::table::CellContent;
 use crate::render::terminal_image;
 use anyhow::{bail, Context, Result};
@@ -176,10 +176,10 @@ fn render_asset(kind: AssetKind, source: &str) -> String {
         return render_math_source(source, MathRenderMode::Block);
     }
     if test_stub_enabled() {
-        return render_success(kind.label(), "[asset rendering skipped]\n".to_string());
+        return render_success("[asset rendering skipped]\n".to_string());
     }
     match render_asset_inner(kind, source) {
-        Ok(rendered) => render_success(kind.label(), rendered),
+        Ok(rendered) => render_success(rendered),
         Err(error) => render_error(kind.label(), &error.to_string()),
     }
 }
@@ -202,13 +202,13 @@ fn render_math_source(source: &str, mode: MathRenderMode) -> String {
             MathRenderMode::Inline => "[inline math rendering skipped]\n".to_string(),
         };
         return match mode {
-            MathRenderMode::Block => render_success("math", placeholder),
+            MathRenderMode::Block => render_success(placeholder),
             MathRenderMode::Inline => placeholder,
         };
     }
     match render_math_inner(source, mode) {
         Ok(rendered) => match mode {
-            MathRenderMode::Block => render_success("math", rendered),
+            MathRenderMode::Block => render_success(rendered),
             MathRenderMode::Inline => rendered,
         },
         Err(error) => render_error("math", &error.to_string()),
@@ -590,16 +590,15 @@ fn ensure_file_exists(path: &Path) -> Result<()> {
     }
 }
 
-/// 渲染成功标签和图片文本。
+/// 渲染成功图片文本。
 ///
 /// 参数:
-/// - `label`: 资产类型标签
 /// - `rendered`: 图片渲染文本
 ///
 /// 返回:
-/// - 带标签的图片文本
-fn render_success(label: &str, rendered: String) -> String {
-    format!("{SECONDARY_STYLE}[{label}]{RESET}\n{rendered}")
+/// - 图片文本
+fn render_success(rendered: String) -> String {
+    rendered
 }
 
 /// 渲染资产错误提示。

@@ -228,6 +228,8 @@ pub struct ToolsConfig {
     pub enabled: bool,
     #[serde(default)]
     pub max_rounds: usize,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub command_shell: String,
     #[serde(default)]
     pub progressive_loading_enabled: bool,
     #[serde(default = "default_true")]

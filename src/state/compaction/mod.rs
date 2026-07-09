@@ -9,9 +9,7 @@ mod storage;
 mod store;
 
 pub use budget::should_compact_for_context_chars;
-pub use estimate::{
-    estimate_chat_messages_chars, estimate_state_context_chars, estimate_turn_context_chars,
-};
+pub use estimate::{estimate_chat_messages_chars, estimate_turn_context_chars};
 pub use manual::select_manual_compaction;
 pub use model::{CompactionRequest, CompactionSummary};
 pub use prompt::summary_context_message;

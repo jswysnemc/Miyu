@@ -33,7 +33,7 @@ pub(crate) fn register(
     paths: &MiyuPaths,
     allow_command_execution: bool,
 ) {
-    run::register(registry, allow_command_execution);
+    run::register(registry, config, allow_command_execution);
     if config.tools.background_commands_enabled {
         background::register(
             registry,
@@ -79,7 +79,7 @@ pub(crate) fn register_readonly(
     config: &AppConfig,
     paths: &MiyuPaths,
 ) {
-    run::register_readonly(registry);
+    run::register_readonly(registry, config);
     if config.tools.background_commands_enabled {
         background::register_readonly(registry, config.clone(), paths.clone());
     }

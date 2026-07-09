@@ -1,4 +1,5 @@
 use super::process::run_shell_command;
+use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::tools::{ToolRegistry, ToolSpec};
 use anyhow::{bail, Result};
@@ -10,13 +11,22 @@ const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 ///
 /// 参数:
 /// - `registry`: 工具注册表
+/// - `config`: 应用配置
 /// - `allow_command_execution`: 是否允许执行命令
-pub(crate) fn register(registry: &mut ToolRegistry, allow_command_execution: bool) {
+pub(crate) fn register(
+    registry: &mut ToolRegistry,
+    config: &AppConfig,
+    allow_command_execution: bool,
+) {
+    let shell = config.tools.command_shell.clone();
     registry.register(ToolSpec::new(
         "run_command",
-        t("Run a shell command in the workspace when skills.allow_command_execution is enabled. Do not use this to create or modify files; use write_file or edit_file instead.", "当 skills.allow_command_execution 启用时，在工作区运行 shell 命令。不要用它创建或修改文件，应使用 write_file 或 edit_file。"),
+        t("Run a shell command in the workspace when skills.allow_command_execution is enabled. Do not use this to create or modify files; use edit_file instead.", "当 skills.allow_command_execution 启用时，在工作区运行 shell 命令。不要用它创建或修改文件，应使用 edit_file。"),
         json!({"type":"object","properties":{"command":{"type":"string","description": t("Command to run.", "要运行的命令。")},"timeout_seconds":{"type":"integer","description": t("Optional timeout in seconds.", "可选超时时间，单位秒。")}},"required":["command"],"additionalProperties":false}),
-        move |args| async move { run_command(args, allow_command_execution).await },
+        move |args| {
+            let shell = shell.clone();
+            async move { run_command(args, allow_command_execution, shell).await }
+        },
     ).writes());
 }
 
@@ -24,12 +34,17 @@ pub(crate) fn register(registry: &mut ToolRegistry, allow_command_execution: boo
 ///
 /// 参数:
 /// - `registry`: 工具注册表
-pub(crate) fn register_readonly(registry: &mut ToolRegistry) {
+/// - `config`: 应用配置
+pub(crate) fn register_readonly(registry: &mut ToolRegistry, config: &AppConfig) {
+    let shell = config.tools.command_shell.clone();
     registry.register(ToolSpec::new(
         "run_command",
         t("Run an explicitly read-only shell command for inspection. Mutating commands are blocked in plan mode.", "运行明确只读的 shell 命令用于检查。计划模式会阻止修改性命令。"),
         json!({"type":"object","properties":{"command":{"type":"string","description": t("Read-only command to run.", "要运行的只读命令。")},"timeout_seconds":{"type":"integer","description": t("Optional timeout in seconds.", "可选超时时间，单位秒。")}},"required":["command"],"additionalProperties":false}),
-        |args| async move { run_readonly_command(args).await },
+        move |args| {
+            let shell = shell.clone();
+            async move { run_readonly_command(args, shell).await }
+        },
     ));
 }
 
@@ -38,17 +53,18 @@ pub(crate) fn register_readonly(registry: &mut ToolRegistry) {
 /// 参数:
 /// - `args`: 工具参数
 /// - `allowed`: 是否允许命令执行
+/// - `shell`: 配置指定的 shell，空值表示使用用户环境
 ///
 /// 返回:
 /// - JSON 格式命令结果
-async fn run_command(args: Value, allowed: bool) -> Result<String> {
+async fn run_command(args: Value, allowed: bool, shell: String) -> Result<String> {
     if !allowed {
         bail!("{}", t("command execution is disabled; set skills.allow_command_execution=true in config.jsonc to enable run_command", "命令执行已禁用；请在 config.jsonc 中设置 skills.allow_command_execution=true 以启用 run_command"));
     }
     let command = required(&args, "command")?;
     ensure_not_file_write_command(&command)?;
     let timeout = command_timeout(&args);
-    let output = run_shell_command(&command, timeout).await?;
+    let output = run_shell_command(&command, timeout, shell.as_str()).await?;
     command_output(output)
 }
 
@@ -56,14 +72,15 @@ async fn run_command(args: Value, allowed: bool) -> Result<String> {
 ///
 /// 参数:
 /// - `args`: 工具参数
+/// - `shell`: 配置指定的 shell，空值表示使用用户环境
 ///
 /// 返回:
 /// - JSON 格式命令结果
-async fn run_readonly_command(args: Value) -> Result<String> {
+async fn run_readonly_command(args: Value, shell: String) -> Result<String> {
     let command = required(&args, "command")?;
     ensure_readonly_command(&command)?;
     let timeout = command_timeout(&args);
-    let output = run_shell_command(&command, timeout).await?;
+    let output = run_shell_command(&command, timeout, shell.as_str()).await?;
     command_output(output)
 }
 
@@ -190,8 +207,8 @@ fn ensure_not_file_write_command(command: &str) -> Result<()> {
         bail!(
             "{}",
             t(
-                "Use write_file for new/full-file content or edit_file for line edits instead of shell file writes",
-                "请使用 write_file 新建或整文件写入，或使用 edit_file 做行级修改，不要用 shell 写文件"
+                "Use edit_file for file writes instead of shell file writes",
+                "请使用 edit_file 写文件，不要用 shell 写文件"
             )
         );
     }
@@ -434,7 +451,7 @@ mod tests {
         #[cfg(not(windows))]
         let command = "printf hello";
 
-        let result = run_readonly_command(json!({"command": command}))
+        let result = run_readonly_command(json!({"command": command}), String::new())
             .await
             .unwrap();
         let data: Value = serde_json::from_str(&result).unwrap();

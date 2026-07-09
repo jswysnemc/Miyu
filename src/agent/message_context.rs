@@ -11,6 +11,7 @@ use std::io::IsTerminal;
 ///
 /// 返回:
 /// - 稳定系统提示
+#[allow(dead_code)]
 pub(super) fn with_mode_reminder(system_prompt: String, mode: AgentMode) -> String {
     format!("{system_prompt}\n\n{}", mode.reminder())
 }

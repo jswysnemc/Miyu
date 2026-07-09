@@ -117,7 +117,8 @@ pub(super) fn start_background_task(
     let stderr_log = store.logs_dir().join(format!("{now}-{id_prefix}.err.log"));
     let stdout = std::fs::File::create(&stdout_log)?;
     let stderr = std::fs::File::create(&stderr_log)?;
-    let process = spawn_background_shell(&command, &cwd, stdout, stderr)?;
+    let process =
+        spawn_background_shell(&command, &cwd, &config.tools.command_shell, stdout, stderr)?;
     let task_id = format!("{now}-{}", process.pid);
     let runtime_process_id = background_runtime_process_id(&task_id);
     let task = BackgroundCommandTask {

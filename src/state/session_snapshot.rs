@@ -28,6 +28,9 @@ pub struct SessionSnapshot {
     pub context_chars: usize,
     pub context_limit_chars: usize,
     pub context_ratio: f32,
+    pub context_prompt_tokens: usize,
+    pub context_window_tokens: usize,
+    pub context_token_ratio: f32,
     pub usage: UsageSnapshot,
     pub compaction: Option<CompactionSummary>,
     pub recovery: RecoverySnapshot,
@@ -58,6 +61,12 @@ impl StateStore {
             std::process::id(),
         )?;
         let context_chars = projection.estimate.state_context_chars;
+        let usage = projection.stats.usage;
+        let context_prompt_tokens = usage
+            .last_conversation_usage
+            .as_ref()
+            .map(|usage| usage.prompt_tokens as usize)
+            .unwrap_or_default();
         let projection_warnings = projection
             .warnings
             .iter()
@@ -78,7 +87,10 @@ impl StateStore {
             context_chars,
             context_limit_chars,
             context_ratio: context_ratio(context_chars, context_limit_chars),
-            usage: projection.stats.usage,
+            context_prompt_tokens,
+            context_window_tokens: context_limit_chars,
+            context_token_ratio: context_ratio(context_prompt_tokens, context_limit_chars),
+            usage,
             compaction: projection.compaction,
             recovery: projection.recovery,
             context_epoch: self.context_epoch_summary()?,

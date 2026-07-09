@@ -1,8 +1,9 @@
-use super::estimate::{project_provider_turn_estimate, project_state_summary_estimate};
+use super::estimate::project_provider_turn_estimate;
 use super::model::{
     DynamicContextSource, ProjectedBaseContext, ProjectedRequest, ProjectedSessionSummary,
     ProjectionKind, ProjectionStats, ProjectionWarning,
 };
+use super::session_summary_projection::build_session_summary_projection_parts;
 use super::validator::validate_provider_projection;
 use crate::llm::ChatMessage;
 use crate::state::{StateStore, StoredConversationEntry};
@@ -48,6 +49,7 @@ pub(crate) fn project_provider_turn_from_messages(
 ///
 /// 返回:
 /// - provider base 消息列表
+#[allow(dead_code)]
 pub(crate) fn project_provider_base_context(
     system_prompt: &str,
     mode_reminder: Option<&str>,
@@ -141,6 +143,7 @@ pub(crate) fn project_provider_base_context_projection(
 ///
 /// 返回:
 /// - provider turn 投影视图
+#[allow(dead_code)]
 pub(crate) fn project_provider_turn_from_parts(
     base_messages: Vec<ChatMessage>,
     input: &str,
@@ -232,6 +235,7 @@ fn dynamic_source(key: &str, text: &str) -> DynamicContextSource {
 ///
 /// 返回:
 /// - provider 历史消息列表
+#[allow(dead_code)]
 fn entries_to_history_messages(entries: Vec<StoredConversationEntry>) -> Vec<ChatMessage> {
     entries
         .into_iter()
@@ -252,40 +256,14 @@ impl StateStore {
         &self,
         context_limit_chars: usize,
     ) -> Result<ProjectedSessionSummary> {
-        let projected_history = self.project_history(None)?;
-        let turns = self.conv_db.load_turns()?;
-        let compaction = self.load_compaction_summary()?;
-        let usage = self.usage_snapshot()?;
-        let recovery = self.recovery_snapshot()?;
-        let checkpoint_context = projected_history.checkpoint_context.as_deref();
-        let summary_context =
-            checkpoint_context.or(compaction.as_ref().map(|summary| summary.summary.as_str()));
-        let estimate = project_state_summary_estimate(&turns, summary_context, context_limit_chars);
-        let compacted_turns = projected_history.stats.covered_turns.max(
-            compaction
-                .as_ref()
-                .map(|summary| summary.compacted_turns)
-                .unwrap_or_default(),
-        );
-        let stats = ProjectionStats {
-            session_id: self.session_id.clone(),
-            turn_count: projected_history.stats.covered_turns + projected_history.stats.tail_turns,
-            has_compaction_summary: compaction.is_some()
-                || projected_history.checkpoint_context.is_some(),
-            compacted_turns,
-            checkpoint_count: projected_history.stats.checkpoint_count,
-            checkpoint_covered_turns: projected_history.stats.covered_turns,
-            tail_turns: projected_history.stats.tail_turns,
-            latest_checkpoint_at: projected_history.stats.latest_checkpoint_at,
-            usage,
-        };
-        let warnings = validate_session_summary_projection(&estimate, &stats);
+        let parts = build_session_summary_projection_parts(self, context_limit_chars)?;
+        let warnings = validate_session_summary_projection(&parts.estimate, &parts.stats);
         Ok(ProjectedSessionSummary {
             kind: ProjectionKind::SessionSummary,
-            estimate,
-            stats,
-            compaction,
-            recovery,
+            estimate: parts.estimate,
+            stats: parts.stats,
+            compaction: parts.compaction,
+            recovery: parts.recovery,
             warnings,
         })
     }

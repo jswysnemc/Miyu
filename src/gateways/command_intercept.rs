@@ -15,7 +15,7 @@ pub(crate) async fn handle_gateway_command(
     paths: &MiyuPaths,
     prompt: &str,
 ) -> Result<Option<String>> {
-    if is_gateway_reset_all_command(prompt) {
+    if is_gateway_clear_all_command(prompt) {
         let message = crate::control_commands::clear_state(paths, true)?;
         return Ok(Some(format!(
             "{message}；{}",
@@ -41,14 +41,14 @@ pub(crate) async fn handle_gateway_command(
     }))
 }
 
-/// 判断入站消息是否是 gateway 安全重置命令。
+/// 判断入站消息是否是 gateway 安全清空命令。
 ///
 /// 参数:
 /// - `prompt`: 入站消息文本
 ///
 /// 返回:
-/// - 是否是 `miyu reset all`
-fn is_gateway_reset_all_command(prompt: &str) -> bool {
+/// - 是否是 `miyu clear all`
+fn is_gateway_clear_all_command(prompt: &str) -> bool {
     let words = prompt.split_whitespace().collect::<Vec<_>>();
     if words.len() != 3 {
         return false;
@@ -56,7 +56,7 @@ fn is_gateway_reset_all_command(prompt: &str) -> bool {
     let executable = words[0].trim_matches(['`', '"', '\'']);
     let command = words[1].trim_matches(['`', '"', '\'']);
     let scope = words[2].trim_matches(['`', '"', '\'']);
-    executable.ends_with("miyu") && command == "reset" && scope == "all"
+    executable.ends_with("miyu") && command == "clear" && scope == "all"
 }
 
 #[cfg(test)]
@@ -85,16 +85,17 @@ mod tests {
     }
 
     #[test]
-    fn detects_reset_all_command() {
-        assert!(is_gateway_reset_all_command("miyu reset all"));
-        assert!(is_gateway_reset_all_command("`miyu` `reset` `all`"));
-        assert!(is_gateway_reset_all_command("/usr/bin/miyu reset all"));
-        assert!(!is_gateway_reset_all_command("miyu reset"));
-        assert!(!is_gateway_reset_all_command("please miyu reset all"));
+    fn detects_clear_all_command() {
+        assert!(is_gateway_clear_all_command("miyu clear all"));
+        assert!(is_gateway_clear_all_command("`miyu` `clear` `all`"));
+        assert!(is_gateway_clear_all_command("/usr/bin/miyu clear all"));
+        assert!(!is_gateway_clear_all_command("miyu reset all"));
+        assert!(!is_gateway_clear_all_command("miyu clear"));
+        assert!(!is_gateway_clear_all_command("please miyu clear all"));
     }
 
     #[tokio::test]
-    async fn gateway_reset_all_clears_state_without_agent_turn() {
+    async fn gateway_clear_all_clears_state_without_agent_turn() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path().to_path_buf());
         AppConfig::init_files(&paths).unwrap();
@@ -102,7 +103,7 @@ mod tests {
         state.start_turn("turn_1", "hello").unwrap();
         state.complete_turn("turn_1", "hi", None).unwrap();
 
-        let reply = handle_gateway_command(&paths, "miyu reset all")
+        let reply = handle_gateway_command(&paths, "miyu clear all")
             .await
             .unwrap();
 

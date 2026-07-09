@@ -10,13 +10,18 @@ use tokio::process::Command;
 /// 参数:
 /// - `command`: shell 命令文本
 /// - `timeout_seconds`: 超时时间，单位秒
+/// - `configured_shell`: 配置指定的 shell，空值表示使用用户环境
 ///
 /// 返回:
 /// - 命令输出
-pub(crate) async fn run_shell_command(command: &str, timeout_seconds: u64) -> Result<Output> {
+pub(crate) async fn run_shell_command(
+    command: &str,
+    timeout_seconds: u64,
+    configured_shell: &str,
+) -> Result<Output> {
     let duration = Duration::from_secs(timeout_seconds.max(1));
     let mut missing = Vec::new();
-    for (program, mut shell) in shell_commands(command) {
+    for (program, mut shell) in shell_commands(command, configured_shell) {
         match run_command_with_timeout(&mut shell, duration).await {
             Ok(output) => return Ok(output),
             Err(CommandRunError::NotFound) => missing.push(program),
@@ -34,6 +39,7 @@ pub(crate) async fn run_shell_command(command: &str, timeout_seconds: u64) -> Re
 /// 参数:
 /// - `command`: shell 命令文本
 /// - `cwd`: 工作目录
+/// - `configured_shell`: 配置指定的 shell，空值表示使用用户环境
 /// - `stdout`: stdout 重定向
 /// - `stderr`: stderr 重定向
 ///
@@ -42,10 +48,11 @@ pub(crate) async fn run_shell_command(command: &str, timeout_seconds: u64) -> Re
 pub(crate) fn spawn_background_shell(
     command: &str,
     cwd: &std::path::Path,
+    configured_shell: &str,
     stdout: std::fs::File,
     stderr: std::fs::File,
 ) -> Result<BackgroundProcess> {
-    let mut shell = shell_command(command);
+    let mut shell = shell_command(command, configured_shell);
     configure_process_group(&mut shell);
     let child = shell
         .current_dir(cwd)
@@ -152,7 +159,10 @@ where
 }
 
 #[cfg(windows)]
-fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
+fn shell_commands(command: &str, configured_shell: &str) -> Vec<(String, Command)> {
+    if let Some(shell) = configured_shell_path(configured_shell) {
+        return vec![shell_command_entry(command, &shell)];
+    }
     let mut pwsh = Command::new("pwsh");
     pwsh.arg("-NoLogo")
         .arg("-NoProfile")
@@ -171,26 +181,107 @@ fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
     let mut cmd = Command::new("cmd");
     cmd.arg("/S").arg("/C").arg(command);
 
-    vec![("pwsh", pwsh), ("powershell", powershell), ("cmd", cmd)]
+    vec![
+        ("pwsh".to_string(), inherit_env(pwsh)),
+        ("powershell".to_string(), inherit_env(powershell)),
+        ("cmd".to_string(), inherit_env(cmd)),
+    ]
 }
 
 #[cfg(not(windows))]
-fn shell_commands(command: &str) -> Vec<(&'static str, Command)> {
-    vec![("sh", shell_command(command))]
+fn shell_commands(command: &str, configured_shell: &str) -> Vec<(String, Command)> {
+    vec![shell_command_entry(
+        command,
+        &configured_shell_path(configured_shell)
+            .or_else(|| std::env::var("SHELL").ok())
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| "sh".to_string()),
+    )]
 }
 
 #[cfg(windows)]
-fn shell_command(command: &str) -> Command {
-    let mut shell = Command::new("cmd");
-    shell.arg("/S").arg("/C").arg(command);
-    shell
+fn shell_command(command: &str, configured_shell: &str) -> Command {
+    let shell = configured_shell_path(configured_shell).unwrap_or_else(|| "cmd".to_string());
+    shell_command_entry(command, &shell).1
 }
 
 #[cfg(not(windows))]
-fn shell_command(command: &str) -> Command {
-    let mut shell = Command::new("sh");
-    shell.arg("-lc").arg(command);
-    shell
+fn shell_command(command: &str, configured_shell: &str) -> Command {
+    let shell = configured_shell_path(configured_shell)
+        .or_else(|| std::env::var("SHELL").ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "sh".to_string());
+    shell_command_entry(command, &shell).1
+}
+
+/// 解析显式配置的 shell。
+///
+/// 参数:
+/// - `configured_shell`: TUI 或配置文件中的 shell 路径
+///
+/// 返回:
+/// - 非空 shell 路径
+fn configured_shell_path(configured_shell: &str) -> Option<String> {
+    let value = configured_shell.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+/// 构造 shell 命令入口。
+///
+/// 参数:
+/// - `command`: shell 命令文本
+/// - `shell`: shell 程序路径或名称
+///
+/// 返回:
+/// - 展示名和已配置命令
+fn shell_command_entry(command: &str, shell: &str) -> (String, Command) {
+    let program = shell_display_name(shell);
+    let mut shell_command = Command::new(shell);
+    #[cfg(windows)]
+    {
+        let lower = program.to_ascii_lowercase();
+        if lower == "cmd" || lower == "cmd.exe" {
+            shell_command.arg("/S").arg("/C").arg(command);
+        } else {
+            shell_command
+                .arg("-NoLogo")
+                .arg("-NoProfile")
+                .arg("-NonInteractive")
+                .arg("-Command")
+                .arg(command);
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        shell_command.arg("-lc").arg(command);
+    }
+    (program, inherit_env(shell_command))
+}
+
+/// 返回用于错误提示的 shell 名称。
+///
+/// 参数:
+/// - `shell`: shell 路径或名称
+///
+/// 返回:
+/// - shell 文件名或原始名称
+fn shell_display_name(shell: &str) -> String {
+    std::path::Path::new(shell)
+        .file_name()
+        .map(|name| name.to_string_lossy().to_string())
+        .unwrap_or_else(|| shell.to_string())
+}
+
+/// 显式继承当前进程环境变量。
+///
+/// 参数:
+/// - `command`: 待配置命令
+///
+/// 返回:
+/// - 已继承环境变量的命令
+fn inherit_env(mut command: Command) -> Command {
+    command.envs(std::env::vars());
+    command
 }
 
 #[cfg(unix)]

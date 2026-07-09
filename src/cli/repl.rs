@@ -144,12 +144,12 @@ pub(super) async fn run_repl(
             prefill = prompt;
             continue;
         }
-        if input.eq_ignore_ascii_case("/reset") {
+        if input.eq_ignore_ascii_case("/clear") {
             run_reset(paths, None)?;
             input_history.clear();
             continue;
         }
-        if input.eq_ignore_ascii_case("/reset all") {
+        if input.eq_ignore_ascii_case("/clear all") {
             run_reset(paths, Some("all"))?;
             input_history.clear();
             continue;

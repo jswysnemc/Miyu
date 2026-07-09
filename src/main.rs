@@ -12,6 +12,7 @@ mod i18n;
 mod llm;
 mod memory;
 mod paths;
+mod perf_trace;
 mod prompts;
 mod render;
 mod runner;

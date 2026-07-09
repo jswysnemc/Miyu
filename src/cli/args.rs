@@ -54,10 +54,11 @@ pub enum Command {
     UpdateDefaultKb,
     Memory(MemoryArgs),
     Skills(SkillsArgs),
-    Commands(BackgroundCommandsArgs),
+    Ps(BackgroundCommandsArgs),
     Gateway(GatewayArgs),
     Set(SetArgs),
-    Reset(ResetArgs),
+    Clear(ClearArgs),
+    Compact(CompactArgs),
 }
 
 #[derive(Debug, Args)]
@@ -76,8 +77,14 @@ pub struct MessageArgs {
 }
 
 #[derive(Debug, Args)]
-pub struct ResetArgs {
+pub struct ClearArgs {
     pub scope: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct CompactArgs {
+    #[arg(short = 'k', long = "keep")]
+    pub keep_tail_turns: Option<usize>,
 }
 
 #[derive(Debug, Args)]

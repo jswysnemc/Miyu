@@ -482,6 +482,9 @@ fn session_snapshot_includes_usage_and_compaction() {
     assert!(!snapshot.session_id.is_empty());
     assert_eq!(snapshot.usage.requests, 1);
     assert_eq!(snapshot.usage.total_tokens, 15);
+    assert_eq!(snapshot.context_prompt_tokens, 10);
+    assert_eq!(snapshot.context_window_tokens, 1_000);
+    assert_eq!(snapshot.context_token_ratio, 0.01);
     assert!(snapshot.compaction.is_some());
 }
 
@@ -525,6 +528,32 @@ fn session_snapshot_reports_summary_projection_warnings() {
         .projection_warnings
         .iter()
         .any(|warning| warning.contains("invalid context limit")));
+}
+
+#[test]
+fn session_summary_projection_handles_large_tool_reports_quickly() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    let report = "x".repeat(25_000);
+    for index in 1..=200 {
+        let turn_id = format!("turn_{index}");
+        store.start_turn(&turn_id, "user").unwrap();
+        store.complete_turn(&turn_id, "assistant", None).unwrap();
+        store
+            .append_tool_report_context(&turn_id, "run_command", &report)
+            .unwrap();
+    }
+
+    let started_at = std::time::Instant::now();
+    let projection = store.project_session_summary(10_000_000).unwrap();
+    let elapsed = started_at.elapsed();
+
+    assert_eq!(projection.stats.tail_turns, 200);
+    assert!(projection.estimate.state_context_chars >= report.len() * 200);
+    assert!(
+        elapsed < std::time::Duration::from_secs(1),
+        "session summary projection took {elapsed:?}"
+    );
 }
 
 #[test]

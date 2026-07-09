@@ -11,6 +11,7 @@ use chrono::{DateTime, Utc};
 #[derive(Debug, Clone)]
 pub(crate) struct MemoryCompactInput {
     pub request: CompactionRequest,
+    #[allow(dead_code)]
     pub memory_boundary_seq: i64,
 }
 

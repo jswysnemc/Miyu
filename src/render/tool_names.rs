@@ -25,7 +25,6 @@ fn readable_tool_name_for_locale(name: &str, locale: Locale) -> &str {
         "background_command" => localized(locale, "Background command", "后台命令"),
         "task" => localized(locale, "Subagent task", "子代理任务"),
         "read_file" => localized(locale, "Read file", "读取文件"),
-        "write_file" => localized(locale, "Write file", "写入文件"),
         "edit_file" => localized(locale, "Edit file", "编辑文件"),
         "list_directory" => localized(locale, "List directory", "列目录"),
         "create_directory" => localized(locale, "Create directory", "创建目录"),
@@ -39,7 +38,6 @@ fn readable_tool_name_for_locale(name: &str, locale: Locale) -> &str {
         "web_search" => localized(locale, "Web search", "网页搜索"),
         "web_fetch" => localized(locale, "Read webpage", "读取网页"),
         "search_web_images" => localized(locale, "Search images", "搜索图片"),
-        "analyze_image" | "vision_analyze" => localized(locale, "Analyze image", "分析图片"),
         "print_image" => localized(locale, "Show image", "显示图片"),
         "generate_image" => localized(locale, "Generate image", "生成图片"),
         "search_meme" => localized(locale, "Search memes", "搜索表情包"),
@@ -162,10 +160,6 @@ mod tests {
         assert_eq!(
             readable_tool_name_for_locale("draw_fortune_lot", Locale::Zh),
             "抽签"
-        );
-        assert_eq!(
-            readable_tool_name_for_locale("vision_analyze", Locale::Zh),
-            "分析图片"
         );
         assert_eq!(
             readable_tool_name_for_locale("search_meme", Locale::Zh),

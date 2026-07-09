@@ -1,5 +1,7 @@
 use super::{ToolRegistry, ToolSpec};
+use crate::config::AppConfig;
 use crate::i18n::text as t;
+use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -10,30 +12,19 @@ use tokio::process::Command;
 const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
 const SEARCH_TIMEOUT_SECONDS: u64 = 30;
 
-pub fn register(registry: &mut ToolRegistry) {
-    register_readonly(registry);
-    registry.register(ToolSpec::new(
-        "write_file",
-        t("Create or overwrite a UTF-8 text file. Use this for new files or full-file replacement instead of run_command with cat, tee, heredoc, or shell redirection.", "创建或覆盖 UTF-8 文本文件。新建文件或整文件替换时使用它，不要用 run_command 执行 cat、tee、heredoc 或 shell 重定向写文件。"),
-        json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"content":{"type":"string","description": t("Full UTF-8 file content.", "完整 UTF-8 文件内容。")}},"required":["path","content"],"additionalProperties":false}),
-        |args| async move { write_file(args) },
-    ).writes());
-    registry.register(ToolSpec::new(
-        "edit_file",
-        t("Edit an existing UTF-8 file by replacing an inclusive 1-based line range. Use after read_file identifies exact line numbers. Use write_file for new files or full-file replacement.", "按 1 起始的闭区间行号替换现有 UTF-8 文件内容。应先用 read_file 确认准确行号。新建文件或整文件替换时使用 write_file。"),
-        json!({"type":"object","properties":{"path":{"type":"string","description": t("Workspace-relative or absolute file path.", "工作区相对路径或绝对文件路径。")},"start_line":{"type":"integer","description": t("1-based first line to replace.", "要替换的第一行，1 起始。")},"end_line":{"type":"integer","description": t("1-based last line to replace, inclusive.", "要替换的最后一行，闭区间。")},"replacement":{"type":"string","description": t("Replacement text. May contain multiple lines. Empty text deletes the line range.", "替换文本，可包含多行；空文本会删除指定行范围。")}},"required":["path","start_line","end_line","replacement"],"additionalProperties":false}),
-        |args| async move { edit_file(args) },
-    ).writes());
+pub fn register(registry: &mut ToolRegistry, config: &AppConfig, paths: &MiyuPaths) {
+    register_readonly(registry, config, paths);
+    super::edit_file::register(registry);
 }
 
-pub fn register_readonly(registry: &mut ToolRegistry) {
+pub fn register_readonly(registry: &mut ToolRegistry, config: &AppConfig, paths: &MiyuPaths) {
     registry.register(ToolSpec::new(
         "check_os_info",
         t("Check basic read-only OS, shell, desktop session, kernel, host, and package-manager context. For concrete Linux input method issues, prefer linux_input_method_diagnose.", "查看只读基础系统信息，包括 OS、shell、桌面会话、内核、主机和包管理器上下文。排查具体 Linux 输入法问题时优先使用 linux_input_method_diagnose。"),
         json!({"type":"object","properties":{},"additionalProperties":false}),
         |_| async move { check_os_info() },
     ));
-    super::file_read::register(registry);
+    super::file_read::register(registry, config.clone(), paths.clone());
     registry.register(ToolSpec::new(
         "glob",
         t("Find files by case-insensitive glob pattern under a directory. Defaults to workspace; use ~ or /home for user files, or / for protected global search.", "在目录下按大小写不敏感 glob 模式查找文件。默认工作区；查用户文件用 ~ 或 /home，受保护的全局搜索可用 /。"),
@@ -197,87 +188,6 @@ fn plist_value(raw: &str, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
-/// 创建或覆盖 UTF-8 文本文件。
-///
-/// 参数:
-/// - `args`: 工具参数，包含 path 和 content
-///
-/// 返回:
-/// - JSON 格式写入结果
-fn write_file(args: Value) -> Result<String> {
-    let path = path_arg(&args, "path")?;
-    let content = args
-        .get("content")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("content is required"))?;
-    if path.exists() && !path.is_file() {
-        bail!("not a regular file: {}", path.display())
-    }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    std::fs::create_dir_all(parent)?;
-    let old_bytes = std::fs::metadata(&path).ok().map(|metadata| metadata.len());
-    let temp = tempfile::NamedTempFile::new_in(parent)?;
-    std::fs::write(temp.path(), content.as_bytes())?;
-    temp.persist(&path)?;
-    Ok(serde_json::to_string_pretty(&json!({
-        "ok": true,
-        "path": path.display().to_string(),
-        "old_bytes": old_bytes,
-        "new_bytes": content.len()
-    }))?)
-}
-
-fn edit_file(args: Value) -> Result<String> {
-    let path = path_arg(&args, "path")?;
-    ensure_editable_file_path(&path)?;
-    let start_line = args
-        .get("start_line")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| anyhow::anyhow!("start_line is required"))? as usize;
-    let end_line = args
-        .get("end_line")
-        .and_then(Value::as_u64)
-        .ok_or_else(|| anyhow::anyhow!("end_line is required"))? as usize;
-    let replacement = args
-        .get("replacement")
-        .and_then(Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("replacement is required"))?;
-    if start_line == 0 || end_line == 0 {
-        bail!("line numbers must be 1-based")
-    }
-    if start_line > end_line {
-        bail!("start_line must be less than or equal to end_line")
-    }
-    let original = std::fs::read_to_string(&path)?;
-    let had_trailing_newline = original.ends_with('\n');
-    let mut lines = original.lines().map(str::to_string).collect::<Vec<_>>();
-    let old_line_count = lines.len();
-    if start_line > old_line_count || end_line > old_line_count {
-        bail!("line range {start_line}-{end_line} out of range: {old_line_count} lines")
-    }
-    let replacement = replacement.replace("\r\n", "\n").replace('\r', "\n");
-    let replacement_lines = if replacement.is_empty() {
-        Vec::new()
-    } else {
-        replacement.lines().map(str::to_string).collect::<Vec<_>>()
-    };
-    lines.splice(start_line - 1..end_line, replacement_lines);
-    let mut updated = lines.join("\n");
-    if had_trailing_newline && !updated.is_empty() {
-        updated.push('\n');
-    }
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
-    let temp = tempfile::NamedTempFile::new_in(parent)?;
-    std::fs::write(temp.path(), updated.as_bytes())?;
-    temp.persist(&path)?;
-    Ok(serde_json::to_string_pretty(&json!({
-        "ok": true,
-        "path": path.display().to_string(),
-        "old_line_count": old_line_count,
-        "new_line_count": lines.len()
-    }))?)
-}
-
 async fn glob_files(args: Value) -> Result<String> {
     let path = optional_path(&args).unwrap_or(std::env::current_dir()?);
     let search_path = prepare_search_path(&path)?;
@@ -418,14 +328,6 @@ fn search_exclude_args(search_root: &Path) -> Vec<String> {
     args
 }
 
-fn ensure_editable_file_path(path: &Path) -> Result<()> {
-    let canonical = path.canonicalize()?;
-    if !canonical.is_file() {
-        bail!("not a regular file: {}", path.display())
-    }
-    Ok(())
-}
-
 fn max_results(args: &Value) -> usize {
     args.get("max_results")
         .and_then(Value::as_u64)
@@ -448,11 +350,6 @@ fn clip_output(value: &str) -> String {
             t("chars", "字符")
         )
     }
-}
-
-fn path_arg(args: &Value, key: &str) -> Result<PathBuf> {
-    let value = required(args, key)?;
-    Ok(expand_path(&value))
 }
 
 fn optional_path(args: &Value) -> Option<PathBuf> {
@@ -495,53 +392,6 @@ fn required(args: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn write_file_creates_and_overwrites_text_file() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("nested").join("sample.txt");
-        write_file(json!({"path": path.display().to_string(), "content": "one\n"})).unwrap();
-        assert_eq!(std::fs::read_to_string(&path).unwrap(), "one\n");
-        let result =
-            write_file(json!({"path": path.display().to_string(), "content": "two"})).unwrap();
-        let data: Value = serde_json::from_str(&result).unwrap();
-        assert_eq!(data["old_bytes"], 4);
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "two");
-    }
-
-    #[test]
-    fn edit_file_replaces_lines() {
-        let cwd = std::env::current_dir().unwrap();
-        let temp = tempfile::tempdir_in(cwd).unwrap();
-        let path = temp.path().join("sample.txt");
-        std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
-        let result = edit_file(json!({
-            "path": path.display().to_string(),
-            "start_line": 2,
-            "end_line": 2,
-            "replacement": "TWO\nTWO-B"
-        }));
-        result.unwrap();
-        assert_eq!(
-            std::fs::read_to_string(path).unwrap(),
-            "one\nTWO\nTWO-B\nthree\n"
-        );
-    }
-
-    #[test]
-    fn edit_file_allows_existing_files_outside_workspace() {
-        let temp = tempfile::tempdir().unwrap();
-        let path = temp.path().join("sample.txt");
-        std::fs::write(&path, "one\ntwo\n").unwrap();
-        edit_file(json!({
-            "path": path.display().to_string(),
-            "start_line": 1,
-            "end_line": 2,
-            "replacement": "table"
-        }))
-        .unwrap();
-        assert_eq!(std::fs::read_to_string(path).unwrap(), "table\n");
-    }
 
     #[tokio::test]
     async fn glob_files_matches_filename_case_insensitively() {

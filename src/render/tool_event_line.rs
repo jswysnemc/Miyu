@@ -59,7 +59,6 @@ pub(crate) fn tool_call_status_text(label: &str, status: &str) -> String {
 fn tool_action(name: &str) -> &'static str {
     match name {
         "run_command" => "Run",
-        "write_file" => "Write",
         "edit_file" => "Edit",
         "read_file" => "Read",
         "trash_path" => "Trash",
@@ -109,9 +108,7 @@ fn tool_suffix_from_text(name: &str, arguments: &str) -> Option<String> {
 /// - 可展示对象文本
 fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
     match name {
-        "write_file" | "edit_file" | "trash_path" => {
-            string_field(arguments, &["path"]).map(file_basename)
-        }
+        "edit_file" | "trash_path" => string_field(arguments, &["path"]).map(file_basename),
         "read_file" => read_file_suffix(arguments),
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field(arguments, &["include", "pattern"]).map(compact_text)
@@ -132,7 +129,7 @@ fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
 /// - 可展示对象文本
 fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> {
     match name {
-        "write_file" | "edit_file" | "trash_path" => {
+        "edit_file" | "trash_path" => {
             string_field_from_partial(arguments, &["path"]).map(file_basename)
         }
         "read_file" => read_file_suffix_from_partial(arguments),
@@ -400,10 +397,6 @@ mod tests {
     #[test]
     fn file_tools_include_basename() {
         assert_eq!(
-            tool_event_label("write_file", Some(r#"{"path":"/tmp/example.rs"}"#)),
-            "Write example.rs"
-        );
-        assert_eq!(
             tool_event_label("edit_file", Some(r#"{"path":"src/render/stream.rs"}"#)),
             "Edit stream.rs"
         );
@@ -420,10 +413,10 @@ mod tests {
     fn partial_arguments_extract_target() {
         assert_eq!(
             tool_event_label(
-                "write_file",
+                "edit_file",
                 Some(r#"{"path":"src/main.rs","content":"unfinished"#)
             ),
-            "Write main.rs"
+            "Edit main.rs"
         );
         assert_eq!(
             tool_event_label("load", Some(r#"{"group_name":"web","#)),

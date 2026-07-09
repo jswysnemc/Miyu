@@ -1,5 +1,5 @@
 use crate::llm::ChatMessage;
-use crate::state::turns::{Turn, TurnStatus};
+use crate::state::turns::Turn;
 
 /// 估算即将发送给模型的消息上下文字符数。
 ///
@@ -17,26 +17,6 @@ pub fn estimate_chat_messages_chars(messages: &[ChatMessage]) -> usize {
                 .map(|message| format!("{message:?}").chars().count())
                 .sum()
         })
-}
-
-/// 估算当前会话状态注入上下文后的字符数。
-///
-/// 参数:
-/// - `turns`: 当前会话轮次
-/// - `summary`: 可选压缩摘要
-///
-/// 返回:
-/// - 上下文字符数量估算
-pub fn estimate_state_context_chars(turns: &[Turn], summary: Option<&str>) -> usize {
-    let summary_chars = summary
-        .map(|value| value.trim().chars().count())
-        .unwrap_or_default();
-    summary_chars
-        + turns
-            .iter()
-            .filter(|turn| turn.status != TurnStatus::Running)
-            .map(estimate_turn_context_chars)
-            .sum::<usize>()
 }
 
 /// 估算单个轮次在对话上下文中的字符数。

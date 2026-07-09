@@ -67,8 +67,8 @@ mod tests {
     use super::*;
 
     #[test]
-    fn reset_is_a_repl_command() {
-        assert!(repl_commands().contains(&"/reset"));
+    fn reset_is_not_a_repl_command() {
+        assert!(!repl_commands().contains(&"/reset"));
     }
 
     #[test]

@@ -10,6 +10,12 @@ pub struct ConversationDb {
     pub(in crate::state) conn: Mutex<Connection>,
 }
 
+#[derive(Debug, Clone, Copy, Default)]
+pub(in crate::state) struct SessionSummaryTurnStats {
+    pub tail_turn_count: usize,
+    pub context_chars: usize,
+}
+
 impl std::fmt::Debug for ConversationDb {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConversationDb").finish_non_exhaustive()
@@ -199,6 +205,42 @@ impl ConversationDb {
                 params![after_seq],
             ),
         }
+    }
+
+    /// 聚合读取会话摘要需要的轮次统计。
+    ///
+    /// 参数:
+    /// - `after_seq`: checkpoint 覆盖的最后序号
+    ///
+    /// 返回:
+    /// - 当前轮次数、tail 轮次数和上下文字符估算
+    pub(in crate::state) fn session_summary_turn_stats(
+        &self,
+        after_seq: i64,
+    ) -> Result<SessionSummaryTurnStats> {
+        let conn = self.conn.lock().unwrap();
+        let context_chars: i64 = conn.query_row(
+            "SELECT COALESCE(SUM(
+                        CASE WHEN status != 'running' THEN
+                            length(user_content)
+                            + length(assistant_content)
+                            + COALESCE(length(assistant_reasoning), 0)
+                            + CASE WHEN tool_reports = '[]' THEN 0 ELSE length(tool_reports) END
+                        ELSE 0 END
+                    ), 0)
+             FROM turns",
+            [],
+            |row| row.get(0),
+        )?;
+        let tail_turn_count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM turns WHERE seq > ?1",
+            params![after_seq],
+            |row| row.get(0),
+        )?;
+        Ok(SessionSummaryTurnStats {
+            tail_turn_count: tail_turn_count as usize,
+            context_chars: context_chars as usize,
+        })
     }
 
     /// 清空对话轮次。

@@ -1,4 +1,5 @@
 use super::*;
+use crate::llm::ToolCallStreamProgress;
 
 #[test]
 fn tool_status_prefers_running_for_single_active_call() {
@@ -63,6 +64,12 @@ fn tool_event_text_is_append_only_finish_line() {
 }
 
 #[test]
+fn read_file_start_status_uses_progress_marker() {
+    assert_eq!(tool_start_status("read_file"), "arg");
+    assert_eq!(tool_start_status("run_command"), "run");
+}
+
+#[test]
 fn visible_tool_blocks_do_not_need_extra_start_events() {
     assert!(tool_call_has_visible_block("run_command"));
     assert!(tool_call_has_visible_block("edit_file"));
@@ -92,4 +99,84 @@ fn wait_spinner_detail_line_omits_empty_values() {
     };
 
     assert!(wait_spinner_detail_line(&options).is_none());
+}
+
+#[test]
+fn edit_progress_waits_for_renderable_diff_before_consuming_preview() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("sample.txt");
+    std::fs::write(&path, "old\n").unwrap();
+    let mut renderer = StreamRenderer::new(
+        ReasoningDisplayMode::Full,
+        ToolCallDisplayMode::Summary,
+        false,
+        StreamRenderOptions::default(),
+    );
+
+    renderer
+        .write_tool_call_progress(&ToolCallStreamProgress {
+            index: 0,
+            name: Some("edit_file".to_string()),
+            arguments_chars: 0,
+            arguments_bytes: 0,
+            arguments_preview: r#"{"patch":"*** Begin Patch"#.to_string(),
+        })
+        .unwrap();
+
+    assert!(!renderer.streaming_edit_progress.contains(&0));
+    assert_eq!(renderer.pending_streamed_edit_blocks, 0);
+
+    let arguments_preview = format!(
+        "{{\"patch\":\"*** Begin Patch\\n*** Update File: {}\\n@@\\n-old\\n+new\\n*** End Patch\",\"path\":\"",
+        path.display()
+    );
+    renderer
+        .write_tool_call_progress(&ToolCallStreamProgress {
+            index: 0,
+            name: Some("edit_file".to_string()),
+            arguments_chars: arguments_preview.chars().count(),
+            arguments_bytes: arguments_preview.len(),
+            arguments_preview,
+        })
+        .unwrap();
+
+    assert!(renderer.streaming_edit_progress.contains(&0));
+    assert_eq!(renderer.pending_streamed_edit_blocks, 1);
+}
+
+#[test]
+fn command_progress_preview_is_replaced_by_final_tool_call() {
+    let mut renderer = StreamRenderer::new(
+        ReasoningDisplayMode::Full,
+        ToolCallDisplayMode::Summary,
+        false,
+        StreamRenderOptions::default(),
+    );
+
+    renderer
+        .write_tool_call_progress(&ToolCallStreamProgress {
+            index: 0,
+            name: Some("run_command".to_string()),
+            arguments_chars: 0,
+            arguments_bytes: 0,
+            arguments_preview: r#"{"command":"echo"#.to_string(),
+        })
+        .unwrap();
+    assert!(renderer.streaming_command_block.rendered_rows() > 0);
+
+    renderer
+        .write_tool_call_progress(&ToolCallStreamProgress {
+            index: 0,
+            name: Some("run_command".to_string()),
+            arguments_chars: 0,
+            arguments_bytes: 0,
+            arguments_preview: r#"{"command":"echo hi"#.to_string(),
+        })
+        .unwrap();
+    assert!(renderer.streaming_command_block.rendered_rows() > 0);
+
+    renderer
+        .write_tool_call("run_command", r#"{"command":"echo hi"}"#)
+        .unwrap();
+    assert_eq!(renderer.streaming_command_block.take_rendered_rows(), 0);
 }

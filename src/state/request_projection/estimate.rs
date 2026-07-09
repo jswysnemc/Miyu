@@ -1,8 +1,7 @@
 use super::model::{ProjectedRequest, ProjectionEstimate};
 use crate::llm::ChatMessage;
-use crate::state::compaction::{estimate_chat_messages_chars, estimate_state_context_chars};
+use crate::state::compaction::estimate_chat_messages_chars;
 use crate::state::session_snapshot;
-use crate::state::turns::Turn;
 
 /// 估算 provider turn 投影视图。
 ///
@@ -22,29 +21,6 @@ pub(crate) fn project_provider_turn_estimate(
         state_context_chars: 0,
         context_limit_chars,
         context_ratio: session_snapshot::context_ratio(message_chars, context_limit_chars),
-    }
-}
-
-/// 估算 session summary 投影视图。
-///
-/// 参数:
-/// - `turns`: 当前会话轮次
-/// - `summary`: 可选压缩摘要
-/// - `context_limit_chars`: 当前模型上下文窗口字符数
-///
-/// 返回:
-/// - session summary 估算
-pub(crate) fn project_state_summary_estimate(
-    turns: &[Turn],
-    summary: Option<&str>,
-    context_limit_chars: usize,
-) -> ProjectionEstimate {
-    let state_context_chars = estimate_state_context_chars(turns, summary);
-    ProjectionEstimate {
-        message_chars: 0,
-        state_context_chars,
-        context_limit_chars,
-        context_ratio: session_snapshot::context_ratio(state_context_chars, context_limit_chars),
     }
 }
 

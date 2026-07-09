@@ -9,6 +9,7 @@ mod reset;
 mod session;
 
 pub use compaction::{compact_conversation_from_paths, compact_conversation_with_agent};
+pub use compaction_args::DEFAULT_KEEP_TAIL_TURNS;
 pub use help::help_text;
 pub use model::run_model_command;
 pub use parser::{parse_control_command, ControlCommand, ControlSurface};

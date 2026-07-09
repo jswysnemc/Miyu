@@ -74,6 +74,7 @@ pub(crate) fn record_process(
 ///
 /// 返回:
 /// - 写入后的进程事件
+#[allow(dead_code)]
 pub(crate) fn append_process_event(
     db: &ConversationDb,
     event: NewRuntimeProcessEventRecord,

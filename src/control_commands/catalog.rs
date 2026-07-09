@@ -11,6 +11,5 @@ pub const REPL_COMMANDS: &[&str] = &[
     "/plan",
     "/yolo",
     "/undo",
-    "/reset",
     "/exit",
 ];

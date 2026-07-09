@@ -11,6 +11,8 @@ struct UsageState {
     total_tokens: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     last_usage: Option<Usage>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_conversation_usage: Option<Usage>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -20,6 +22,7 @@ pub struct UsageSnapshot {
     pub completion_tokens: u64,
     pub total_tokens: u64,
     pub last_usage: Option<Usage>,
+    pub last_conversation_usage: Option<Usage>,
 }
 
 impl From<UsageState> for UsageSnapshot {
@@ -31,25 +34,55 @@ impl From<UsageState> for UsageSnapshot {
     /// 返回:
     /// - 用量快照
     fn from(state: UsageState) -> Self {
+        let last_conversation_usage = state
+            .last_conversation_usage
+            .clone()
+            .or_else(|| state.last_usage.clone());
         Self {
             requests: state.requests,
             prompt_tokens: state.prompt_tokens,
             completion_tokens: state.completion_tokens,
             total_tokens: state.total_tokens,
             last_usage: state.last_usage,
+            last_conversation_usage,
         }
     }
 }
 
-/// 累加模型用量并保存最近一次 provider usage。
+/// 累加主对话模型用量并保存最近一次主对话 provider usage。
 ///
 /// 参数:
 /// - `path`: 用量状态文件
-/// - `usage`: 当前请求 provider 返回的用量
+/// - `usage`: 当前主对话请求 provider 返回的用量
 ///
 /// 返回:
 /// - 保存是否成功
 pub fn add_usage(path: &Path, usage: &Usage) -> Result<()> {
+    add_usage_with_scope(path, usage, true)
+}
+
+/// 累加辅助模型用量，不覆盖主对话最近一次 usage。
+///
+/// 参数:
+/// - `path`: 用量状态文件
+/// - `usage`: 当前辅助请求 provider 返回的用量
+///
+/// 返回:
+/// - 保存是否成功
+pub fn add_auxiliary_usage(path: &Path, usage: &Usage) -> Result<()> {
+    add_usage_with_scope(path, usage, false)
+}
+
+/// 按请求类型累加模型用量。
+///
+/// 参数:
+/// - `path`: 用量状态文件
+/// - `usage`: 当前请求 provider 返回的用量
+/// - `is_conversation`: 是否为用户可见主对话请求
+///
+/// 返回:
+/// - 保存是否成功
+fn add_usage_with_scope(path: &Path, usage: &Usage, is_conversation: bool) -> Result<()> {
     let mut state = if path.exists() {
         let raw = std::fs::read_to_string(path)?;
         serde_json::from_str(&raw).unwrap_or_default()
@@ -61,6 +94,9 @@ pub fn add_usage(path: &Path, usage: &Usage) -> Result<()> {
     state.completion_tokens += usage.completion_tokens;
     state.total_tokens += usage.total_tokens;
     state.last_usage = Some(usage.clone());
+    if is_conversation {
+        state.last_conversation_usage = Some(usage.clone());
+    }
     std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&state)?))?;
     Ok(())
 }
@@ -112,6 +148,7 @@ pub fn clear_last_usage(path: &Path) -> Result<()> {
     let raw = std::fs::read_to_string(path)?;
     let mut state = serde_json::from_str::<UsageState>(&raw).unwrap_or_default();
     state.last_usage = None;
+    state.last_conversation_usage = None;
     std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&state)?))?;
     Ok(())
 }
@@ -132,8 +169,46 @@ mod tests {
 
         add_usage(&path, &usage).unwrap();
         assert_eq!(last_usage(&path).unwrap().unwrap().total_tokens, 15);
+        assert_eq!(
+            snapshot(&path)
+                .unwrap()
+                .last_conversation_usage
+                .unwrap()
+                .prompt_tokens,
+            10
+        );
 
         clear_last_usage(&path).unwrap();
         assert!(last_usage(&path).unwrap().is_none());
+    }
+
+    #[test]
+    fn auxiliary_usage_does_not_replace_conversation_usage() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("usage.json");
+
+        add_usage(
+            &path,
+            &Usage {
+                prompt_tokens: 100,
+                completion_tokens: 20,
+                total_tokens: 120,
+            },
+        )
+        .unwrap();
+        add_auxiliary_usage(
+            &path,
+            &Usage {
+                prompt_tokens: 5,
+                completion_tokens: 2,
+                total_tokens: 7,
+            },
+        )
+        .unwrap();
+
+        let snapshot = snapshot(&path).unwrap();
+        assert_eq!(snapshot.total_tokens, 127);
+        assert_eq!(snapshot.last_usage.unwrap().prompt_tokens, 5);
+        assert_eq!(snapshot.last_conversation_usage.unwrap().prompt_tokens, 100);
     }
 }

@@ -2,7 +2,6 @@ pub(crate) const BASE_TOOL_NAMES: &[&str] = &[
     "run_command",
     "background_command",
     "task",
-    "write_file",
     "edit_file",
     "trash_path",
     "check_os_info",
@@ -41,11 +40,9 @@ pub(crate) fn group_for_tool(name: &str) -> &'static str {
         | "get_weather"
         | "convert_exchange_rate"
         | "deepseek_status" => "web",
-        "search_web_images" | "analyze_image" | "vision_analyze" | "print_image"
-        | "generate_image" | "search_meme" | "show_meme" | "add_meme" | "update_meme"
-        | "delete_meme" | "send_channel_image" | "send_channel_file" | "send_channel_video" => {
-            "media"
-        }
+        "search_web_images" | "print_image" | "generate_image" | "search_meme" | "show_meme"
+        | "add_meme" | "update_meme" | "delete_meme" | "send_channel_image"
+        | "send_channel_file" | "send_channel_video" => "media",
         "deep_research"
         | "register_deep_research_topic_title"
         | "register_deep_research_reference"

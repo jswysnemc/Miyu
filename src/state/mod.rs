@@ -23,16 +23,19 @@ use std::fs::OpenOptions;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+#[allow(unused_imports)]
 pub use compaction::{CompactionApplyOutcome, CompactionRequest, CompactionSummary};
 pub use context_epoch::{ContextEpochProjection, ContextEpochSummary, ContextSourceInput};
 pub use failure_recovery::{FailureKind, RecoverySnapshot, RecoveryStatus};
 pub use pending_turn::PendingTurnGuard;
+#[allow(unused_imports)]
 pub use session_memory::summary::SessionMemorySummary;
 pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
 pub use sessions::{
     active_state_dir, create_session, delete_session, ensure_active_session as active_session,
     list_sessions, rename_session, switch_session,
 };
+#[allow(unused_imports)]
 pub use tool_history::{ToolCallStatus, ToolHistorySummary};
 #[cfg(test)]
 pub use turns::TurnStatus;
@@ -340,6 +343,18 @@ impl StateStore {
         usage::add_usage(&self.usage_file(), usage)
     }
 
+    /// 累加辅助模型用量。
+    ///
+    /// 参数:
+    /// - `usage`: 辅助模型用量
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    pub fn add_auxiliary_usage(&self, usage: &Usage) -> Result<()> {
+        self.init_files()?;
+        usage::add_auxiliary_usage(&self.usage_file(), usage)
+    }
+
     /// 读取累计用量快照。
     ///
     /// 参数:
@@ -383,6 +398,7 @@ impl StateStore {
     ///
     /// 返回:
     /// - Context Epoch 投影
+    #[allow(dead_code)]
     pub fn context_epoch_projection_from_sources(
         &self,
         sources: Vec<ContextSourceInput>,

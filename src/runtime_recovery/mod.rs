@@ -37,9 +37,11 @@ pub(crate) use repository::{
     append_next_process_event, record_process, record_recovery, session_summary,
 };
 pub(crate) use sequence::audit_sequence_gaps;
+#[allow(unused_imports)]
 pub(crate) use summary::{
     has_visible_runtime_recovery, RuntimeRecoveryFailureSummary, RuntimeRecoverySummary,
 };
+#[allow(unused_imports)]
 pub(crate) use terminator::ProcessTerminator;
 #[allow(unused_imports)]
 pub(crate) use transport::{

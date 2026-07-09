@@ -148,8 +148,8 @@ pub(crate) fn render_inline_image_with_cell_size(path: &Path) -> Result<CellCont
         sixel_dimensions(image.width, image.height, &TerminalImageSize::default());
 
     if supports_kitty_graphics() {
-        let kitty = render_kitty_image(path)?;
-        let kitty = kitty.trim_end().to_string();
+        // 行内场景使用单元格尺寸生成 Kitty 载荷，再按高度拆成多行占位
+        let kitty = encode_kitty_png(path, Some(cell_width), Some(cell_height))?;
         let mut lines = vec![kitty];
         for _ in 1..cell_height {
             lines.push(String::new());

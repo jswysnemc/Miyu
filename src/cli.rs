@@ -154,10 +154,21 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::UpdateDefaultKb) => run_update_default_kb(&paths).await,
         Some(Command::Memory(args)) => run_memory(&paths, args),
         Some(Command::Skills(args)) => run_skills(&paths, args),
-        Some(Command::Commands(args)) => run_background_commands(&paths, args).await,
+        Some(Command::Ps(args)) => run_background_commands(&paths, args).await,
         Some(Command::Gateway(args)) => run_gateway(&paths, args).await,
         Some(Command::Set(args)) => run_set(&paths, args),
-        Some(Command::Reset(args)) => run_reset(&paths, args.scope.as_deref()),
+        Some(Command::Clear(args)) => run_reset(&paths, args.scope.as_deref()),
+        Some(Command::Compact(args)) => {
+            let keep_tail_turns = args
+                .keep_tail_turns
+                .unwrap_or(crate::control_commands::DEFAULT_KEEP_TAIL_TURNS);
+            println!(
+                "{}",
+                crate::control_commands::compact_conversation_from_paths(&paths, keep_tail_turns)
+                    .await?
+            );
+            Ok(())
+        }
         None => {
             let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
             if input.message.is_empty() && !input.clipb && !input.web_search {
@@ -242,6 +253,11 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
             renderer.write_tool_result(&name, ok, &output)
         }
         AgentEvent::ToolProgress { name, message } => renderer.write_tool_progress(&name, &message),
+        AgentEvent::CompactionStarted { turn_count } => {
+            renderer.write_compaction_started(turn_count)
+        }
+        AgentEvent::CompactionFinished { applied } => renderer.write_compaction_finished(applied),
+        AgentEvent::FlushContent => renderer.flush_content(),
         AgentEvent::ExternalOutput => renderer.prepare_for_external_output(),
     }
 }

@@ -69,7 +69,7 @@ impl Agent {
             bail!("compaction summary is empty");
         }
         if let Some(usage) = &result.usage {
-            self.state.add_usage(usage)?;
+            self.state.add_auxiliary_usage(usage)?;
         }
         Ok(summary.to_string())
     }

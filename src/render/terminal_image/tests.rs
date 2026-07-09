@@ -10,6 +10,79 @@ mod tests {
     }
 
     #[test]
+    fn wezterm_prefers_iterm_protocol_over_kitty() {
+        std::env::set_var("TERM_PROGRAM", "WezTerm");
+        std::env::remove_var("KITTY_WINDOW_ID");
+        std::env::set_var("TERM", "xterm-256color");
+        assert!(!supports_kitty_graphics());
+        assert!(supports_iterm_inline_image());
+        std::env::remove_var("TERM_PROGRAM");
+        std::env::remove_var("TERM");
+    }
+
+    #[test]
+    fn kitty_payload_includes_cell_size_and_reserves_rows() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("sample.png");
+        // 16x32 像素 + 默认 8x16 单元格 => 至少 2 列 2 行
+        let pixels = std::iter::repeat(Rgba {
+            r: 255,
+            g: 0,
+            b: 0,
+            a: 255,
+        })
+        .take(16 * 32)
+        .collect::<Vec<_>>();
+        write_test_rgba_png(&path, 16, 32, &pixels);
+        let output = render_kitty_image(&path).unwrap();
+        assert!(output.contains("\x1b_Gf=100,a=T,q=2,c="));
+        assert!(output.contains(",r="));
+        assert!(output.ends_with('\n'));
+        let trailing_newlines = output.chars().rev().take_while(|ch| *ch == '\n').count();
+        assert!(trailing_newlines >= 2);
+    }
+
+    #[test]
+    fn encode_kitty_png_supports_explicit_cells_without_newlines() {
+        let temp_dir = tempfile::tempdir().unwrap();
+        let path = temp_dir.path().join("sample.png");
+        write_test_rgba_png(
+            &path,
+            2,
+            2,
+            &[
+                Rgba {
+                    r: 255,
+                    g: 0,
+                    b: 0,
+                    a: 255,
+                },
+                Rgba {
+                    r: 0,
+                    g: 255,
+                    b: 0,
+                    a: 255,
+                },
+                Rgba {
+                    r: 0,
+                    g: 0,
+                    b: 255,
+                    a: 255,
+                },
+                Rgba {
+                    r: 255,
+                    g: 255,
+                    b: 255,
+                    a: 255,
+                },
+            ],
+        );
+        let output = encode_kitty_png(&path, Some(8), Some(3)).unwrap();
+        assert!(output.contains("f=100,a=T,q=2,c=8,r=3"));
+        assert!(!output.ends_with('\n'));
+    }
+
+    #[test]
     fn detects_windows_terminal_session() {
         std::env::set_var("WT_SESSION", "session-id");
         assert!(supports_windows_terminal_sixel());

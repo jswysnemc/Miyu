@@ -175,17 +175,18 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
             "查看或编辑助手记忆",
         ),
         ("skills", "Manage assistant skills", "管理助手 skills"),
-        ("commands", "Manage background commands", "管理后台命令"),
+        ("ps", "Manage background commands", "管理后台命令"),
         (
             "gateway",
             "Send messages through WeCom, QQ official bot, or OneBot gateways",
             "通过企业微信、QQ 官方机器人或 OneBot 网关发送消息",
         ),
         ("set", "Set active configuration values", "设置当前配置项"),
+        ("clear", "Clear current conversation history", "清空当前会话历史"),
         (
-            "reset",
-            "Clear current conversation history",
-            "清空当前会话历史",
+            "compact",
+            "Manually compact old conversation turns",
+            "手动压缩旧会话轮次",
         ),
     ];
     for (name, en, zh) in descriptions {
@@ -198,11 +199,12 @@ fn localize_subcommands(mut command: clap::Command) -> clap::Command {
         .mut_subcommand("kb", localize_kb_command)
         .mut_subcommand("memory", localize_memory_command)
         .mut_subcommand("skills", localize_skills_command)
-        .mut_subcommand("commands", localize_background_commands_command)
+        .mut_subcommand("ps", localize_background_commands_command)
         .mut_subcommand("gateway", localize_gateway_command)
         .mut_subcommand("set", localize_set_command)
         .mut_subcommand("config", localize_config_command)
-        .mut_subcommand("reset", localize_reset_command);
+        .mut_subcommand("clear", localize_clear_command)
+        .mut_subcommand("compact", localize_compact_command);
     command
 }
 
@@ -360,11 +362,20 @@ fn localize_config_command(command: clap::Command) -> clap::Command {
         })
 }
 
-fn localize_reset_command(command: clap::Command) -> clap::Command {
+fn localize_clear_command(command: clap::Command) -> clap::Command {
     command.mut_arg("scope", |arg| {
         arg.help(t(
             "all also clears long-term memory",
             "all 同时清空长期记忆",
+        ))
+    })
+}
+
+fn localize_compact_command(command: clap::Command) -> clap::Command {
+    command.mut_arg("keep_tail_turns", |arg| {
+        arg.help(t(
+            "Recent turns to keep outside the compacted summary",
+            "压缩摘要之外保留的最近轮次数",
         ))
     })
 }

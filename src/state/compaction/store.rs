@@ -49,6 +49,7 @@ impl StateStore {
     ///
     /// 返回:
     /// - 压缩请求，当前上下文未超过阈值时返回空
+    #[allow(dead_code)]
     pub fn select_compaction_for_messages(
         &self,
         messages: &[ChatMessage],
@@ -70,6 +71,7 @@ impl StateStore {
     ///
     /// 返回:
     /// - 压缩请求，当前上下文未超过阈值时返回空
+    #[allow(dead_code)]
     pub fn select_legacy_compaction_for_messages(
         &self,
         messages: &[ChatMessage],

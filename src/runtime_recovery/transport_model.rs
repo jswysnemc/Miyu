@@ -102,6 +102,7 @@ impl RuntimeTransportReplayDecision {
     ///
     /// 返回:
     /// - 是否应该处理事件
+    #[allow(dead_code)]
     pub(crate) fn should_apply(&self) -> bool {
         matches!(self, Self::Apply { .. } | Self::ReplayBuffered { .. })
     }

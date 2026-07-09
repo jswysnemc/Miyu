@@ -54,33 +54,42 @@ fn list_markers_use_tertiary_color() {
 }
 
 #[test]
-fn buffers_tables_until_non_table_line() {
+fn streams_raw_table_rows_then_replaces_with_rendered_table() {
     let mut renderer = MarkdownStreamRenderer::new();
-    assert_eq!(renderer.push("| a | b |\n"), "");
-    assert_eq!(renderer.push("| - | - |\n"), "");
-    assert_eq!(renderer.push("| 1 | 2 |\n"), "");
+    assert_eq!(renderer.push("| a | b |\n"), "| a | b |\n");
+    assert_eq!(renderer.push("| - | - |\n"), "| - | - |\n");
+
+    let row = renderer.push("| 1 | 2 |\n");
+    assert_eq!(row, "| 1 | 2 |\n");
+
     let output = renderer.push("done\n");
+    assert!(output.starts_with("\x1b[1A\r\x1b[2K"));
     assert!(output.contains("\x1b[1ma\x1b[0m"));
-    assert!(output.contains("1"));
     assert!(output.contains('┌'));
     assert!(output.contains('├'));
     assert!(output.contains('└'));
-    assert!(!output.contains('+'));
     assert!(output.ends_with("done\n"));
 }
 
 #[test]
 fn streaming_table_width_uses_later_rows() {
     let mut renderer = MarkdownStreamRenderer::new();
-    assert_eq!(renderer.push("| 软件 | 命令 |\n"), "");
-    assert_eq!(renderer.push("|---|---|\n"), "");
-    assert_eq!(renderer.push("| Arch | `pacman -Syu` |\n"), "");
-    assert_eq!(renderer.push("| Neovim | `sudo pacman -S neovim` |\n"), "");
+    assert_eq!(renderer.push("| 软件 | 命令 |\n"), "| 软件 | 命令 |\n");
+    assert_eq!(renderer.push("|---|---|\n"), "|---|---|\n");
+    assert_eq!(
+        renderer.push("| Arch | `pacman -Syu` |\n"),
+        "| Arch | `pacman -Syu` |\n"
+    );
+    assert_eq!(
+        renderer.push("| Neovim | `sudo pacman -S neovim` |\n"),
+        "| Neovim | `sudo pacman -S neovim` |\n"
+    );
 
     let output = renderer.flush();
-
+    assert!(output.starts_with("\x1b[1A\r\x1b[2K"));
     assert!(output.contains("sudo pacman -S neovim"));
-    assert_eq!(output.matches('├').count(), 2);
+    assert!(output.contains('┌'));
+    assert!(output.contains('└'));
 }
 
 #[test]
@@ -294,9 +303,10 @@ fn renders_multiline_math_blocks_as_assets() {
     let mut renderer = MarkdownStreamRenderer::new();
     let output = renderer.push("$$\na^2 + b^2 = c^2\n$$\n");
     std::env::remove_var("MIYU_RENDER_ASSET_TEST_STUB");
-    assert!(output.contains("[math]"));
+    assert!(output.contains("$$\na^2 + b^2 = c^2\n$$\n"));
+    assert!(output.contains("\x1b[1A\r\x1b[2K"));
     assert!(output.contains("[asset rendering skipped]"));
-    assert!(!output.contains("\x1b[36m$$\x1b[0m"));
+    assert!(!output.contains("[math]"));
 }
 
 #[test]
@@ -306,8 +316,10 @@ fn renders_mermaid_blocks_as_assets() {
     let mut renderer = MarkdownStreamRenderer::new();
     let output = renderer.push("```mermaid\ngraph TD\nA --> B\n```\n");
     std::env::remove_var("MIYU_RENDER_ASSET_TEST_STUB");
-    assert!(output.contains("[mermaid]"));
+    assert!(output.contains("```mermaid\ngraph TD\nA --> B\n```\n"));
+    assert!(output.contains("\x1b[1A\r\x1b[2K"));
     assert!(output.contains("[asset rendering skipped]"));
+    assert!(!output.contains("[mermaid]"));
     assert!(!output.contains("── mermaid"));
 }
 
@@ -339,7 +351,7 @@ fn supports_table_alignment_markers() {
     assert!(output.contains('┌'));
     assert!(output.contains('│'));
     assert!(!output.contains('+'));
-    assert!(!output.contains(":---"));
+    assert!(output.contains("\x1b[1A\r\x1b[2K"));
     assert!(output.contains("\x1b[1mleft\x1b[0m"));
 }
 

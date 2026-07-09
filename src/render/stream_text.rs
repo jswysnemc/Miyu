@@ -20,7 +20,7 @@ pub(crate) fn normalize_stream_text(text: &str) -> String {
 /// 返回:
 /// - 是否已经有命令块或 diff 块展示
 pub(crate) fn tool_call_has_visible_block(name: &str) -> bool {
-    matches!(name, "run_command" | "edit_file" | "write_file")
+    matches!(name, "run_command" | "edit_file")
 }
 
 /// 生成等待动效详情行。

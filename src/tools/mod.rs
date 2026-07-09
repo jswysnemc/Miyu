@@ -8,6 +8,8 @@ mod deep_research;
 mod deepseek_status;
 mod default_tools;
 mod diagnostics;
+mod edit_file;
+pub(crate) mod edit_patch;
 mod exchange_rate;
 mod fcitx_wiki;
 mod file_read;
@@ -52,7 +54,6 @@ pub fn readable_tool_name(name: &str) -> &str {
         "background_command" => "后台命令",
         "task" => "子代理任务",
         "read_file" => "读取文件",
-        "write_file" => "写入文件",
         "edit_file" => "编辑文件",
         "list_directory" => "列目录",
         "create_directory" => "创建目录",
@@ -67,7 +68,6 @@ pub fn readable_tool_name(name: &str) -> &str {
         "web_fetch" => "读取网页",
         "fcitx5_input_method_wiki_qurey" => "查询 Fcitx5 Wiki",
         "search_web_images" => "搜索图片",
-        "analyze_image" | "vision_analyze" => "分析图片",
         "print_image" => "显示图片",
         "generate_image" => "生成图片",
         "search_meme" => "搜索表情包",
@@ -139,7 +139,7 @@ pub fn clear_aur_review_state(paths: &MiyuPaths) -> anyhow::Result<()> {
 pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     command::register(&mut registry, config, paths, true);
-    default_tools::register(&mut registry);
+    default_tools::register(&mut registry, config, paths);
     trash_path::register(&mut registry);
     alarm::register(&mut registry, paths.clone());
     web::register_fetch(&mut registry);
@@ -180,9 +180,6 @@ pub fn builtin_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
             paths.clone(),
             diagnosis_tools,
         );
-    }
-    if config.plugins.vision.enabled {
-        vision::register(&mut registry, config.clone(), paths.clone(), true);
     }
     if config.plugins.image_generation.enabled {
         image_generation::register(&mut registry, config.clone());
@@ -243,7 +240,7 @@ pub(crate) fn register_repl_task_tool(
 pub fn readonly_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     command::register_readonly(&mut registry, config, paths);
-    default_tools::register_readonly(&mut registry);
+    default_tools::register_readonly(&mut registry, config, paths);
     web::register_fetch(&mut registry);
     fcitx_wiki::register(&mut registry);
     protondb_query::register(&mut registry);

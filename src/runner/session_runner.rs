@@ -7,6 +7,7 @@ use crate::cli::{build_repl_tool_registry, build_tool_registry};
 use crate::config::AppConfig;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
+use crate::perf_trace::PerfTrace;
 use crate::state::{active_state_dir, StateStore};
 use crate::tools::ToolRegistry;
 use anyhow::{bail, Result};
@@ -105,6 +106,8 @@ impl<'paths> SessionRunner<'paths> {
         S: RunnerEventSink,
     {
         AppConfig::init_files(self.paths)?;
+        let mut perf = PerfTrace::new("runner");
+        perf.mark("start submission");
         let config = self.load_config()?;
         let context_limit_chars = config.active_context_chars()?;
         let state = StateStore::new(self.paths)?;
@@ -136,6 +139,7 @@ impl<'paths> SessionRunner<'paths> {
         let input = with_channel_marker(input, submission.channel.as_ref());
         let mut turn_runner = TurnRunner::new(&mut agent);
         let result = turn_runner.run_user_input(&input, sink).await;
+        perf.mark("turn runner done");
         if config.tools.progressive_loading_enabled {
             let loaded_tools = agent.loaded_tools();
             state.save_loaded_tools(&loaded_tools)?;
@@ -144,12 +148,15 @@ impl<'paths> SessionRunner<'paths> {
         let result = result?;
         if should_apply_command_mode_exit_policy(submission.source) {
             state.apply_command_mode_runtime_exit_policy()?;
+            perf.mark("runtime exit policy");
         }
         if submission.show_final_summary {
             let mut snapshot = state.session_snapshot(context_limit_chars)?;
+            perf.mark("session snapshot");
             snapshot.dynamic_sources = agent.last_dynamic_sources();
             snapshot.active_run = Some(_active_run.summary());
             sink.on_runner_event(RunnerEvent::FinalSummary(snapshot))?;
+            perf.mark("final summary event");
         }
         Ok(result)
     }

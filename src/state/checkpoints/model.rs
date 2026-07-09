@@ -37,7 +37,9 @@ pub(crate) struct CheckpointStats {
 #[derive(Debug, Clone)]
 pub(crate) struct ProjectedHistory {
     pub checkpoint_context: Option<String>,
+    #[allow(dead_code)]
     pub entries: Vec<StoredConversationEntry>,
     pub messages: Vec<ChatMessage>,
+    #[allow(dead_code)]
     pub stats: CheckpointStats,
 }

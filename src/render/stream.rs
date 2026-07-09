@@ -1,12 +1,13 @@
 use crate::i18n::text as t;
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
 use crate::render::background_command_event::{
-    background_command_block_action, background_command_result_label, is_background_command_start,
+    background_command_result_label, is_background_command_start,
 };
 use crate::render::command_output::{
-    write_command_block_with_action, write_command_error_block, write_command_result_blocks,
-    write_edit_file_diff_block, write_tool_payload, write_write_file_diff_block,
+    render_command_block_with_action, write_command_block_with_action, write_command_error_block,
+    write_command_result_blocks, write_tool_payload,
 };
+use crate::render::edit_diff::write_edit_file_diff_block;
 use crate::render::live_tool_status::LiveToolStatus;
 use crate::render::markdown::MarkdownStreamRenderer;
 use crate::render::stream_config::{
@@ -16,16 +17,24 @@ use crate::render::stream_summary::StreamSummary;
 pub(crate) use crate::render::stream_text::{
     normalize_stream_text, tool_call_has_visible_block, wait_spinner_detail_line,
 };
+use crate::render::stream_tool_status::tool_start_status;
+use crate::render::streaming_command_block::StreamingCommandBlock;
+use crate::render::streaming_replace::{clear_rendered_rows, rendered_visual_rows};
 use crate::render::style::TOOL_BULLET;
+use crate::render::tool_call_blocks::{
+    write_command_tool_call_block, write_edit_tool_call_block, write_edit_tool_call_diff_block,
+};
 use crate::render::tool_event_line::{tool_event_label, tool_event_text};
 use crate::render::wait_spinner::{SpinnerStyle, WaitSpinner};
 use anyhow::Result;
-use crossterm::cursor::{Hide, Show};
 use crossterm::execute;
 use crossterm::style::{Color, ResetColor, SetForegroundColor};
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Write};
+
+#[path = "stream_tool_progress_events.rs"]
+mod stream_tool_progress_events;
 
 #[cfg(test)]
 use crate::render::stream_summary::{
@@ -38,13 +47,16 @@ pub struct StreamRenderer {
     plain: bool,
     options: StreamRenderOptions,
     mode: Option<ChatStreamKind>,
-    cursor_hidden: bool,
+    pub(crate) cursor_hidden: bool,
     markdown: MarkdownStreamRenderer,
     summary: StreamSummary,
     wait_spinner: Option<WaitSpinner>,
     live_tool_status: LiveToolStatus,
     tool_event_labels: HashMap<String, String>,
     command_block_tools: HashSet<String>,
+    streaming_edit_progress: HashSet<usize>,
+    pending_streamed_edit_blocks: usize,
+    streaming_command_block: StreamingCommandBlock,
 }
 
 impl StreamRenderer {
@@ -78,6 +90,9 @@ impl StreamRenderer {
             live_tool_status: LiveToolStatus::new(),
             tool_event_labels: HashMap::new(),
             command_block_tools: HashSet::new(),
+            streaming_edit_progress: HashSet::new(),
+            pending_streamed_edit_blocks: 0,
+            streaming_command_block: StreamingCommandBlock::new(),
         }
     }
 
@@ -167,7 +182,7 @@ impl StreamRenderer {
             && !tool_call_has_visible_block(name)
             && !background_command_start
         {
-            self.write_live_tool_status(&event_label, "run", false)?;
+            self.write_live_tool_status(&event_label, tool_start_status(name), false)?;
             return Ok(());
         }
         self.clear_live_tool_status()?;
@@ -175,34 +190,26 @@ impl StreamRenderer {
         self.finalize_reasoning_summary()?;
         if name == "run_command" || background_command_start {
             self.summary.clear_live_lines()?;
-            self.command_block_tools.insert(name.to_string());
-            let mut stdout = io::stdout();
-            let command_block_action = if background_command_start {
-                background_command_block_action()
-            } else {
-                &event_label
-            };
-            write_command_block_with_action(&mut stdout, arguments, command_block_action)?;
-            stdout.flush()?;
-            return Ok(());
+            if write_command_tool_call_block(
+                name,
+                arguments,
+                &event_label,
+                background_command_start,
+                &mut self.streaming_command_block,
+                &mut self.command_block_tools,
+            )? {
+                return Ok(());
+            }
         }
         if name == "edit_file" {
             self.summary.clear_live_lines()?;
-            let mut stdout = io::stdout();
-            if !write_edit_file_diff_block(&mut stdout, arguments)? {
-                write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
+            if self.pending_streamed_edit_blocks > 0 {
+                self.pending_streamed_edit_blocks -= 1;
+                return Ok(());
             }
-            stdout.flush()?;
-            return Ok(());
-        }
-        if name == "write_file" && self.tool_call_mode != ToolCallDisplayMode::Hidden {
-            self.summary.clear_live_lines()?;
-            let mut stdout = io::stdout();
-            if !write_write_file_diff_block(&mut stdout, arguments)? {
-                write_tool_payload(&mut stdout, t("args", "参数"), arguments)?;
+            if write_edit_tool_call_block(name, arguments)? {
+                return Ok(());
             }
-            stdout.flush()?;
-            return Ok(());
         }
         if self.tool_call_mode == ToolCallDisplayMode::Full {
             self.summary.clear_live_lines()?;
@@ -233,6 +240,33 @@ impl StreamRenderer {
         let event_label = tool_event_label(name, Some(&progress.arguments_preview));
         self.tool_event_labels
             .insert(name.to_string(), event_label.clone());
+        if let Some(preview) = self
+            .streaming_command_block
+            .command_from_progress(name, &progress.arguments_preview)
+        {
+            self.clear_live_tool_status()?;
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+            let mut stdout = io::stdout();
+            let block = render_command_block_with_action(&preview.command, &event_label);
+            write!(stdout, "{}", clear_rendered_rows(preview.clear_rows))?;
+            write!(stdout, "{block}")?;
+            stdout.flush()?;
+            self.streaming_command_block
+                .mark_rendered_rows(rendered_visual_rows(&block));
+            return Ok(());
+        }
+        if name == "edit_file" && !self.streaming_edit_progress.contains(&progress.index) {
+            self.clear_live_tool_status()?;
+            self.end_active_stream_line()?;
+            self.finalize_reasoning_summary()?;
+            self.summary.clear_live_lines()?;
+            if write_edit_tool_call_diff_block(name, &progress.arguments_preview)? {
+                self.streaming_edit_progress.insert(progress.index);
+                self.pending_streamed_edit_blocks += 1;
+                return Ok(());
+            }
+        }
         self.write_live_tool_status(&event_label, "arg", false)
     }
 
@@ -416,138 +450,57 @@ impl StreamRenderer {
         Ok(())
     }
 
-    /// 写入子代理推理进度。
+    /// 写入上下文压缩开始事件。
     ///
     /// 参数:
-    /// - `name`: 父工具名称
-    /// - `text`: 子代理推理文本
+    /// - `turn_count`: 本次计划压缩的轮次数量
     ///
     /// 返回:
     /// - 写入是否成功
-    fn write_subagent_reasoning(&mut self, name: &str, text: &str) -> Result<()> {
-        let text = normalize_stream_text(text);
-        if self.tool_call_mode == ToolCallDisplayMode::Hidden || text.trim().is_empty() {
+    pub fn write_compaction_started(&mut self, turn_count: usize) -> Result<()> {
+        if self.plain {
             return Ok(());
         }
-        if self.tool_call_mode == ToolCallDisplayMode::Full {
-            self.stop_waiting()?;
-            self.end_active_stream_line()?;
-            self.finalize_reasoning_summary()?;
-            let mut stdout = io::stdout();
-            execute!(stdout, SetForegroundColor(Color::Green))?;
-            write!(stdout, "{text}")?;
-            execute!(stdout, ResetColor)?;
-            stdout.flush()?;
-            return Ok(());
-        }
-        let line_count = text.matches('\n').count().max(1);
-        self.summary.note_tool_progress(
-            name,
-            &format!(
-                "{} · {} {}",
-                t("subagent reasoning", "子代理推理"),
-                line_count,
-                t("lines", "行")
-            ),
-        );
+        self.stop_waiting()?;
+        self.summary.clear_live_lines()?;
+        self.end_active_stream_line()?;
+        self.finalize_reasoning_summary()?;
+        self.finalize_tools_summary()?;
+        let mut stdout = io::stdout();
+        writeln!(
+            stdout,
+            "{}",
+            tool_event_text(
+                &format!("{}×{turn_count}", t("compact context", "压缩上下文")),
+                "run"
+            )
+        )?;
+        stdout.flush()?;
         Ok(())
     }
 
-    /// 写入子工具调用进度。
+    /// 写入上下文压缩结束事件。
     ///
     /// 参数:
-    /// - `parent_name`: 父工具名称
-    /// - `payload`: 子工具调用 JSON
+    /// - `applied`: 是否成功应用压缩结果
     ///
     /// 返回:
     /// - 写入是否成功
-    fn write_subtool_call(&mut self, parent_name: &str, payload: &str) -> Result<()> {
-        let value = serde_json::from_str::<Value>(payload).unwrap_or(Value::Null);
-        let tool_name = value
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let args = value.get("args").and_then(Value::as_str).unwrap_or("");
-        if self.tool_call_mode == ToolCallDisplayMode::Full {
-            self.stop_waiting()?;
-            self.end_active_stream_line()?;
-            self.finalize_reasoning_summary()?;
-            let mut stdout = io::stdout();
-            if tool_name == "run_command" {
-                write_command_block_with_action(
-                    &mut stdout,
-                    args,
-                    &tool_event_label(tool_name, Some(args)),
-                )?;
-            } else if tool_name == "edit_file" {
-                if !write_edit_file_diff_block(&mut stdout, args)? {
-                    write_tool_payload(&mut stdout, t("args", "参数"), args)?;
-                }
-            } else {
-                writeln!(
-                    stdout,
-                    "{}",
-                    tool_event_text(&tool_event_label(tool_name, Some(args)), "run")
-                )?;
-                write_tool_payload(&mut stdout, t("args", "参数"), args)?;
-            }
-            stdout.flush()?;
-        } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            self.summary.note_tool_progress(
-                parent_name,
-                &format!(
-                    "{}: {}",
-                    t("subtool running", "子工具运行中"),
-                    self.summary.display_tool_name(tool_name)
-                ),
-            );
+    pub fn write_compaction_finished(&mut self, applied: bool) -> Result<()> {
+        if self.plain {
+            return Ok(());
         }
-        Ok(())
-    }
-
-    /// 写入子工具结果进度。
-    ///
-    /// 参数:
-    /// - `parent_name`: 父工具名称
-    /// - `payload`: 子工具结果 JSON
-    ///
-    /// 返回:
-    /// - 写入是否成功
-    fn write_subtool_result(&mut self, parent_name: &str, payload: &str) -> Result<()> {
-        let value = serde_json::from_str::<Value>(payload).unwrap_or(Value::Null);
-        let tool_name = value
-            .get("name")
-            .and_then(Value::as_str)
-            .unwrap_or("unknown");
-        let ok = value.get("ok").and_then(Value::as_bool).unwrap_or(true);
-        let output = value.get("output").and_then(Value::as_str).unwrap_or("");
-        let status = if ok { "ok" } else { "err" };
-        if self.tool_call_mode == ToolCallDisplayMode::Full {
-            self.stop_waiting()?;
-            self.end_active_stream_line()?;
-            self.finalize_reasoning_summary()?;
-            let mut stdout = io::stdout();
-            if tool_name == "run_command" {
-                write_command_result_blocks(&mut stdout, output)?;
-            } else {
-                writeln!(
-                    stdout,
-                    "{}",
-                    tool_event_text(&tool_event_label(tool_name, None), status)
-                )?;
-                write_tool_payload(&mut stdout, t("output", "输出"), output)?;
-            }
-            stdout.flush()?;
-        } else if self.tool_call_mode == ToolCallDisplayMode::Summary {
-            self.summary.note_tool_progress(
-                parent_name,
-                &format!(
-                    "{}: {} {status}",
-                    t("subtool finished", "子工具结束"),
-                    self.summary.display_tool_name(tool_name)
-                ),
-            );
-        }
+        self.stop_waiting()?;
+        self.summary.clear_live_lines()?;
+        self.end_active_stream_line()?;
+        let status = if applied { "ok" } else { "skip" };
+        let mut stdout = io::stdout();
+        writeln!(
+            stdout,
+            "{}",
+            tool_event_text(t("compact context", "压缩上下文"), status)
+        )?;
+        stdout.flush()?;
         Ok(())
     }
 
@@ -562,6 +515,25 @@ impl StreamRenderer {
         self.finalize_reasoning_summary()?;
         self.finalize_tools_summary()?;
         self.show_cursor()?;
+        Ok(())
+    }
+
+    /// 立即刷新当前正文缓冲。
+    ///
+    /// 返回:
+    /// - 刷新是否成功
+    pub fn flush_content(&mut self) -> Result<()> {
+        if self.mode != Some(ChatStreamKind::Content) {
+            return Ok(());
+        }
+        if self.plain {
+            println!();
+        } else {
+            let mut stdout = io::stdout();
+            write!(stdout, "{}", self.markdown.flush())?;
+            stdout.flush()?;
+        }
+        self.mode = None;
         Ok(())
     }
 
@@ -699,42 +671,10 @@ impl StreamRenderer {
         self.write_custom_tool_event_line(label, status)
     }
 
-    /// 追加写入自定义工具状态事件。
-    ///
-    /// 参数:
-    /// - `label`: 工具展示标签
-    /// - `status`: 工具状态文本
-    ///
-    /// 返回:
-    /// - 写入是否成功
     fn write_custom_tool_event_line(&self, label: &str, status: &str) -> Result<()> {
         let mut stdout = io::stdout();
         writeln!(stdout, "{}", tool_event_text(label, status))?;
         stdout.flush()?;
-        Ok(())
-    }
-
-    /// 隐藏终端光标。
-    ///
-    /// 返回:
-    /// - 操作是否成功
-    fn hide_cursor(&mut self) -> Result<()> {
-        if !self.cursor_hidden {
-            execute!(io::stdout(), Hide)?;
-            self.cursor_hidden = true;
-        }
-        Ok(())
-    }
-
-    /// 显示终端光标。
-    ///
-    /// 返回:
-    /// - 操作是否成功
-    fn show_cursor(&mut self) -> Result<()> {
-        if self.cursor_hidden {
-            execute!(io::stdout(), Show)?;
-            self.cursor_hidden = false;
-        }
         Ok(())
     }
 }

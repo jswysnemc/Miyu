@@ -44,6 +44,7 @@ impl ModelExtractionConfig {
 #[derive(Debug, Clone)]
 pub(crate) struct ModelExtractionInput {
     pub prompt: String,
+    #[allow(dead_code)]
     pub prompt_chars: usize,
     config: ModelExtractionConfig,
     source_turns: Vec<Turn>,
