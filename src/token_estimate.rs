@@ -46,7 +46,8 @@ fn text_tokens(text: &str) -> usize {
             latin += 1;
         }
     }
-    cjk / CHARS_PER_TOKEN_CJK + latin / CHARS_PER_TOKEN_LATIN
+    // 分组向上取整，与原先 chars.div_ceil(4) 在纯拉丁文本上对齐
+    cjk.div_ceil(CHARS_PER_TOKEN_CJK) + latin.div_ceil(CHARS_PER_TOKEN_LATIN)
 }
 
 /// 判断字符是否按 CJK 密度估算。

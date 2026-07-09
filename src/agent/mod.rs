@@ -128,26 +128,9 @@ impl Agent {
         mode: AgentMode,
         extra_system_prompt: Option<&str>,
     ) -> Result<Self> {
-        let mut base_system_prompt = config.system_prompt(paths)?;
         let tools_enabled = config.tools.enabled && config.active_model_tools_enabled()?;
-        if tools_enabled && config.skills.enabled {
-            let prompt = if config.tools.progressive_loading_enabled {
-                tools::skills_catalog_prompt(&config, paths)?
-            } else {
-                tools::skills_prompt(&config, paths)?
-            };
-            if !prompt.trim().is_empty() {
-                base_system_prompt.push_str("\n\n");
-                base_system_prompt.push_str(&prompt);
-            }
-        }
-        if let Some(prompt) = extra_system_prompt
-            .map(str::trim)
-            .filter(|prompt| !prompt.is_empty())
-        {
-            base_system_prompt.push_str("\n\n");
-            base_system_prompt.push_str(prompt);
-        }
+        let base_system_prompt =
+            build_base_system_prompt(&config, paths, tools_enabled, extra_system_prompt)?;
         if mode == AgentMode::Yolo {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
@@ -176,6 +159,136 @@ impl Agent {
             paths: paths.clone(),
             last_dynamic_sources: Vec::new(),
         })
+    }
+
+    /// 返回当前 Agent 模式。
+    ///
+    /// 返回:
+    /// - 当前模式
+    pub fn mode(&self) -> AgentMode {
+        self.mode
+    }
+
+    /// 返回当前会话 ID。
+    ///
+    /// 返回:
+    /// - 会话标识
+    pub fn session_id(&self) -> &str {
+        self.state.session_id()
+    }
+
+    /// 返回状态存储引用（runner 持久化渐进工具等）。
+    ///
+    /// 返回:
+    /// - 状态存储
+    pub fn state(&self) -> &StateStore {
+        &self.state
+    }
+
+    /// 切换模式并替换工具注册表（REPL 复用 Agent 时使用）。
+    ///
+    /// 参数:
+    /// - `mode`: 新模式
+    /// - `tools`: 与模式匹配的工具注册表
+    ///
+    /// 返回:
+    /// - 无
+    pub fn switch_mode(&mut self, mode: AgentMode, mut tools: ToolRegistry) {
+        self.mode = mode;
+        if self.tools_enabled && self.config.tools.progressive_loading_enabled {
+            tools::register_progressive_loader(&mut tools);
+        }
+        self.tools = tools;
+        // 1. 重置渐进加载可见性，避免跨模式残留
+        self.tool_visibility = ToolVisibility::new(self.config.tools.progressive_loading_enabled);
+    }
+
+    /// 每轮对话前轻量刷新：系统提示、上下文窗口、过期 turn 恢复。
+    ///
+    /// 返回:
+    /// - 刷新是否成功
+    pub fn prepare_for_turn(&mut self) -> Result<()> {
+        self.tools_enabled = self.config.tools.enabled && self.config.active_model_tools_enabled()?;
+        self.base_system_prompt =
+            build_base_system_prompt(&self.config, &self.paths, self.tools_enabled, None)?;
+        if self.mode == AgentMode::Yolo {
+            self.state
+                .reset_if_prompt_changed(&self.base_system_prompt)?;
+            self.state.recover_stale_turns()?;
+        }
+        self.context_tokens = self.config.active_context_chars()?;
+        self.max_tool_rounds = self.config.tools.max_rounds;
+        self.trim_at_ratio = self.config.context.trim_at_ratio;
+        Ok(())
+    }
+
+    /// 配置/客户端变更后全量重载（providers、模型、thinking 等）。
+    ///
+    /// 参数:
+    /// - `config`: 新配置
+    /// - `client`: 新 LLM 客户端
+    /// - `tools`: 新工具注册表
+    /// - `mode`: 当前模式
+    ///
+    /// 返回:
+    /// - 重载是否成功
+    pub fn reload(
+        &mut self,
+        config: AppConfig,
+        client: OpenAiCompatibleClient,
+        mut tools: ToolRegistry,
+        mode: AgentMode,
+    ) -> Result<()> {
+        self.config = config;
+        self.client = client;
+        self.mode = mode;
+        self.tools_enabled =
+            self.config.tools.enabled && self.config.active_model_tools_enabled()?;
+        if self.tools_enabled && self.config.tools.progressive_loading_enabled {
+            tools::register_progressive_loader(&mut tools);
+        }
+        self.tools = tools;
+        self.tool_visibility = ToolVisibility::new(self.config.tools.progressive_loading_enabled);
+        if self.config.tools.progressive_loading_enabled {
+            let loaded = self.state.load_loaded_tools()?;
+            self.restore_loaded_tools(&loaded);
+        }
+        self.memory = MemoryStore::new(&self.config, &self.paths);
+        self.memory.init()?;
+        self.prepare_for_turn()
+    }
+
+    /// 切换会话状态（/new、/resume、/clear 后）。
+    ///
+    /// 参数:
+    /// - `state`: 新状态存储
+    ///
+    /// 返回:
+    /// - 切换是否成功
+    pub fn replace_state(&mut self, state: StateStore) -> Result<()> {
+        self.state = state;
+        self.tool_visibility = ToolVisibility::new(self.config.tools.progressive_loading_enabled);
+        if self.config.tools.progressive_loading_enabled {
+            let loaded = self.state.load_loaded_tools()?;
+            self.restore_loaded_tools(&loaded);
+        }
+        self.last_dynamic_sources.clear();
+        if self.mode == AgentMode::Yolo {
+            self.state
+                .reset_if_prompt_changed(&self.base_system_prompt)?;
+            self.state.recover_stale_turns()?;
+        }
+        Ok(())
+    }
+
+    /// 重建记忆存储（/clear all 后）。
+    ///
+    /// 返回:
+    /// - 重建是否成功
+    pub fn reset_memory(&mut self) -> Result<()> {
+        self.memory = MemoryStore::new(&self.config, &self.paths);
+        self.memory.init()?;
+        Ok(())
     }
 
     /// 恢复上一轮已经加载的工具集合。
@@ -694,6 +807,44 @@ impl Agent {
     fn selected_model_label(&self) -> Result<Option<String>> {
         selected_model_label(&self.config)
     }
+}
+
+/// 组装基础系统提示（含 skills 目录与可选额外提示）。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `tools_enabled`: 是否启用工具（决定是否注入 skills 提示）
+/// - `extra_system_prompt`: 额外系统提示
+///
+/// 返回:
+/// - 基础系统提示文本
+fn build_base_system_prompt(
+    config: &AppConfig,
+    paths: &MiyuPaths,
+    tools_enabled: bool,
+    extra_system_prompt: Option<&str>,
+) -> Result<String> {
+    let mut base_system_prompt = config.system_prompt(paths)?;
+    if tools_enabled && config.skills.enabled {
+        let prompt = if config.tools.progressive_loading_enabled {
+            tools::skills_catalog_prompt(config, paths)?
+        } else {
+            tools::skills_prompt(config, paths)?
+        };
+        if !prompt.trim().is_empty() {
+            base_system_prompt.push_str("\n\n");
+            base_system_prompt.push_str(&prompt);
+        }
+    }
+    if let Some(prompt) = extra_system_prompt
+        .map(str::trim)
+        .filter(|prompt| !prompt.is_empty())
+    {
+        base_system_prompt.push_str("\n\n");
+        base_system_prompt.push_str(prompt);
+    }
+    Ok(base_system_prompt)
 }
 
 /// 创建当前对话轮次标识。

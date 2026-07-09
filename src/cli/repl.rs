@@ -1,5 +1,6 @@
 use super::repl_chrome::ReplChrome;
 use super::*;
+use crate::agent::Agent;
 
 pub(super) async fn run_repl(
     paths: &MiyuPaths,
@@ -15,6 +16,16 @@ pub(super) async fn run_repl(
     let mut mode = initial_mode;
     let mut input_history = load_repl_input_history(&state)?;
     let mut prefill = None::<String>;
+    // 1. 循环外创建 Agent，避免每轮重建 MemoryStore / 工具注册表
+    let initial_registry = build_repl_tool_registry(&config, paths, mode)?;
+    let mut agent = Agent::new(
+        config.clone(),
+        paths,
+        state.clone(),
+        client.clone(),
+        initial_registry,
+        mode,
+    )?;
 
     println!(
         "\x1b[2m{}\x1b[0m",
@@ -59,6 +70,7 @@ pub(super) async fn run_repl(
                         );
                         state = StateStore::new(paths)?;
                         state.init_files()?;
+                        agent.replace_state(state.clone())?;
                         input_history = load_repl_input_history(&state)?;
                         prefill = None;
                     }
@@ -78,6 +90,7 @@ pub(super) async fn run_repl(
                                 println!("{message}");
                                 state = StateStore::new(paths)?;
                                 state.init_files()?;
+                                agent.replace_state(state.clone())?;
                                 input_history = load_repl_input_history(&state)?;
                                 prefill = None;
                             }
@@ -100,6 +113,13 @@ pub(super) async fn run_repl(
                     crate::control_commands::ControlCommand::Clear { all } => {
                         println!("{}", crate::control_commands::clear_state(paths, all)?);
                         input_history.clear();
+                        // 2. 会话清空后刷新 Agent 状态；all 时重建记忆
+                        state = StateStore::new(paths)?;
+                        state.init_files()?;
+                        agent.replace_state(state.clone())?;
+                        if all {
+                            agent.reset_memory()?;
+                        }
                     }
                     crate::control_commands::ControlCommand::Model { selection } => {
                         let selection = match selection {
@@ -124,10 +144,12 @@ pub(super) async fn run_repl(
                             Ok(result) => {
                                 println!("{}", result.message);
                                 if result.changed {
-                                    reload_repl_config(
+                                    reload_repl_agent(
                                         paths,
                                         &mut config,
                                         &mut client,
+                                        &mut agent,
+                                        mode,
                                         thinking_override.as_deref(),
                                     )?;
                                     println!("{}", t("configuration reloaded", "配置已重新加载"));
@@ -161,10 +183,12 @@ pub(super) async fn run_repl(
         }
         if input.eq_ignore_ascii_case("/providers") {
             run_providers(paths, ProvidersArgs { index: None })?;
-            reload_repl_config(
+            reload_repl_agent(
                 paths,
                 &mut config,
                 &mut client,
+                &mut agent,
+                mode,
                 thinking_override.as_deref(),
             )?;
             println!("{}", t("configuration reloaded", "配置已重新加载"));
@@ -172,10 +196,12 @@ pub(super) async fn run_repl(
         }
         if input.eq_ignore_ascii_case("/config") {
             crate::config_tui::run(paths)?;
-            reload_repl_config(
+            reload_repl_agent(
                 paths,
                 &mut config,
                 &mut client,
+                &mut agent,
+                mode,
                 thinking_override.as_deref(),
             )?;
             println!("{}", t("configuration reloaded", "配置已重新加载"));
@@ -190,11 +216,18 @@ pub(super) async fn run_repl(
         if input.eq_ignore_ascii_case("/clear") {
             run_reset(paths, None)?;
             input_history.clear();
+            state = StateStore::new(paths)?;
+            state.init_files()?;
+            agent.replace_state(state.clone())?;
             continue;
         }
         if input.eq_ignore_ascii_case("/clear all") {
             run_reset(paths, Some("all"))?;
             input_history.clear();
+            state = StateStore::new(paths)?;
+            state.init_files()?;
+            agent.replace_state(state.clone())?;
+            agent.reset_memory()?;
             continue;
         }
         if let Some(rest) = repl_command_rest(input, "/thinking") {
@@ -206,10 +239,12 @@ pub(super) async fn run_repl(
                 eprintln!("{err}");
                 continue;
             }
-            reload_repl_config(
+            reload_repl_agent(
                 paths,
                 &mut config,
                 &mut client,
+                &mut agent,
+                mode,
                 thinking_override.as_deref(),
             )?;
             println!("{}", t("configuration reloaded", "配置已重新加载"));
@@ -230,6 +265,12 @@ pub(super) async fn run_repl(
             input_history.push(input.to_string());
         }
         render_repl_submitted_input(mode, input)?;
+        // 3. 模式变化时换工具表；每轮只做轻量 prepare
+        if agent.mode() != mode {
+            let registry = build_repl_tool_registry(&config, paths, mode)?;
+            agent.switch_mode(mode, registry);
+        }
+        agent.prepare_for_turn()?;
         let reasoning_mode = render::ReasoningDisplayMode::from_config(&config.display.reasoning);
         let tool_call_mode = render::ToolCallDisplayMode::from_config(&config.display.tool_calls);
         let render_options = stream_render_options(&config);
@@ -252,7 +293,7 @@ pub(super) async fn run_repl(
                 runner_output.push_event(event);
                 Ok(())
             };
-            let chat = runner.run_submission(runner_submission, &mut sink);
+            let chat = runner.run_submission_with_agent(runner_submission, &mut agent, &mut sink);
             tokio::pin!(chat);
             tokio::select! {
                 result = &mut chat => result.map(|_| ()),
@@ -354,15 +395,31 @@ fn render_repl_submitted_input(mode: AgentMode, input: &str) -> Result<()> {
     Ok(())
 }
 
-fn reload_repl_config(
+/// 重载配置与客户端，并同步到复用中的 Agent。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 可变配置
+/// - `client`: 可变 LLM 客户端
+/// - `agent`: 复用中的 Agent
+/// - `mode`: 当前模式
+/// - `thinking_override`: 命令行思考等级覆盖
+///
+/// 返回:
+/// - 重载是否成功
+fn reload_repl_agent(
     paths: &MiyuPaths,
     config: &mut AppConfig,
     client: &mut OpenAiCompatibleClient,
+    agent: &mut Agent,
+    mode: AgentMode,
     thinking_override: Option<&str>,
 ) -> Result<()> {
     *config = AppConfig::load(paths)?;
     apply_thinking_override(config, thinking_override)?;
     *client = OpenAiCompatibleClient::from_config(config, paths)?;
+    let registry = build_repl_tool_registry(config, paths, mode)?;
+    agent.reload(config.clone(), client.clone(), registry, mode)?;
     Ok(())
 }
 

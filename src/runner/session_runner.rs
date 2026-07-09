@@ -87,6 +87,35 @@ impl<'paths> SessionRunner<'paths> {
         }
     }
 
+    /// 在复用的 Agent 上执行 submission（REPL 热路径，避免每轮重建）。
+    ///
+    /// 参数:
+    /// - `submission`: runner 输入
+    /// - `agent`: 长生命周期 Agent
+    /// - `sink`: runner 事件接收器
+    ///
+    /// 返回:
+    /// - 可选聊天结果
+    pub(crate) async fn run_submission_with_agent<S>(
+        &self,
+        submission: RunnerSubmission,
+        agent: &mut Agent,
+        sink: &mut S,
+    ) -> Result<Option<crate::llm::ChatResult>>
+    where
+        S: RunnerEventSink,
+    {
+        match &submission.kind {
+            RunnerSubmissionKind::UserInput(input) => self
+                .run_user_input_with_agent(&submission, input.clone(), agent, sink)
+                .await
+                .map(Some),
+            RunnerSubmissionKind::Control(_) => {
+                bail!("runner control submission is not wired yet")
+            }
+        }
+    }
+
     /// 执行用户输入 submission。
     ///
     /// 参数:
@@ -152,6 +181,66 @@ impl<'paths> SessionRunner<'paths> {
         }
         if submission.show_final_summary {
             let mut snapshot = state.session_snapshot(context_limit_chars)?;
+            perf.mark("session snapshot");
+            snapshot.dynamic_sources = agent.last_dynamic_sources();
+            snapshot.active_run = Some(_active_run.summary());
+            sink.on_runner_event(RunnerEvent::FinalSummary(snapshot))?;
+            perf.mark("final summary event");
+        }
+        Ok(result)
+    }
+
+    /// 在既有 Agent 上执行用户输入（不重建 MemoryStore / 工具注册表 / 客户端）。
+    ///
+    /// 参数:
+    /// - `submission`: runner 输入
+    /// - `input`: 用户输入 submission
+    /// - `agent`: 复用中的 Agent
+    /// - `sink`: runner 事件接收器
+    ///
+    /// 返回:
+    /// - 聊天结果
+    async fn run_user_input_with_agent<S>(
+        &self,
+        submission: &RunnerSubmission,
+        input: UserInputSubmission,
+        agent: &mut Agent,
+        sink: &mut S,
+    ) -> Result<crate::llm::ChatResult>
+    where
+        S: RunnerEventSink,
+    {
+        AppConfig::init_files(self.paths)?;
+        let mut perf = PerfTrace::new("runner");
+        perf.mark("start reused-agent submission");
+        let config = self.load_config()?;
+        let context_limit_chars = config.active_context_chars()?;
+        let state_dir = active_state_dir(self.paths)?;
+        // 1. 仍按轮获取运行所有权，避免并发会话互相踩
+        let _active_run = ActiveRunGuard::acquire_with_state_dir(
+            agent.session_id(),
+            SessionOwner::from(submission.source),
+            &state_dir,
+        )?;
+        sink.on_runner_event(RunnerEvent::Started)?;
+        let input = with_channel_marker(input, submission.channel.as_ref());
+        // 2. 执行单轮（Agent 已由 REPL 完成 prepare_for_turn / switch_mode）
+        let mut turn_runner = TurnRunner::new(agent);
+        let result = turn_runner.run_user_input(&input, sink).await;
+        perf.mark("turn runner done");
+        if config.tools.progressive_loading_enabled {
+            let loaded_tools = agent.loaded_tools();
+            // 3. 持久化渐进加载集合，供崩溃恢复
+            agent.state().save_loaded_tools(&loaded_tools)?;
+            sink.on_runner_event(RunnerEvent::LoadedToolsChanged(loaded_tools))?;
+        }
+        let result = result?;
+        if should_apply_command_mode_exit_policy(submission.source) {
+            agent.state().apply_command_mode_runtime_exit_policy()?;
+            perf.mark("runtime exit policy");
+        }
+        if submission.show_final_summary {
+            let mut snapshot = agent.state().session_snapshot(context_limit_chars)?;
             perf.mark("session snapshot");
             snapshot.dynamic_sources = agent.last_dynamic_sources();
             snapshot.active_run = Some(_active_run.summary());
