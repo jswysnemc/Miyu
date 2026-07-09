@@ -287,8 +287,9 @@ pub(crate) fn render_table_cell(text: &str) -> String {
 
 /// 渲染表格单元格，返回带显示宽度的单元格内容。
 ///
-/// 仅当整个单元格为纯公式（`$...$` 或 `$$...$$`）时使用终端图片协议渲染，
-/// 混合内容（文本+公式）走 `render_table_cell` 半块渲染以保留全部文本。
+/// 只要单元格内含 `$...$` / `$$...$$` 公式（纯公式或文字+公式），
+/// 整格都走终端图片协议（Kitty / iTerm2 / Sixel），不再用半块字符。
+/// 无公式时走普通行内 Markdown 渲染。
 ///
 /// 参数:
 /// - `text`: 原始单元格文本
@@ -298,21 +299,42 @@ pub(crate) fn render_table_cell(text: &str) -> String {
 pub(crate) fn render_table_cell_content(text: &str) -> CellContent {
     let text = normalize_cell_text(text);
     let trimmed = text.trim();
+    if let Some((source, mixed)) = table_cell_math_render_source(trimmed) {
+        return asset_block::render_inline_math_table_cell(&source, usize::MAX, mixed);
+    }
+    CellContent::from_inline(render_table_cell(&text))
+}
+
+/// 从表格单元格提取图片协议渲染源码。
+///
+/// 参数:
+/// - `trimmed`: 已 trim 的单元格文本
+///
+/// 返回:
+/// - `(渲染源码, 是否为文字+公式混合)`；无公式时返回空
+fn table_cell_math_render_source(trimmed: &str) -> Option<(String, bool)> {
+    if !trimmed.contains('$') {
+        return None;
+    }
     let dollar_count = trimmed.chars().filter(|&c| c == '$').count();
+    // 1. 纯行内公式
     if dollar_count == 2 && trimmed.starts_with('$') && trimmed.ends_with('$') && trimmed.len() > 2
     {
-        let formula = &trimmed[1..trimmed.len() - 1];
-        return asset_block::render_inline_math_sixel(formula);
+        return Some((trimmed[1..trimmed.len() - 1].to_string(), false));
     }
+    // 2. 纯显示公式
     if dollar_count == 4
         && trimmed.starts_with("$$")
         && trimmed.ends_with("$$")
         && trimmed.len() > 4
     {
-        let formula = &trimmed[2..trimmed.len() - 2];
-        return asset_block::render_inline_math_sixel(formula);
+        return Some((trimmed[2..trimmed.len() - 2].to_string(), false));
     }
-    CellContent::from_inline(render_table_cell(&text))
+    // 3. 文字 + 公式：整格作为混合源码（Typst/LaTeX 管线）
+    if dollar_count >= 2 {
+        return Some((trimmed.to_string(), true));
+    }
+    None
 }
 
 /// 预处理表格单元格文本，将多行内容折叠为单行。

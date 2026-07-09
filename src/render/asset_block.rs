@@ -115,19 +115,29 @@ fn render_inline_math_halfblock_inner(source: &str) -> Result<String> {
     terminal_image::render_halfblock_line(&png, 8)
 }
 
-/// 渲染行内数学公式为终端图片协议，用于表格单元格。
+/// 渲染表格内含公式单元格为终端图片协议。
 ///
 /// 参数:
-/// - `source`: 数学公式源码
+/// - `source`: 纯公式源码，或文字+公式混合原文
+/// - `max_cols`: 最大终端列宽；`usize::MAX` 表示按终端估算
+/// - `mixed`: 是否为文字+公式混合内容
 ///
 /// 返回:
-/// - 带已知终端宽度的单元格内容，失败时回退为带样式源码
-pub(crate) fn render_inline_math_sixel(source: &str) -> CellContent {
+/// - 图片协议单元格内容，失败时回退为带样式源码
+pub(crate) fn render_inline_math_table_cell(
+    source: &str,
+    max_cols: usize,
+    mixed: bool,
+) -> CellContent {
     if source.trim().is_empty() {
         return CellContent::empty();
     }
-    match render_inline_math_sixel_inner(source) {
-        Ok(content) => content,
+    match render_inline_math_table_cell_inner(source, max_cols, mixed) {
+        Ok(mut content) => {
+            // 二次适配时保留源码与混合标记
+            content.math_source = Some(encode_table_math_source(source, mixed));
+            content
+        }
         Err(_) => {
             let mut fallback = String::new();
             fallback.push_str(INLINE_CODE_STYLE);
@@ -138,11 +148,244 @@ pub(crate) fn render_inline_math_sixel(source: &str) -> CellContent {
     }
 }
 
-/// 生成行内公式图片并以终端图片协议渲染，返回已知尺寸的单元格内容。
-fn render_inline_math_sixel_inner(source: &str) -> Result<CellContent> {
+/// 编码表格公式源，供列宽二次适配还原。
+///
+/// 参数:
+/// - `source`: 渲染源码
+/// - `mixed`: 是否混合内容
+///
+/// 返回:
+/// - 带前缀的源码标记
+fn encode_table_math_source(source: &str, mixed: bool) -> String {
+    if mixed {
+        format!("mixed:{source}")
+    } else {
+        format!("pure:{source}")
+    }
+}
+
+/// 解码表格公式源标记。
+///
+/// 参数:
+/// - `encoded`: `encode_table_math_source` 的结果
+///
+/// 返回:
+/// - `(源码, 是否混合)`
+pub(crate) fn decode_table_math_source(encoded: &str) -> (String, bool) {
+    if let Some(rest) = encoded.strip_prefix("mixed:") {
+        return (rest.to_string(), true);
+    }
+    if let Some(rest) = encoded.strip_prefix("pure:") {
+        return (rest.to_string(), false);
+    }
+    (encoded.to_string(), false)
+}
+
+/// 生成公式 PNG 并以图片协议渲染为表格单元格。
+///
+/// 参数:
+/// - `source`: 公式或混合原文
+/// - `max_cols`: 最大列宽
+/// - `mixed`: 是否混合内容
+///
+/// 返回:
+/// - 图片协议单元格
+fn render_inline_math_table_cell_inner(
+    source: &str,
+    max_cols: usize,
+    mixed: bool,
+) -> Result<CellContent> {
     let temp_dir = tempfile::tempdir().context("failed to create temporary render directory")?;
-    let png = render_math_image(source, &temp_dir, MathRenderMode::Inline)?;
-    terminal_image::render_inline_image_with_cell_size(&png)
+    let png = if mixed {
+        render_mixed_cell_math_image(source, &temp_dir)?
+    } else {
+        render_math_image(source, &temp_dir, MathRenderMode::Inline)?
+    };
+    let (term_cols, _) = crossterm::terminal::size()
+        .map(|(cols, rows)| (usize::from(cols), usize::from(rows)))
+        .unwrap_or((80, 24));
+    let default_max = (term_cols.saturating_sub(10) * 2 / 5).clamp(8, 36);
+    let max_cols = if max_cols == usize::MAX {
+        default_max
+    } else {
+        max_cols.clamp(1, 48)
+    };
+    terminal_image::render_inline_image_with_max_cols(&png, max_cols)
+}
+
+/// 渲染表格混合单元格（文字 + 公式）为 PNG。
+///
+/// 参数:
+/// - `source`: 含 `$...$` 的单元格原文
+/// - `temp_dir`: 临时目录
+///
+/// 返回:
+/// - PNG 路径
+fn render_mixed_cell_math_image(source: &str, temp_dir: &TempDir) -> Result<PathBuf> {
+    // 1. 优先 Typst：原生支持中文与行内公式混排
+    if let Some(output) = try_render_typst_mixed_cell(source, temp_dir)? {
+        return Ok(output);
+    }
+    // 2. 转成 LaTeX 后走 RaTeX
+    let latex = mixed_cell_to_latex(source);
+    if let Some(output) = try_render_ratex_math(&latex, temp_dir, MathRenderMode::Inline)? {
+        return Ok(output);
+    }
+    // 3. 降级 SVG 文本图
+    let svg = temp_dir.path().join("formula.svg");
+    let output = temp_dir.path().join("formula.png");
+    fs::write(&svg, build_math_svg(source, MathRenderMode::Inline))
+        .with_context(|| format!("failed to write {}", svg.display()))?;
+    convert_svg_to_png(&svg, &output)?;
+    ensure_file_exists(&output)?;
+    Ok(output)
+}
+
+/// 将文字+公式单元格转为 LaTeX 源码。
+///
+/// 参数:
+/// - `source`: 单元格原文
+///
+/// 返回:
+/// - `\text{...}` 与公式拼接后的 LaTeX
+fn mixed_cell_to_latex(source: &str) -> String {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if index + 1 < chars.len() && chars[index] == '$' && chars[index + 1] == '$' {
+            if let Some(end) = find_math_end(&chars, index + 2, true) {
+                let formula = chars[index + 2..end].iter().collect::<String>();
+                output.push_str(formula.trim());
+                index = end + 2;
+                continue;
+            }
+        }
+        if chars[index] == '$' {
+            if let Some(end) = find_math_end(&chars, index + 1, false) {
+                let formula = chars[index + 1..end].iter().collect::<String>();
+                output.push_str(formula.trim());
+                index = end + 1;
+                continue;
+            }
+        }
+        let start = index;
+        while index < chars.len() && chars[index] != '$' {
+            index += 1;
+        }
+        let text = chars[start..index].iter().collect::<String>();
+        if !text.is_empty() {
+            let escaped = text
+                .replace('\\', "\\textbackslash{}")
+                .replace('{', "\\{")
+                .replace('}', "\\}");
+            output.push_str("\\text{");
+            output.push_str(&escaped);
+            output.push('}');
+        }
+    }
+    output
+}
+
+/// 在字符切片中查找公式结束的 `$` 位置。
+///
+/// 参数:
+/// - `chars`: 字符切片
+/// - `start`: 公式内容起始下标
+/// - `display`: 是否为 `$$` 显示公式
+///
+/// 返回:
+/// - 结束标记起始下标
+fn find_math_end(chars: &[char], start: usize, display: bool) -> Option<usize> {
+    let mut index = start;
+    while index < chars.len() {
+        if display {
+            if chars[index] == '$' && chars.get(index + 1) == Some(&'$') {
+                return Some(index);
+            }
+        } else if chars[index] == '$' {
+            return Some(index);
+        }
+        index += 1;
+    }
+    None
+}
+
+/// 使用 Typst 渲染文字+公式混合单元格。
+///
+/// 参数:
+/// - `source`: 单元格原文（保留 `$...$`）
+/// - `temp_dir`: 临时目录
+///
+/// 返回:
+/// - 成功时返回 PNG 路径
+fn try_render_typst_mixed_cell(source: &str, temp_dir: &TempDir) -> Result<Option<PathBuf>> {
+    if !command_available("typst") {
+        return Ok(None);
+    }
+    let input = temp_dir.path().join("mixed_cell.typ");
+    let output = temp_dir.path().join("mixed_cell.png");
+    let body = escape_typst_mixed_cell(source);
+    let content = format!(
+        "#set page(width: auto, height: auto, margin: 2pt)\n#set text(fill: rgb(\"d7e3ff\"), size: 11pt)\n{body}\n"
+    );
+    fs::write(&input, content).with_context(|| format!("failed to write {}", input.display()))?;
+    let mut command = Command::new("typst");
+    command
+        .arg("compile")
+        .arg(&input)
+        .arg(&output)
+        .stdin(Stdio::null());
+    if run_command(command, "typst").is_ok() && output.is_file() {
+        return Ok(Some(output));
+    }
+    Ok(None)
+}
+
+/// 转义 Typst 混合单元格中的特殊字符，保留 `$...$` 公式。
+///
+/// 参数:
+/// - `source`: 单元格原文
+///
+/// 返回:
+/// - 可写入 Typst 文档的正文
+fn escape_typst_mixed_cell(source: &str) -> String {
+    let chars = source.chars().collect::<Vec<_>>();
+    let mut output = String::new();
+    let mut index = 0usize;
+    while index < chars.len() {
+        if index + 1 < chars.len() && chars[index] == '$' && chars[index + 1] == '$' {
+            if let Some(end) = find_math_end(&chars, index + 2, true) {
+                output.push_str("$ ");
+                output.extend(chars[index + 2..end].iter());
+                output.push_str(" $");
+                index = end + 2;
+                continue;
+            }
+        }
+        if chars[index] == '$' {
+            if let Some(end) = find_math_end(&chars, index + 1, false) {
+                output.push('$');
+                output.extend(chars[index + 1..end].iter());
+                output.push('$');
+                index = end + 1;
+                continue;
+            }
+        }
+        match chars[index] {
+            '#' => output.push_str("\\#"),
+            '\\' => output.push_str("\\\\"),
+            '*' => output.push_str("\\*"),
+            '_' => output.push_str("\\_"),
+            '`' => output.push_str("\\`"),
+            '<' => output.push_str("\\<"),
+            '>' => output.push_str("\\>"),
+            '@' => output.push_str("\\@"),
+            other => output.push(other),
+        }
+        index += 1;
+    }
+    output
 }
 
 /// 解析资产代码块类型。

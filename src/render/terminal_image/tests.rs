@@ -218,6 +218,42 @@ mod tests {
         assert!(output.contains("#180;2;100;0;0"));
     }
 
+    #[test]
+    fn table_image_dimensions_width_first_keeps_aspect() {
+        // 图 240x48，格 10x20：限制 12 列
+        // base_r(12)=2，+1 余量 => 3
+        let (cols, rows) = table_image_cell_dimensions(240, 48, 10, 20, 12, 16);
+        assert_eq!(cols, 12);
+        assert_eq!(rows, 3);
+    }
+
+    #[test]
+    fn table_image_dimensions_natural_size_without_clamp() {
+        // 图 240x48，格 10x20：自然 24 列
+        // base_r(24)=3，+1 => 4
+        let (cols, rows) = table_image_cell_dimensions(240, 48, 10, 20, 48, 16);
+        assert_eq!(cols, 24);
+        assert_eq!(rows, 4);
+    }
+
+    #[test]
+    fn table_image_dimensions_height_cap_recomputes_cols() {
+        // 100x400，格 10x20，max_rows=4；收 1 列后行高仍不超过上限
+        let (cols, rows) = table_image_cell_dimensions(100, 400, 10, 20, 20, 4);
+        assert!(rows <= 4);
+        assert!(cols >= 1 && cols <= 20);
+    }
+
+    #[test]
+    fn table_image_dimensions_clamps_abnormal_cell_height() {
+        // ioctl 给过大格高 40（宽 10 → 比 4:1）：应钳到 2:1 的 20，行数变多
+        let (cols_bad, rows_bad) = table_image_cell_dimensions(240, 48, 10, 40, 48, 16);
+        let (cols_ok, rows_ok) = table_image_cell_dimensions(240, 48, 10, 20, 48, 16);
+        assert_eq!(cols_bad, cols_ok);
+        assert_eq!(rows_bad, rows_ok);
+        assert!(rows_ok >= 3);
+    }
+
     fn write_test_rgba_png(path: &Path, width: u32, height: u32, pixels: &[Rgba]) {
         let file = File::create(path).unwrap();
         let writer = BufWriter::new(file);

@@ -20,6 +20,9 @@ pub(crate) struct ToolCallProgressTracker {
     entries: Vec<ToolCallProgressEntry>,
 }
 
+/// 未闭合 target 字段内容增长到该字节数时也触发进度，覆盖单行长命令
+const TARGET_CONTENT_BYTE_STEP: usize = 48;
+
 #[derive(Debug, Default)]
 struct ToolCallProgressEntry {
     emitted: bool,
@@ -27,6 +30,10 @@ struct ToolCallProgressEntry {
     last_arguments_bytes: usize,
     target_started: bool,
     target_seen: bool,
+    /// 未闭合 target 字段已解码内容的换行数，用于命令逐行流式预览
+    last_target_newlines: usize,
+    /// 未闭合 target 字段已解码内容的字节数
+    last_target_content_bytes: usize,
 }
 
 impl ToolCallProgressTracker {
@@ -57,12 +64,29 @@ impl ToolCallProgressTracker {
         let target_seen = entry.target_seen || has_complete_target_field(arguments);
         let target_started_changed = target_started && !entry.target_started;
         let target_changed = target_seen && !entry.target_seen;
+        // 1. 未闭合 target 字段：按换行或内容增量触发，使 command 块可逐行刷新
+        let partial_target = if target_started && !target_seen {
+            partial_target_field_content(arguments)
+        } else {
+            None
+        };
+        let target_newlines = partial_target
+            .as_ref()
+            .map(|text| text.matches('\n').count())
+            .unwrap_or(0);
+        let target_content_bytes = partial_target.as_ref().map(String::len).unwrap_or(0);
+        let target_line_progress = target_started
+            && !target_seen
+            && (target_newlines > entry.last_target_newlines
+                || target_content_bytes.saturating_sub(entry.last_target_content_bytes)
+                    >= TARGET_CONTENT_BYTE_STEP);
         let first_visible = !entry.emitted && (!name.trim().is_empty() || arguments_bytes > 0);
         if !(first_visible
             || name_changed
             || size_changed
             || target_started_changed
-            || target_changed)
+            || target_changed
+            || target_line_progress)
         {
             return None;
         }
@@ -71,6 +95,8 @@ impl ToolCallProgressTracker {
         entry.last_arguments_bytes = arguments_bytes;
         entry.target_started = target_started;
         entry.target_seen = target_seen;
+        entry.last_target_newlines = target_newlines;
+        entry.last_target_content_bytes = target_content_bytes;
         Some(ToolCallStreamProgress {
             index,
             name: (!name.trim().is_empty()).then(|| name.to_string()),
@@ -179,6 +205,78 @@ fn json_string_is_closed(value: &str) -> bool {
     false
 }
 
+/// 提取已开始但可能尚未闭合的 target 字段内容。
+///
+/// 参数:
+/// - `arguments`: 当前累计参数文本
+///
+/// 返回:
+/// - 已解码的字段字符串内容（未闭合时返回已收到部分）
+fn partial_target_field_content(arguments: &str) -> Option<String> {
+    for key in TARGET_KEYS {
+        if let Some(content) = partial_json_string_field(arguments, key) {
+            return Some(content);
+        }
+    }
+    None
+}
+
+/// 从 JSON 片段中提取指定字符串字段的已解码内容。
+///
+/// 参数:
+/// - `raw`: JSON 参数片段
+/// - `key`: 字段名
+///
+/// 返回:
+/// - 字段内容；字段未开始时返回空
+fn partial_json_string_field(raw: &str, key: &str) -> Option<String> {
+    let pattern = format!("\"{key}\"");
+    let key_index = raw.find(&pattern)?;
+    let after_key = &raw[key_index + pattern.len()..];
+    let colon_index = after_key.find(':')?;
+    let after_colon = after_key[colon_index + 1..].trim_start();
+    let quote_index = after_colon.find('"')?;
+    decode_json_string_prefix(&after_colon[quote_index..])
+}
+
+/// 解码以双引号开头的 JSON 字符串前缀。
+///
+/// 参数:
+/// - `value`: 以双引号开头的字符串片段
+///
+/// 返回:
+/// - 解码后的内容；未闭合时返回已收到内容
+fn decode_json_string_prefix(value: &str) -> Option<String> {
+    if !value.starts_with('"') {
+        return None;
+    }
+    let mut output = String::new();
+    let mut escaped = false;
+    for ch in value.chars().skip(1) {
+        if escaped {
+            output.push(match ch {
+                'n' => '\n',
+                'r' => '\r',
+                't' => '\t',
+                '"' => '"',
+                '\\' => '\\',
+                other => other,
+            });
+            escaped = false;
+            continue;
+        }
+        if ch == '\\' {
+            escaped = true;
+            continue;
+        }
+        if ch == '"' {
+            return Some(output);
+        }
+        output.push(ch);
+    }
+    Some(output)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +375,51 @@ mod tests {
             .update(0, "run_command", r#"{"command":"echo"#)
             .unwrap();
         assert_eq!(target.arguments_preview, r#"{"command":"echo"#);
+    }
+
+    #[test]
+    fn tracker_emits_on_command_newline_progress() {
+        let mut tracker = ToolCallProgressTracker::default();
+
+        let _ = tracker.update(0, "run_command", "").unwrap();
+        let started = tracker
+            .update(0, "run_command", r#"{"command":"line1"#)
+            .unwrap();
+        assert_eq!(started.arguments_preview, r#"{"command":"line1"#);
+
+        // 1. 同一行继续增长且未达步进阈值时不重复发送
+        assert!(tracker
+            .update(0, "run_command", r#"{"command":"line1 more"#)
+            .is_none());
+
+        // 2. 出现新换行时发送进度，便于命令块逐行刷新
+        let line2 = tracker
+            .update(0, "run_command", r#"{"command":"line1\nline2"#)
+            .unwrap();
+        assert!(line2.arguments_preview.contains(r#"line1\nline2"#));
+
+        let line3 = tracker
+            .update(
+                0,
+                "run_command",
+                r#"{"command":"line1\nline2\nline3"#,
+            )
+            .unwrap();
+        assert!(line3.arguments_preview.contains(r#"line3"#));
+    }
+
+    #[test]
+    fn tracker_emits_on_long_single_line_command_growth() {
+        let mut tracker = ToolCallProgressTracker::default();
+
+        let _ = tracker.update(0, "run_command", "").unwrap();
+        let started = tracker
+            .update(0, "run_command", r#"{"command":"echo "#)
+            .unwrap();
+        assert!(started.arguments_preview.contains("echo"));
+
+        let long = format!(r#"{{"command":"echo {}"#, "x".repeat(TARGET_CONTENT_BYTE_STEP));
+        let grown = tracker.update(0, "run_command", &long).unwrap();
+        assert!(grown.arguments_preview.contains("echo"));
     }
 }

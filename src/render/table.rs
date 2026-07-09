@@ -26,11 +26,13 @@ pub(crate) enum TableAlign {
 ///
 /// 对于含终端图片协议（如 Sixel）的单元格，`visible_width` 无法正确计算宽度，
 /// 因此由渲染方直接提供 `width`。
+/// `math_source` 在布局确定最终列宽后用于按列宽重渲染公式图片。
 #[derive(Clone)]
 pub(crate) struct CellContent {
     pub lines: Vec<String>,
     pub width: usize,
     pub is_image: bool,
+    pub math_source: Option<String>,
 }
 
 impl CellContent {
@@ -41,6 +43,7 @@ impl CellContent {
             lines: vec![text],
             width,
             is_image: false,
+            math_source: None,
         }
     }
 
@@ -50,6 +53,25 @@ impl CellContent {
             lines: vec![String::new()],
             width: 0,
             is_image: false,
+            math_source: None,
+        }
+    }
+
+    /// 构造图片单元格。
+    ///
+    /// 参数:
+    /// - `lines`: 图片协议或半块文本行
+    /// - `width`: 声明的终端列宽
+    /// - `math_source`: 可选公式源码，用于按最终列宽重渲染
+    ///
+    /// 返回:
+    /// - 图片单元格内容
+    pub fn from_image(lines: Vec<String>, width: usize, math_source: Option<String>) -> Self {
+        Self {
+            lines,
+            width: width.max(1),
+            is_image: true,
+            math_source,
         }
     }
 }
@@ -71,12 +93,14 @@ where
         .filter(|line| is_table_separator(line))
         .map(|line| parse_table_alignments(line))
         .unwrap_or_default();
-    let rows = lines
+    let mut rows = lines
         .iter()
         .filter(|line| !is_table_separator(line))
         .map(|line| parse_table_row(line, render_cell))
         .collect::<Vec<_>>();
     let widths = compute_table_widths(&rows);
+    // 1. 列宽确定后，按最终列宽重渲染公式图片，避免协议占位与列宽不一致
+    refit_math_image_cells(&mut rows, &widths);
 
     let mut output = String::new();
     output.push_str(&top_border(&widths));
@@ -88,6 +112,37 @@ where
     }
     output.push_str(&bottom_border(&widths));
     output
+}
+
+/// 按最终列宽重渲染带公式源的图片单元格。
+///
+/// 参数:
+/// - `rows`: 表格行
+/// - `widths`: 最终列宽
+fn refit_math_image_cells(rows: &mut [Vec<CellContent>], widths: &[usize]) {
+    for row in rows.iter_mut() {
+        for (index, cell) in row.iter_mut().enumerate() {
+            let Some(target_width) = widths.get(index).copied() else {
+                continue;
+            };
+            let Some(encoded) = cell.math_source.clone() else {
+                continue;
+            };
+            if !cell.is_image || cell.width <= target_width {
+                continue;
+            }
+            // 1. 列被压缩时按最终列宽重编码 c/r，避免图宽大于列宽
+            let (source, mixed) = crate::render::asset_block::decode_table_math_source(&encoded);
+            let mut refitted =
+                crate::render::asset_block::render_inline_math_table_cell(
+                    &source,
+                    target_width,
+                    mixed,
+                );
+            refitted.math_source = Some(encoded);
+            *cell = refitted;
+        }
+    }
 }
 
 /// 判断一行是否为 Markdown 表格分隔行。
@@ -118,18 +173,16 @@ pub(crate) fn parse_table_row<F>(line: &str, render_cell: F) -> Vec<CellContent>
 where
     F: Fn(&str) -> CellContent,
 {
-    line.trim()
-        .trim_matches('|')
-        .split('|')
-        .map(|cell| render_cell(cell.trim()))
+    split_table_cells(line)
+        .into_iter()
+        .map(|cell| render_cell(&cell))
         .collect()
 }
 
 /// 解析表格对齐标记。
 pub(crate) fn parse_table_alignments(line: &str) -> Vec<TableAlign> {
-    line.trim()
-        .trim_matches('|')
-        .split('|')
+    split_table_cells(line)
+        .into_iter()
         .map(|cell| {
             let cell = cell.trim();
             match (cell.starts_with(':'), cell.ends_with(':')) {
@@ -139,6 +192,83 @@ pub(crate) fn parse_table_alignments(line: &str) -> Vec<TableAlign> {
             }
         })
         .collect()
+}
+
+/// 按表格分隔符拆分单元格，忽略公式/代码内的 `|` 与转义 `\|`。
+///
+/// 参数:
+/// - `line`: 原始表格行
+///
+/// 返回:
+/// - 单元格文本列表（已 trim）
+pub(crate) fn split_table_cells(line: &str) -> Vec<String> {
+    let line = line.trim();
+    let line = line.strip_prefix('|').unwrap_or(line);
+    let line = if line.ends_with('|') && !line.ends_with("\\|") {
+        &line[..line.len().saturating_sub(1)]
+    } else {
+        line
+    };
+    let chars = line.chars().collect::<Vec<_>>();
+    let mut cells = Vec::new();
+    let mut current = String::new();
+    let mut index = 0usize;
+    let mut escaped = false;
+    let mut in_inline_math = false;
+    let mut in_display_math = false;
+    let mut in_code = false;
+    while index < chars.len() {
+        let ch = chars[index];
+        // 1. 反斜杠转义：下一字符原样写入，不作为分隔符
+        if escaped {
+            current.push(ch);
+            escaped = false;
+            index += 1;
+            continue;
+        }
+        if ch == '\\' {
+            current.push(ch);
+            escaped = true;
+            index += 1;
+            continue;
+        }
+        // 2. 显示公式 $$...$$
+        if ch == '$' && chars.get(index + 1) == Some(&'$') {
+            in_display_math = !in_display_math;
+            if !in_display_math {
+                in_inline_math = false;
+            }
+            current.push('$');
+            current.push('$');
+            index += 2;
+            continue;
+        }
+        // 3. 行内公式 $...$
+        if ch == '$' && !in_display_math {
+            in_inline_math = !in_inline_math;
+            current.push(ch);
+            index += 1;
+            continue;
+        }
+        // 4. 行内代码 `...`
+        if ch == '`' && !in_inline_math && !in_display_math {
+            in_code = !in_code;
+            current.push(ch);
+            index += 1;
+            continue;
+        }
+        // 5. 仅在公式/代码外的 | 才是列分隔
+        if ch == '|' && !in_inline_math && !in_display_math && !in_code {
+            cells.push(current.trim().to_string());
+            current.clear();
+            index += 1;
+            continue;
+        }
+        current.push(ch);
+        index += 1;
+    }
+    cells.push(current.trim().to_string());
+    cells
 }
 
 /// 根据列数量返回最小列宽，防止短内容列过窄。
@@ -165,7 +295,7 @@ pub(crate) fn compute_table_widths(rows: &[Vec<CellContent>]) -> Vec<usize> {
     for width in &mut widths {
         *width = (*width).max(min_width);
     }
-    bounded_table_widths(widths)
+    bounded_table_widths(rows, widths)
 }
 
 /// 渲染单个表格数据行。
@@ -216,19 +346,13 @@ pub(crate) fn render_table_row(
             } else {
                 line.to_string()
             };
-            let content_width = if is_image {
-                cell.map(|c| c.width).unwrap_or(0)
-            } else {
-                visible_width(&line)
-            };
             output.push(' ');
             if is_image {
-                output.push_str(&line);
-                let advance = content_width.min(*width);
-                output.push_str(&format!("\x1b[{advance}C"));
-                let padding = width.saturating_sub(content_width);
-                output.push_str(&" ".repeat(padding));
+                // 1. 图片协议载荷宽度为 0，需按声明列宽推进光标
+                // 2. 占位空行用空格填满列宽，避免后续列左移
+                push_image_cell_line(&mut output, &line, cell.map(|c| c.width).unwrap_or(0), *width);
             } else {
+                let content_width = visible_width(&line);
                 output.push_str(&aligned_cell_with_width(
                     &line,
                     content_width,
@@ -242,6 +366,42 @@ pub(crate) fn render_table_row(
         output.push('\n');
     }
     output
+}
+
+/// 写入图片单元格的一行内容。
+///
+/// 参数:
+/// - `output`: 输出缓冲
+/// - `line`: 当前行文本（首行为协议载荷，其余行为空占位）
+/// - `image_width`: 图片声明的终端列宽
+/// - `column_width`: 表格最终列宽
+fn push_image_cell_line(output: &mut String, line: &str, image_width: usize, column_width: usize) {
+    if line.is_empty() {
+        // 垂直占位行：纯空格保留列宽
+        output.push_str(&" ".repeat(column_width));
+        return;
+    }
+    if is_graphics_protocol_line(line) {
+        // 不填充列宽、不做 CSI 前进，只输出协议载荷
+        let _ = (image_width, column_width);
+        output.push_str(line);
+        return;
+    }
+    // 半块等字符型内容会自然推进光标
+    let content_width = visible_width(line);
+    output.push_str(line);
+    output.push_str(&" ".repeat(column_width.saturating_sub(content_width)));
+}
+
+/// 判断是否为终端图形协议载荷（Kitty / iTerm2 / Sixel）。
+///
+/// 参数:
+/// - `line`: 单元格行文本
+///
+/// 返回:
+/// - 是否为图形协议序列
+fn is_graphics_protocol_line(line: &str) -> bool {
+    line.starts_with("\x1b_G") || line.starts_with("\x1b]1337;") || line.starts_with("\x1bP")
 }
 
 /// 渲染表格顶部边框。
@@ -294,7 +454,16 @@ pub(crate) fn visible_width(text: &str) -> usize {
 }
 
 /// 将表格宽度限制在终端宽度内。
-fn bounded_table_widths(mut widths: Vec<usize>) -> Vec<usize> {
+///
+/// 优先压缩纯文本列；含图片的列尽量不低于图片声明宽度，避免协议占位与列宽错位。
+///
+/// 参数:
+/// - `rows`: 已渲染的表格行
+/// - `widths`: 初步列宽
+///
+/// 返回:
+/// - 适配终端后的列宽
+fn bounded_table_widths(rows: &[Vec<CellContent>], mut widths: Vec<usize>) -> Vec<usize> {
     if widths.is_empty() {
         return widths;
     }
@@ -307,14 +476,40 @@ fn bounded_table_widths(mut widths: Vec<usize>) -> Vec<usize> {
     let available = terminal_width
         .saturating_sub(border_overhead)
         .max(widths.len());
+    // 1. 计算每列图片内容的最小保留宽度
+    let image_mins = (0..widths.len())
+        .map(|index| {
+            rows.iter()
+                .filter_map(|row| row.get(index))
+                .filter(|cell| cell.is_image)
+                .map(|cell| cell.width.max(1))
+                .max()
+                .unwrap_or(1)
+        })
+        .collect::<Vec<_>>();
     while widths.iter().sum::<usize>() > available {
+        // 2. 优先缩小仍高于图片最小宽度（或纯文本）的最宽列
         let Some((index, width)) = widths
             .iter()
             .enumerate()
+            .filter(|(index, width)| **width > image_mins[*index])
             .max_by_key(|(_, width)| **width)
             .map(|(index, width)| (index, *width))
         else {
-            break;
+            // 3. 全部列已贴图片下限仍超宽时，再允许压缩图片列
+            let Some((index, width)) = widths
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, width)| **width)
+                .map(|(index, width)| (index, *width))
+            else {
+                break;
+            };
+            if width <= 1 {
+                break;
+            }
+            widths[index] -= 1;
+            continue;
         };
         if width <= 1 {
             break;
@@ -660,6 +855,98 @@ mod tests {
             strip_ansi_for_test(&lines.join("")),
             "sudo pacman -S neovim"
         );
+    }
+
+    #[test]
+    fn image_cell_placeholder_lines_reserve_column_width() {
+        let mut output = String::new();
+        push_image_cell_line(&mut output, "", 12, 10);
+        assert_eq!(output, " ".repeat(10));
+
+        let mut output = String::new();
+        // 半块文本按可见宽度补齐，而不是光标前进
+        push_image_cell_line(&mut output, "abc", 3, 6);
+        assert_eq!(output, "abc   ");
+    }
+
+    #[test]
+    fn graphics_protocol_line_emits_payload_only() {
+        let mut output = String::new();
+        let protocol = "\x1b_Gf=100,a=T,q=2,c=8,r=2;abc\x1b\\";
+        push_image_cell_line(&mut output, protocol, 8, 10);
+        assert_eq!(output, protocol);
+        assert!(!output.contains("\x1b[8C"));
+    }
+
+    #[test]
+    fn pure_math_table_cells_keep_border_structure() {
+        let output = render_table(
+            &[
+                "| 名称 | 公式 | 说明 |".to_string(),
+                "|---|---|---|".to_string(),
+                "| 勾股 | $a^2+b^2=c^2$ | 直角 |".to_string(),
+                "| 欧拉 | $e^{i\\\\pi}+1=0$ | 恒等式 |".to_string(),
+            ],
+            render_table_cell_content,
+        );
+        assert!(output.contains('┌'));
+        assert!(output.contains('│'));
+        assert!(output.matches('├').count() >= 2);
+        // 边框行可见宽度应一致
+        let border_widths = output
+            .lines()
+            .filter(|line| line.contains('─'))
+            .map(visible_width)
+            .collect::<Vec<_>>();
+        if let Some(first) = border_widths.first() {
+            assert!(
+                border_widths.iter().all(|w| w == first),
+                "border widths differ: {border_widths:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn split_table_cells_keeps_pipes_inside_math() {
+        let cells = split_table_cells(
+            r#"| 概率 | 全概率 | $P(B)=\sum_i P(A_i)P(B|A_i)$ | 通过 |"#,
+        );
+        assert_eq!(cells.len(), 4);
+        assert_eq!(cells[0], "概率");
+        assert_eq!(cells[1], "全概率");
+        assert_eq!(cells[2], r"$P(B)=\sum_i P(A_i)P(B|A_i)$");
+        assert_eq!(cells[3], "通过");
+    }
+
+    #[test]
+    fn split_table_cells_keeps_escaped_pipes() {
+        let cells = split_table_cells(r#"| a \| b | c |"#);
+        assert_eq!(cells.len(), 2);
+        assert_eq!(cells[0], r"a \| b");
+        assert_eq!(cells[1], "c");
+    }
+
+    #[test]
+    fn math_with_pipe_table_keeps_column_count() {
+        let output = render_table(
+            &[
+                "| 名称 | 公式 | 状态 |".to_string(),
+                "|---|---|---|".to_string(),
+                r#"| 全概率 | $P(B)=\sum_i P(A_i)P(B|A_i)$ | ok |"#.to_string(),
+            ],
+            render_table_cell_content,
+        );
+        // 三列表格应有 4 条竖线位置（含左右边框）
+        let data_line = output
+            .lines()
+            .find(|line| line.contains('│') && !line.contains('─'))
+            .expect("data line");
+        let bars = data_line.matches('│').count();
+        assert!(
+            bars >= 4,
+            "expected at least 4 vertical bars for 3 columns, got {bars}: {data_line}"
+        );
+        assert!(!output.contains(r"$P(B)=\sum_i"));
     }
 
     /// 去除 ANSI 转义序列，方便断言表格可见文本。
