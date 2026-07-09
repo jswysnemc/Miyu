@@ -1,3 +1,4 @@
+use super::repl_chrome::ReplChrome;
 use super::*;
 
 pub(super) struct ReplInputSubmission {
@@ -38,6 +39,7 @@ pub(super) fn read_repl_input(
     mut mode: AgentMode,
     prefill: Option<String>,
     history: &[String],
+    chrome: &mut ReplChrome,
 ) -> Result<Option<ReplInputSubmission>> {
     let mut stdout = io::stdout();
     let mut input = strip_terminal_control_sequences(&prefill.unwrap_or_default());
@@ -59,7 +61,7 @@ pub(super) fn read_repl_input(
         &mut stdout,
         &mut input_row,
         &mut rendered_rows,
-        mode,
+        chrome,
         &input,
         cursor,
         is_pasted,
@@ -74,7 +76,7 @@ pub(super) fn read_repl_input(
                     &mut stdout,
                     &mut input_row,
                     &mut rendered_rows,
-                    mode,
+                    chrome,
                     &input,
                     cursor,
                     is_pasted,
@@ -103,13 +105,14 @@ pub(super) fn read_repl_input(
                             } else {
                                 AgentMode::Yolo
                             };
+                            chrome.set_mode(mode);
                         }
                         is_pasted = false;
                         render_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -129,7 +132,7 @@ pub(super) fn read_repl_input(
                                 &mut stdout,
                                 &mut input_row,
                                 &mut rendered_rows,
-                                mode,
+                                chrome,
                                 &input,
                                 cursor,
                                 is_pasted,
@@ -144,7 +147,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -156,7 +159,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -168,7 +171,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -180,14 +183,14 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
                         )?;
                     }
                     KeyCode::Up => {
-                        let plain_prefix = format!("[{}] > ", mode.label());
+                        let plain_prefix = String::new();
                         if let Some(next_cursor) = move_cursor_up_by_visual_row(
                             &plain_prefix,
                             &input,
@@ -199,7 +202,7 @@ pub(super) fn read_repl_input(
                                 &mut stdout,
                                 &mut input_row,
                                 &mut rendered_rows,
-                                mode,
+                                chrome,
                                 &input,
                                 cursor,
                                 is_pasted,
@@ -214,7 +217,7 @@ pub(super) fn read_repl_input(
                                 &mut stdout,
                                 &mut input_row,
                                 &mut rendered_rows,
-                                mode,
+                                chrome,
                                 &input,
                                 cursor,
                                 is_pasted,
@@ -222,7 +225,7 @@ pub(super) fn read_repl_input(
                         }
                     }
                     KeyCode::Down => {
-                        let plain_prefix = format!("[{}] > ", mode.label());
+                        let plain_prefix = String::new();
                         if let Some(next_cursor) = move_cursor_down_by_visual_row(
                             &plain_prefix,
                             &input,
@@ -247,7 +250,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -260,7 +263,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -284,7 +287,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -296,7 +299,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -324,7 +327,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -348,7 +351,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -370,7 +373,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -383,7 +386,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -400,7 +403,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -415,7 +418,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,
@@ -430,7 +433,7 @@ pub(super) fn read_repl_input(
                             &mut stdout,
                             &mut input_row,
                             &mut rendered_rows,
-                            mode,
+                            chrome,
                             &input,
                             cursor,
                             is_pasted,

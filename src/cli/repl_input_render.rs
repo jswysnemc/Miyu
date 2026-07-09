@@ -1,27 +1,55 @@
+use super::repl_chrome::{chrome_fixed_rows, chrome_rule, ReplChrome};
 use super::*;
 
+/// 渲染极简 REPL 输入框与底栏。
+///
+/// 布局：
+/// 1. 顶部分隔线
+/// 2. 输入文本（无模式前缀）
+/// 3. 底部分隔线
+/// 4. 状态行：上下文占用 | 模型 · 思考等级
+/// 5. 模式标签
+/// 6. 可选斜杠补全提示
+///
+/// 参数:
+/// - `stdout`: 终端输出
+/// - `input_row`: 输入区起始行（可上移）
+/// - `rendered_rows`: 上次渲染占用行数
+/// - `chrome`: 底栏状态
+/// - `input`: 当前输入
+/// - `cursor`: 光标字符偏移
+/// - `is_pasted`: 是否粘贴内容
+///
+/// 返回:
+/// - 渲染是否成功
 pub(super) fn render_repl_input(
     stdout: &mut io::Stdout,
     input_row: &mut u16,
     rendered_rows: &mut u16,
-    mode: AgentMode,
+    chrome: &ReplChrome,
     input: &str,
     cursor: usize,
     is_pasted: bool,
 ) -> Result<()> {
+    let cols = terminal_cols();
     let suggestions = repl_command_suggestions(input);
     let lines = repl_input_lines(input);
-    let prompt_prefix = format!("{} > ", colored_mode_label(mode));
-    let plain_prefix = format!("[{}] > ", mode.label());
+    // 1. 输入区无模式前缀，保持极简
+    let plain_prefix = "";
     let display_lines = repl_visible_input_lines(
-        &plain_prefix,
+        plain_prefix,
         &lines,
         REPL_MAX_VISIBLE_INPUT_ROWS,
         is_pasted,
     );
-    let current_rows = repl_render_rows(&plain_prefix, &display_lines, !suggestions.is_empty());
+    let input_rows = repl_prompt_rows(plain_prefix, &display_lines).max(1);
+    let current_rows = chrome_fixed_rows()
+        + input_rows
+        + u16::from(!suggestions.is_empty());
     let rows_to_clear = (*rendered_rows).max(current_rows).max(1);
     ensure_repl_space(stdout, input_row, rows_to_clear)?;
+
+    // 2. 清空旧区域
     for row_offset in 0..rows_to_clear {
         queue!(
             stdout,
@@ -29,40 +57,69 @@ pub(super) fn render_repl_input(
             Clear(ClearType::CurrentLine)
         )?;
     }
-    let mut row_offset = 0u16;
+
+    let mut row = *input_row;
+    // 3. 顶线
+    queue!(
+        stdout,
+        MoveTo(0, row),
+        Print(chrome_rule(cols))
+    )?;
+    row = row.saturating_add(1);
+
+    // 4. 输入正文
+    let input_start_row = row;
     for (index, line) in display_lines.iter().enumerate() {
-        let row = (*input_row).saturating_add(row_offset);
-        queue!(stdout, MoveTo(0, row))?;
-        if index == 0 {
-            queue!(stdout, Print(&prompt_prefix), Print(line))?;
-            row_offset = row_offset.saturating_add(repl_line_rows(&plain_prefix, line));
+        queue!(stdout, MoveTo(0, row), Print(line))?;
+        let used = if index == 0 {
+            repl_line_rows(plain_prefix, line)
         } else {
-            queue!(stdout, Print(line))?;
-            row_offset = row_offset.saturating_add(repl_line_rows("", line));
-        }
+            repl_line_rows("", line)
+        };
+        row = row.saturating_add(used.max(1));
     }
+    if display_lines.is_empty() {
+        row = row.saturating_add(1);
+    }
+
+    // 5. 底线
+    queue!(
+        stdout,
+        MoveTo(0, row),
+        Print(chrome_rule(cols))
+    )?;
+    row = row.saturating_add(1);
+
+    // 6. 状态栏：yolo/plan 在上下文左侧，右侧为模型 · 思考等级
+    queue!(stdout, MoveTo(0, row), Print(chrome.footer_line(cols)))?;
+    row = row.saturating_add(1);
+
+    // 7. 斜杠补全
     if !suggestions.is_empty() {
-        let suggestion_row =
-            (*input_row).saturating_add(repl_prompt_rows(&plain_prefix, &display_lines));
         queue!(
             stdout,
-            MoveTo(0, suggestion_row),
+            MoveTo(0, row),
             Print(format!("\x1b[2m{}\x1b[0m", suggestions.join("  ")))
         )?;
     }
+
+    // 9. 光标回到输入区
     let (cursor_col, cursor_row_offset) = if display_lines.len() == lines.len() {
-        repl_cursor_position(&plain_prefix, input, cursor)
+        repl_cursor_position(plain_prefix, input, cursor)
     } else {
         let last_line = display_lines.last().map(String::as_str).unwrap_or_default();
-        let col = (visible_width(last_line) % terminal_cols()) as u16;
+        let col = (visible_width(last_line) % cols.max(1)) as u16;
         (
             col,
-            repl_prompt_rows(&plain_prefix, &display_lines).saturating_sub(1),
+            repl_prompt_rows(plain_prefix, &display_lines).saturating_sub(1),
         )
     };
     queue!(
         stdout,
-        MoveTo(cursor_col, (*input_row).saturating_add(cursor_row_offset))
+        MoveTo(
+            cursor_col,
+            input_start_row.saturating_add(cursor_row_offset)
+        )
     )?;
     stdout.flush()?;
     *rendered_rows = current_rows;
@@ -145,8 +202,11 @@ pub(super) fn clear_repl_input(
     Ok(())
 }
 
+#[allow(dead_code)]
 pub(super) fn repl_render_rows(prefix: &str, lines: &[String], has_suggestions: bool) -> u16 {
-    repl_prompt_rows_for_cols(prefix, lines, terminal_cols()) + u16::from(has_suggestions)
+    chrome_fixed_rows()
+        + repl_prompt_rows_for_cols(prefix, lines, terminal_cols())
+        + u16::from(has_suggestions)
 }
 
 pub(super) fn repl_prompt_rows(prefix: &str, lines: &[String]) -> u16 {
@@ -169,6 +229,9 @@ pub(super) fn repl_line_rows_for_cols(prefix: &str, line: &str, cols: usize) -> 
 
 pub(super) fn repl_prompt_rows_for_cols(prefix: &str, lines: &[String], cols: usize) -> u16 {
     let cols = cols.max(1);
+    if lines.is_empty() {
+        return 1;
+    }
     let mut rows = 0usize;
     for (index, line) in lines.iter().enumerate() {
         rows += repl_line_rows_for_cols(if index == 0 { prefix } else { "" }, line, cols) as usize;
@@ -185,6 +248,9 @@ pub(super) fn repl_cursor_position_for_cols(
     let cols = cols.max(1);
     let before_cursor = take_chars(input, cursor);
     let lines = repl_input_lines(&before_cursor);
+    if lines.is_empty() {
+        return (visible_width(prefix).min(u16::MAX as usize) as u16, 0);
+    }
     let last_index = lines.len().saturating_sub(1);
     let mut row_offset = 0usize;
     for (index, line) in lines.iter().enumerate() {

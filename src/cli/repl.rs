@@ -1,3 +1,4 @@
+use super::repl_chrome::ReplChrome;
 use super::*;
 
 pub(super) async fn run_repl(
@@ -18,8 +19,8 @@ pub(super) async fn run_repl(
     println!(
         "\x1b[2m{}\x1b[0m",
         t(
-            "Tab toggles mode; Enter sends; Shift+Enter/Ctrl+J inserts newline; Ctrl+V pastes clipboard",
-            "Tab 切换模式；Enter 发送；Shift+Enter/Ctrl+J 换行；Ctrl+V 粘贴剪贴板",
+            "Tab mode · Enter send · Shift+Enter newline · Ctrl+V paste",
+            "Tab 模式 · Enter 发送 · Shift+Enter 换行 · Ctrl+V 粘贴",
         )
     );
     crate::default_kb::check_update_if_due(paths).ok();
@@ -27,7 +28,9 @@ pub(super) async fn run_repl(
         println!("\x1b[2m{message}\x1b[0m");
     }
     loop {
-        let submission = match read_repl_input(mode, prefill.take(), &input_history)? {
+        // 每轮刷新底栏上下文/模型信息
+        let mut chrome = ReplChrome::from_runtime(&config, &state, mode);
+        let submission = match read_repl_input(mode, prefill.take(), &input_history, &mut chrome)? {
             Some(submission) => {
                 mode = submission.mode;
                 submission
@@ -99,20 +102,38 @@ pub(super) async fn run_repl(
                         input_history.clear();
                     }
                     crate::control_commands::ControlCommand::Model { selection } => {
-                        let result = crate::control_commands::run_model_command(
+                        let selection = match selection {
+                            Some(index) => Some(index),
+                            None => match model_select::select_model_index_interactively(paths) {
+                                Ok(index) => index,
+                                Err(err) => {
+                                    eprintln!("{err}");
+                                    continue;
+                                }
+                            },
+                        };
+                        let Some(selection) = selection else {
+                            println!("{}", t("model selection cancelled", "已取消模型选择"));
+                            continue;
+                        };
+                        match crate::control_commands::run_model_command(
                             paths,
-                            selection,
+                            Some(selection),
                             crate::control_commands::ControlSurface::Repl,
-                        )?;
-                        println!("{}", result.message);
-                        if result.changed {
-                            reload_repl_config(
-                                paths,
-                                &mut config,
-                                &mut client,
-                                thinking_override.as_deref(),
-                            )?;
-                            println!("{}", t("configuration reloaded", "配置已重新加载"));
+                        ) {
+                            Ok(result) => {
+                                println!("{}", result.message);
+                                if result.changed {
+                                    reload_repl_config(
+                                        paths,
+                                        &mut config,
+                                        &mut client,
+                                        thinking_override.as_deref(),
+                                    )?;
+                                    println!("{}", t("configuration reloaded", "配置已重新加载"));
+                                }
+                            }
+                            Err(err) => eprintln!("{err}"),
                         }
                     }
                 }
@@ -318,12 +339,16 @@ fn handle_repl_runner_event(
 /// - 渲染是否成功
 fn render_repl_submitted_input(mode: AgentMode, input: &str) -> Result<()> {
     let lines = repl_input_lines(input);
-    let prompt_prefix = format!("{} > ", colored_mode_label(mode));
+    // 提交后以极简前缀回显，与新输入框风格一致
+    let prefix = match mode {
+        AgentMode::Yolo => "\x1b[38;5;208m·\x1b[0m ",
+        AgentMode::Plan => "\x1b[36m·\x1b[0m ",
+    };
     for (index, line) in lines.iter().enumerate() {
         if index == 0 {
-            println!("{prompt_prefix}{line}");
+            println!("{prefix}{line}");
         } else {
-            println!("{line}");
+            println!("  {line}");
         }
     }
     Ok(())

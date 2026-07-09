@@ -58,7 +58,10 @@ fn shared_help_lines(surface: ControlSurface) -> Vec<String> {
         format!(
             "  {}  {}",
             command_label(surface, "/model", "/模型"),
-            t("list current provider models", "列出当前可选模型")
+            t(
+                "interactively pick a model (gateway lists models)",
+                "交互选择模型（网关下列出模型）"
+            )
         ),
         format!(
             "  {}  {}",

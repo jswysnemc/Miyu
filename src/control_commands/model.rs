@@ -127,7 +127,11 @@ fn model_switch_hint(surface: ControlSurface) -> String {
         )
         .to_string()
     } else {
-        t("Use /model <index> to switch.", "使用 /model <序号> 切换。").to_string()
+        t(
+            "Use /model to pick interactively, or /model <index>.",
+            "使用 /model 交互选择，或 /model <序号>。",
+        )
+        .to_string()
     }
 }
 
