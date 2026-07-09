@@ -3,13 +3,18 @@ use crate::render::status_style::{color_running, color_status};
 use crate::render::style::TOOL_BULLET;
 use crate::render::tool_names::readable_tool_name;
 use anyhow::Result;
+use crossterm::execute;
+use crossterm::terminal::{Clear, ClearType};
 use std::collections::BTreeMap;
+use std::io::{self, Write};
 
 const TOOL_SUMMARY_DETAIL_LIMIT: usize = 8;
 
 pub(crate) struct StreamSummary {
     reasoning_chars: usize,
     reasoning_lines: usize,
+    /// 思考摘要行是否正在终端上 live 刷新
+    reasoning_live: bool,
     tool_stats: BTreeMap<String, ToolStats>,
     readable_tool_names: bool,
 }
@@ -26,18 +31,27 @@ impl StreamSummary {
         Self {
             reasoning_chars: 0,
             reasoning_lines: 0,
+            reasoning_live: false,
             tool_stats: BTreeMap::new(),
             readable_tool_names,
         }
     }
 
-    /// 累加推理摘要计数。
+    /// 累加推理摘要计数，并立即刷新 live 行。
     ///
     /// 参数:
     /// - `text`: 本次收到的推理文本
-    pub(crate) fn add_reasoning_text(&mut self, text: &str) {
+    ///
+    /// 返回:
+    /// - 刷新是否成功
+    pub(crate) fn add_reasoning_text(&mut self, text: &str) -> Result<()> {
         self.reasoning_chars += text.chars().count();
         self.reasoning_lines += text.matches('\n').count();
+        // 一开始收到思考内容就显示块，随后只更新计数
+        if self.reasoning_chars > 0 {
+            self.render_live_reasoning()?;
+        }
+        Ok(())
     }
 
     /// 判断是否存在待固化的推理摘要。
@@ -46,6 +60,14 @@ impl StreamSummary {
     /// - 是否存在推理摘要
     pub(crate) fn has_reasoning(&self) -> bool {
         self.reasoning_chars > 0
+    }
+
+    /// 判断思考摘要 live 行是否仍占用当前终端行。
+    ///
+    /// 返回:
+    /// - 是否 live
+    pub(crate) fn reasoning_live_active(&self) -> bool {
+        self.reasoning_live
     }
 
     /// 判断是否存在待固化的工具摘要。
@@ -71,7 +93,21 @@ impl StreamSummary {
         )
     }
 
-    /// 固化推理摘要。
+    /// 用当前计数覆盖终端上的思考摘要 live 行。
+    ///
+    /// 返回:
+    /// - 渲染是否成功
+    fn render_live_reasoning(&mut self) -> Result<()> {
+        let text = style_summary_text(&self.reasoning_text(), SummaryStyle::Reasoning);
+        let mut stdout = io::stdout();
+        execute!(stdout, Clear(ClearType::CurrentLine))?;
+        write!(stdout, "\r{text}")?;
+        stdout.flush()?;
+        self.reasoning_live = true;
+        Ok(())
+    }
+
+    /// 固化推理摘要（结束 live 行并换行保留最终计数）。
     ///
     /// 返回:
     /// - 固化是否成功
@@ -79,10 +115,20 @@ impl StreamSummary {
         if !self.has_reasoning() {
             return Ok(());
         }
-        let text = self.reasoning_text();
-        println!("{}", style_summary_text(&text, SummaryStyle::Reasoning));
+        let text = style_summary_text(&self.reasoning_text(), SummaryStyle::Reasoning);
+        let mut stdout = io::stdout();
+        if self.reasoning_live {
+            // 1. 覆盖 live 行后换行定格
+            execute!(stdout, Clear(ClearType::CurrentLine))?;
+            write!(stdout, "\r{text}")?;
+            writeln!(stdout)?;
+        } else {
+            writeln!(stdout, "{text}")?;
+        }
+        stdout.flush()?;
         self.reasoning_chars = 0;
         self.reasoning_lines = 0;
+        self.reasoning_live = false;
         Ok(())
     }
 
@@ -136,11 +182,18 @@ impl StreamSummary {
         Ok(())
     }
 
-    /// 清除当前实时摘要行。
+    /// 清除当前实时摘要行（不固化计数，供其它块占用终端行前调用）。
     ///
     /// 返回:
     /// - 清除是否成功
     pub(crate) fn clear_live_lines(&mut self) -> Result<()> {
+        if self.reasoning_live {
+            let mut stdout = io::stdout();
+            execute!(stdout, Clear(ClearType::CurrentLine))?;
+            write!(stdout, "\r")?;
+            stdout.flush()?;
+            self.reasoning_live = false;
+        }
         Ok(())
     }
 
@@ -368,12 +421,32 @@ mod tests {
     #[test]
     fn reasoning_summary_uses_bullet_prefix() {
         let mut summary = StreamSummary::new(false);
-        summary.add_reasoning_text("abc\n");
+        summary.add_reasoning_text("abc\n").unwrap();
 
         let output = summary.reasoning_text();
 
         assert!(output.starts_with("• "));
         assert!(output.contains("思考") || output.contains("thinking"));
+        assert!(summary.reasoning_live_active());
+        assert!(output.contains("1"));
+        assert!(output.contains("4") || output.contains("3"));
+    }
+
+    #[test]
+    fn reasoning_summary_counts_grow_with_chunks() {
+        let mut summary = StreamSummary::new(false);
+        summary.add_reasoning_text("ab").unwrap();
+        assert!(summary.reasoning_text().contains("2"));
+        // "cd\n" 计 3 字符、1 换行 => 合计 5 字符、1 行
+        summary.add_reasoning_text("cd\n").unwrap();
+        let text = summary.reasoning_text();
+        assert!(text.contains("5"));
+        assert!(text.contains("1"));
+        // 再加 "ef\n" => 8 字符、2 行
+        summary.add_reasoning_text("ef\n").unwrap();
+        let text = summary.reasoning_text();
+        assert!(text.contains("8"));
+        assert!(text.contains("2"));
     }
 
     #[test]

@@ -134,10 +134,11 @@ impl StreamRenderer {
         if self.reasoning_mode == ReasoningDisplayMode::Summary
             && chunk.kind == ChatStreamKind::Reasoning
         {
+            // Summary 模式：一开始就显示思考块，并随 chunk 更新行数/字符数
             self.stop_waiting()?;
             self.finish_live_tool_status()?;
             self.finalize_tools_summary()?;
-            self.summary.add_reasoning_text(&text);
+            self.summary.add_reasoning_text(&text)?;
             self.mode = Some(ChatStreamKind::Reasoning);
             return Ok(());
         }
@@ -510,9 +511,10 @@ impl StreamRenderer {
     /// - 准备是否成功
     pub fn prepare_for_external_output(&mut self) -> Result<()> {
         self.stop_waiting()?;
+        // 先固化思考摘要，再清 live / 切出流式行
+        self.finalize_reasoning_summary()?;
         self.summary.clear_live_lines()?;
         self.end_active_stream_line()?;
-        self.finalize_reasoning_summary()?;
         self.finalize_tools_summary()?;
         self.show_cursor()?;
         Ok(())
@@ -544,19 +546,27 @@ impl StreamRenderer {
     pub fn finish(&mut self) -> Result<()> {
         self.stop_waiting()?;
         self.finish_live_tool_status()?;
+        // Summary 思考 live 行先定格，避免后面的 println 拆成两行
+        if self.reasoning_mode == ReasoningDisplayMode::Summary {
+            self.finalize_reasoning_summary()?;
+        }
         self.summary.clear_live_lines()?;
         if self.mode == Some(ChatStreamKind::Content) && !self.plain {
             let mut stdout = io::stdout();
             write!(stdout, "{}", self.markdown.flush())?;
             stdout.flush()?;
         }
-        if self.mode == Some(ChatStreamKind::Reasoning) {
+        if self.mode == Some(ChatStreamKind::Reasoning)
+            && self.reasoning_mode != ReasoningDisplayMode::Summary
+        {
             execute!(io::stdout(), ResetColor)?;
-        }
-        if self.mode.is_some() {
+            println!();
+        } else if self.mode == Some(ChatStreamKind::Content) {
             println!();
         }
-        self.finalize_reasoning_summary()?;
+        if self.reasoning_mode != ReasoningDisplayMode::Summary {
+            self.finalize_reasoning_summary()?;
+        }
         self.finalize_tools_summary()?;
         self.mode = None;
         self.show_cursor()?;
