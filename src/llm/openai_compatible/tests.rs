@@ -399,6 +399,7 @@ mod tests {
             default_model: String::new(),
             timeout_seconds: 60,
             temperature: 0.7,
+            anthropic_max_tokens: 4096,
             thinking_level: "auto".to_string(),
             thinking_format: "auto".to_string(),
             extra_body: String::new(),

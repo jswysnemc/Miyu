@@ -201,7 +201,7 @@ pub(crate) fn apply_model_extraction_summary(
             last_summarized_seq: last_turn.seq,
             checkpoint_id: crate::state::failure_recovery::latest_checkpoint_id(db)?,
             source_turn_count: input.total_source_turn_count,
-            token_estimate: summary.chars().count().div_ceil(4),
+            token_estimate: crate::token_estimate::estimate_tokens(summary),
         },
     )?;
     Ok(())

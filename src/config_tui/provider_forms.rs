@@ -101,6 +101,7 @@ pub(super) fn edit_provider_form(
         default_model,
         timeout_seconds: fields[tag_end].value.trim().parse().unwrap_or(60),
         temperature: fields[tag_end + 1].value.trim().parse().unwrap_or(0.7),
+        anthropic_max_tokens: provider.anthropic_max_tokens,
         thinking_level: fields[tag_end + 2].value.trim().to_string(),
         thinking_format: fields[tag_end + 3].value.trim().to_string(),
         extra_body,

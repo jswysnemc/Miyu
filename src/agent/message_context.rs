@@ -59,7 +59,7 @@ pub(super) fn runtime_context_message() -> String {
     let runtime = terminal_runtime_context();
     format!(
         "<system-reminder>\n当前系统时间：{}。用户询问当前时间时，优先使用这里的时间，不需要调用命令查询。\n当前工作目录：{cwd}。涉及相对路径、当前项目、文件操作时优先以此为准。\n{runtime}\n</system-reminder>",
-        Local::now().format("%Y年%m月%d日 %H:%M")
+        Local::now().format("%Y年%m月%d日 %A %H:%M")
     )
 }
 

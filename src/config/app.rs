@@ -118,6 +118,24 @@ impl AppConfig {
             if provider.base_url.trim().is_empty() {
                 bail!("provider {} base_url cannot be empty", provider.id);
             }
+            if provider.timeout_seconds == 0 {
+                bail!(
+                    "provider {} timeout_seconds must be greater than 0",
+                    provider.id
+                );
+            }
+            if !(0.0..=2.0).contains(&provider.temperature) {
+                bail!(
+                    "provider {} temperature must be between 0.0 and 2.0",
+                    provider.id
+                );
+            }
+            if provider.anthropic_max_tokens == 0 {
+                bail!(
+                    "provider {} anthropic_max_tokens must be greater than 0",
+                    provider.id
+                );
+            }
             match provider.thinking_level.trim() {
                 "" | "auto" | "none" | "low" | "medium" | "high" | "xhigh" | "max" => {}
                 value => bail!(
@@ -323,6 +341,35 @@ impl AppConfig {
         provider.default_model = model.to_string();
         if !provider.models.iter().any(|item| item == model) {
             provider.models.push(model.to_string());
+        }
+        Ok(())
+    }
+
+    /// 从指定 provider 的激活模型列表中移除模型，并清理相关元数据。
+    ///
+    /// 参数:
+    /// - `provider_id`: provider 标识
+    /// - `model`: 要移除的模型 ID
+    ///
+    /// 返回:
+    /// - 移除是否成功
+    pub fn remove_active_provider_model(&mut self, provider_id: &str, model: &str) -> Result<()> {
+        let provider = self
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == provider_id)
+            .with_context(|| format!("provider not found: {provider_id}"))?;
+        if model.trim().is_empty() {
+            bail!("model cannot be empty");
+        }
+        // 1. 从激活列表移除
+        provider.models.retain(|item| item != model);
+        // 2. 清理上下文与元数据
+        provider.model_context_chars.remove(model);
+        provider.model_metadata.remove(model);
+        // 3. 若移除的是当前默认模型，回退到列表首项
+        if provider.default_model == model {
+            provider.default_model = provider.models.first().cloned().unwrap_or_default();
         }
         Ok(())
     }

@@ -171,15 +171,7 @@ fn depth_default_tool_steps(depth: &str) -> usize {
 }
 
 fn estimate_tokens(texts: &[&str]) -> u64 {
-    let chars = texts
-        .iter()
-        .map(|text| text.chars().count() as u64)
-        .sum::<u64>();
-    if chars == 0 {
-        0
-    } else {
-        (chars / 4).max(1)
-    }
+    crate::token_estimate::estimate_texts_tokens(texts)
 }
 
 fn format_token_count(tokens: u64, estimated: bool) -> String {

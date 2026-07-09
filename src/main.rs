@@ -19,6 +19,7 @@ mod runner;
 mod runtime_recovery;
 mod shell;
 mod state;
+mod token_estimate;
 mod tools;
 
 use anyhow::Result;

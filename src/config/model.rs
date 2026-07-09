@@ -123,6 +123,12 @@ pub struct ProviderConfig {
         skip_serializing_if = "is_default_temperature"
     )]
     pub temperature: f32,
+    /// Anthropic Messages API 的 max_tokens（仅 anthropic 协议使用）。
+    #[serde(
+        default = "default_anthropic_max_tokens",
+        skip_serializing_if = "is_default_anthropic_max_tokens"
+    )]
+    pub anthropic_max_tokens: u32,
     #[serde(
         default = "default_thinking_level",
         skip_serializing_if = "is_auto_thinking_level"

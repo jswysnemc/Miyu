@@ -306,27 +306,44 @@ impl<'a> ProviderBrowser<'a> {
         if self.active_col != 2 {
             return;
         }
-        if let (Some(provider), Some(model)) = (
-            self.config.providers.get_mut(self.provider_idx),
-            self.models.get(self.model_idx),
-        ) {
-            if let Some(index) = provider.models.iter().position(|item| item == &model.full) {
-                provider.models.remove(index);
-                if provider.default_model == model.full {
-                    provider.default_model = provider.models.first().cloned().unwrap_or_default();
-                }
+        let Some(model) = self.models.get(self.model_idx).cloned() else {
+            return;
+        };
+        let Some(provider_id) = self
+            .config
+            .providers
+            .get(self.provider_idx)
+            .map(|provider| provider.id.clone())
+        else {
+            return;
+        };
+        let is_active = self
+            .config
+            .providers
+            .get(self.provider_idx)
+            .map(|provider| provider.models.iter().any(|item| item == &model.full))
+            .unwrap_or(false);
+        if is_active {
+            // 通过统一移除接口清理列表与元数据
+            if self
+                .config
+                .remove_active_provider_model(&provider_id, &model.full)
+                .is_ok()
+            {
                 self.status = format!(
                     "{}: {}",
                     t("Deactivated model", "已取消激活模型"),
                     model.full
                 );
-            } else {
-                provider.models.push(model.full.clone());
-                if provider.default_model.trim().is_empty() {
-                    provider.default_model = model.full.clone();
-                }
-                self.status = format!("{}: {}", t("Activated model", "已激活模型"), model.full);
             }
+            return;
+        }
+        if let Some(provider) = self.config.providers.get_mut(self.provider_idx) {
+            provider.models.push(model.full.clone());
+            if provider.default_model.trim().is_empty() {
+                provider.default_model = model.full.clone();
+            }
+            self.status = format!("{}: {}", t("Activated model", "已激活模型"), model.full);
         }
     }
 
@@ -489,7 +506,7 @@ pub(crate) fn select_active_provider(
     stdout: &mut io::Stdout,
     config: &mut AppConfig,
 ) -> Result<()> {
-    let choices = config.provider_model_choices();
+    let mut choices = config.provider_model_choices();
     if choices.is_empty() {
         message(
             stdout,
@@ -512,6 +529,17 @@ pub(crate) fn select_active_provider(
         })
         .unwrap_or(0);
     loop {
+        if choices.is_empty() {
+            message(
+                stdout,
+                t(
+                    "No available Provider models left.",
+                    "已无可用 Provider 模型。",
+                ),
+            )?;
+            return Ok(());
+        }
+        selected = selected.min(choices.len().saturating_sub(1));
         let options = choices
             .iter()
             .map(|choice| choice.label())
@@ -521,12 +549,23 @@ pub(crate) fn select_active_provider(
             t(" SELECT PROVIDER/MODEL ", " 选择供应商/模型 "),
             &options,
             selected,
-            t("[Enter] select [q] back", "[Enter]选择 [q]返回"),
+            t(
+                "[Enter] select [d] remove [q] back",
+                "[Enter]选择 [d]移除 [q]返回",
+            ),
         )?;
         match read_key()? {
             KeyCode::Char('q') | KeyCode::Esc => return Ok(()),
             KeyCode::Up | KeyCode::Char('k') => selected = selected.saturating_sub(1),
             KeyCode::Down | KeyCode::Char('j') => selected = (selected + 1).min(options.len() - 1),
+            KeyCode::Char('d') => {
+                // 移除当前高亮模型（含元数据），并刷新列表
+                let choice = &choices[selected];
+                let provider_id = choice.provider_id.clone();
+                let model = choice.model.clone();
+                config.remove_active_provider_model(&provider_id, &model)?;
+                choices = config.provider_model_choices();
+            }
             KeyCode::Enter => {
                 config.set_active_provider_model(
                     &choices[selected].provider_id,

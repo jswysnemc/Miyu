@@ -428,6 +428,10 @@ pub(super) fn default_temperature() -> f32 {
     0.7
 }
 
+pub(super) fn default_anthropic_max_tokens() -> u32 {
+    4096
+}
+
 pub(super) fn default_thinking_level() -> String {
     "auto".to_string()
 }
@@ -442,6 +446,10 @@ pub(super) fn is_default_timeout(value: &u64) -> bool {
 
 pub(super) fn is_default_temperature(value: &f32) -> bool {
     (*value - default_temperature()).abs() < f32::EPSILON
+}
+
+pub(super) fn is_default_anthropic_max_tokens(value: &u32) -> bool {
+    *value == default_anthropic_max_tokens()
 }
 
 pub(super) fn is_auto_thinking_level(value: &str) -> bool {

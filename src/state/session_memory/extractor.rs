@@ -220,7 +220,12 @@ pub(super) fn is_disabled(memory: Option<&SessionMemory>) -> bool {
 /// 返回:
 /// - token 估算值
 fn estimate_turn_tokens(turns: &[Turn]) -> usize {
-    estimate_turn_chars(turns).div_ceil(4)
+    let mut combined = String::new();
+    for turn in turns {
+        combined.push_str(&turn.user_content);
+        combined.push_str(&turn.assistant_content);
+    }
+    crate::token_estimate::estimate_tokens(&combined)
 }
 
 /// 估算提取来源轮次字符数。

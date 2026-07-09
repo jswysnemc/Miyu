@@ -220,7 +220,7 @@ impl OpenAiCompatibleClient {
             messages: lower_anthropic_messages(messages),
             tools: (!tools.is_empty()).then(|| lower_anthropic_tools(tools)),
             stream: true,
-            max_tokens: 4096,
+            max_tokens: self.provider.anthropic_max_tokens,
             temperature: Some(self.provider.temperature),
         };
         let request = apply_provider_body_options(

@@ -251,7 +251,7 @@ pub(crate) fn token_estimate_method_label(method: TokenEstimateMethod) -> &'stat
     }
 }
 
-/// 依据字符数粗略估计 token 数。
+/// 依据 CJK/拉丁密度粗略估计 token 数。
 ///
 /// 参数:
 /// - `texts`: 待估计文本
@@ -259,15 +259,7 @@ pub(crate) fn token_estimate_method_label(method: TokenEstimateMethod) -> &'stat
 /// 返回:
 /// - 粗略 token 数
 pub(crate) fn estimate_tokens(texts: &[&str]) -> u64 {
-    let chars = texts
-        .iter()
-        .map(|text| text.chars().count() as u64)
-        .sum::<u64>();
-    if chars == 0 {
-        0
-    } else {
-        (chars / 4).max(1)
-    }
+    crate::token_estimate::estimate_texts_tokens(texts)
 }
 
 /// 格式化 token 数量。
@@ -531,6 +523,7 @@ mod tests {
     fn estimates_tokens_from_chars() {
         assert_eq!(estimate_tokens(&["abcd"]), 1);
         assert_eq!(estimate_tokens(&["abcdefgh"]), 2);
+        assert_eq!(estimate_tokens(&["你好世界"]), 2);
     }
 
     #[test]

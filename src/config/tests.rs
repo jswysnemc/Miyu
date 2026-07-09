@@ -25,6 +25,65 @@ fn new_openai_compatible_provider_has_no_active_model() {
 }
 
 #[test]
+fn remove_active_provider_model_clears_removed_current_model() {
+    let mut config = AppConfig::default();
+    let provider_id = config.providers[0].id.clone();
+    config.providers[0].models = vec!["old-model".to_string(), "next-model".to_string()];
+    config.providers[0].default_model = "old-model".to_string();
+    config.providers[0]
+        .model_context_chars
+        .insert("old-model".to_string(), 8192);
+    config.providers[0].model_metadata.insert(
+        "old-model".to_string(),
+        ModelMetadata {
+            context_chars: Some(8192),
+            tags: vec!["web_search".to_string()],
+            tools_enabled: None,
+        },
+    );
+
+    config
+        .remove_active_provider_model(&provider_id, "old-model")
+        .unwrap();
+
+    assert_eq!(config.providers[0].models, vec!["next-model"]);
+    assert_eq!(config.providers[0].default_model, "next-model");
+    assert!(!config.providers[0]
+        .model_context_chars
+        .contains_key("old-model"));
+    assert!(!config.providers[0].model_metadata.contains_key("old-model"));
+}
+
+#[test]
+fn remove_active_provider_model_clears_last_current_model() {
+    let mut config = AppConfig::default();
+    let provider_id = config.providers[0].id.clone();
+    config.providers[0].models = vec!["old-model".to_string()];
+    config.providers[0].default_model = "old-model".to_string();
+
+    config
+        .remove_active_provider_model(&provider_id, "old-model")
+        .unwrap();
+
+    assert!(config.providers[0].models.is_empty());
+    assert!(config.providers[0].default_model.is_empty());
+    assert!(config.provider_model_choices().is_empty());
+}
+
+#[test]
+fn validate_rejects_invalid_temperature_and_timeout() {
+    let mut config = AppConfig::default();
+    config.providers[0].temperature = 3.0;
+    assert!(config.validate().is_err());
+    config.providers[0].temperature = 0.7;
+    config.providers[0].timeout_seconds = 0;
+    assert!(config.validate().is_err());
+    config.providers[0].timeout_seconds = 60;
+    config.providers[0].anthropic_max_tokens = 0;
+    assert!(config.validate().is_err());
+}
+
+#[test]
 fn display_readable_tool_names_defaults_enabled() {
     let display: DisplayConfig = serde_json::from_str(r#"{"tool_calls":"summary"}"#).unwrap();
     assert!(display.readable_tool_names);
