@@ -12,3 +12,4 @@
 *.part
 *.old
 .qoder/
+.doc/
