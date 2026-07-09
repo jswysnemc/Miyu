@@ -30,6 +30,22 @@ pub(crate) async fn handle_gateway_command(
         ControlCommand::New { title } => {
             crate::control_commands::create_new_session(paths, &title)?
         }
+        ControlCommand::Resume { id } => match id {
+            Some(id) => crate::control_commands::resume_session(paths, &id)?,
+            None => {
+                // 网关无交互 UI，列出会话并提示带 ID 调用
+                let choices = crate::control_commands::session_resume_choices(paths)?;
+                let mut lines = vec![t(
+                    "Provide /resume <id>. Available sessions:",
+                    "请使用 /resume <id>。可用会话：",
+                )
+                .to_string()];
+                for (_, label) in choices {
+                    lines.push(label);
+                }
+                lines.join("\n")
+            }
+        },
         ControlCommand::Compact { keep_tail_turns } => {
             crate::control_commands::compact_conversation_from_paths(paths, keep_tail_turns).await?
         }

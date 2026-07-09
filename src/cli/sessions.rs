@@ -13,10 +13,53 @@ pub(super) fn run_sessions(paths: &MiyuPaths, args: SessionsArgs) -> Result<()> 
         SessionsCommand::List => list_current_sessions(paths),
         SessionsCommand::New(args) => create_current_session(paths, args),
         SessionsCommand::Switch(args) => switch_current_session(paths, args),
+        SessionsCommand::Resume(args) => run_resume(paths, args),
         SessionsCommand::Current => print_current_session(paths),
         SessionsCommand::Delete(args) => delete_current_session(paths, args),
         SessionsCommand::Rename(args) => rename_current_session(paths, args),
     }
+}
+
+/// 运行 resume：按 ID 或交互模糊选择后切换会话。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `args`: resume 参数
+///
+/// 返回:
+/// - 是否成功
+pub(super) fn run_resume(paths: &MiyuPaths, args: ResumeArgs) -> Result<()> {
+    let session_id = match args.id.as_deref().map(str::trim).filter(|id| !id.is_empty()) {
+        Some(id) => id.to_string(),
+        None => select_session_id_interactively(paths)?,
+    };
+    println!(
+        "{}",
+        crate::control_commands::resume_session(paths, &session_id)?
+    );
+    Ok(())
+}
+
+/// 交互式模糊选择会话 ID。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+///
+/// 返回:
+/// - 选中的会话 ID；取消时返回错误说明已取消
+pub(super) fn select_session_id_interactively(paths: &MiyuPaths) -> Result<String> {
+    let choices = crate::control_commands::session_resume_choices(paths)?;
+    let labels = choices
+        .iter()
+        .map(|(_, label)| label.clone())
+        .collect::<Vec<_>>();
+    let Some(index) = inline_fuzzy_select(&labels)? else {
+        bail!("{}", t("session selection cancelled", "已取消会话选择"));
+    };
+    choices
+        .get(index)
+        .map(|(id, _)| id.clone())
+        .ok_or_else(|| anyhow::anyhow!("{}", t("invalid session selection", "无效的会话选择")))
 }
 
 /// 输出会话列表。

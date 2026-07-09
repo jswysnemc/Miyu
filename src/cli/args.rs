@@ -50,6 +50,8 @@ pub enum Command {
     History(HistoryArgs),
     #[command(alias = "session")]
     Sessions(SessionsArgs),
+    /// 交互选择或按 ID 恢复会话
+    Resume(ResumeArgs),
     Kb(KbArgs),
     UpdateDefaultKb,
     Memory(MemoryArgs),
@@ -152,9 +154,17 @@ pub enum SessionsCommand {
     List,
     New(SessionTitleArgs),
     Switch(SessionIdArgs),
+    /// 交互选择或按 ID 恢复会话
+    Resume(ResumeArgs),
     Current,
     Delete(SessionIdArgs),
     Rename(SessionRenameArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct ResumeArgs {
+    /// 可选会话 ID；省略时进入交互选择
+    pub id: Option<String>,
 }
 
 #[derive(Debug, Args)]

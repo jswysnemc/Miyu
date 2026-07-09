@@ -1,6 +1,7 @@
 pub const REPL_COMMANDS: &[&str] = &[
     "/help",
     "/new",
+    "/resume",
     "/compact",
     "/clear",
     "/model",

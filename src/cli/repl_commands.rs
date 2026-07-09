@@ -77,6 +77,7 @@ mod tests {
         assert!(repl_commands().contains(&"/ps"));
         assert!(repl_commands().contains(&"/compact"));
         assert!(repl_commands().contains(&"/model"));
+        assert!(repl_commands().contains(&"/resume"));
         assert!(!repl_commands().contains(&"/帮助"));
         assert!(!repl_commands().contains(&"/压缩"));
         assert!(!repl_commands().contains(&"/模型"));

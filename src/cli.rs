@@ -150,6 +150,7 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::RemoveShellHook) => remove_shell_hooks(&paths),
         Some(Command::History(args)) => run_history(&paths, args),
         Some(Command::Sessions(args)) => run_sessions(&paths, args),
+        Some(Command::Resume(args)) => sessions::run_resume(&paths, args),
         Some(Command::Kb(args)) => run_kb(&paths, args).await,
         Some(Command::UpdateDefaultKb) => run_update_default_kb(&paths).await,
         Some(Command::Memory(args)) => run_memory(&paths, args),

@@ -11,6 +11,8 @@ pub enum ControlSurface {
 pub enum ControlCommand {
     Help,
     New { title: String },
+    /// 恢复/切换会话；`id` 为空时由 REPL/CLI 交互选择
+    Resume { id: Option<String> },
     Compact { keep_tail_turns: usize },
     Clear { all: bool },
     Model { selection: Option<usize> },
@@ -38,6 +40,16 @@ pub fn parse_control_command(
     if matches_surface_alias(&name, surface, "new", &["新建"]) {
         return Ok(Some(ControlCommand::New {
             title: rest.trim().to_string(),
+        }));
+    }
+    if matches_surface_alias(&name, surface, "resume", &["恢复", "续聊"]) {
+        let id = rest.trim();
+        return Ok(Some(ControlCommand::Resume {
+            id: if id.is_empty() {
+                None
+            } else {
+                Some(id.to_string())
+            },
         }));
     }
     if matches_surface_alias(&name, surface, "compact", &["压缩"]) {
@@ -178,6 +190,26 @@ mod tests {
         assert_eq!(
             parse_control_command("/压缩", ControlSurface::Repl).unwrap(),
             None
+        );
+    }
+
+    #[test]
+    fn parses_resume_with_optional_id() {
+        assert_eq!(
+            parse_control_command("/resume", ControlSurface::Repl).unwrap(),
+            Some(ControlCommand::Resume { id: None })
+        );
+        assert_eq!(
+            parse_control_command("/resume alpha-1", ControlSurface::Repl).unwrap(),
+            Some(ControlCommand::Resume {
+                id: Some("alpha-1".to_string())
+            })
+        );
+        assert_eq!(
+            parse_control_command("/恢复 work", ControlSurface::Gateway).unwrap(),
+            Some(ControlCommand::Resume {
+                id: Some("work".to_string())
+            })
         );
     }
 }

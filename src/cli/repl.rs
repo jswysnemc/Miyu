@@ -59,6 +59,28 @@ pub(super) async fn run_repl(
                         input_history = load_repl_input_history(&state)?;
                         prefill = None;
                     }
+                    crate::control_commands::ControlCommand::Resume { id } => {
+                        let session_id = match id {
+                            Some(id) => id,
+                            None => match sessions::select_session_id_interactively(paths) {
+                                Ok(id) => id,
+                                Err(err) => {
+                                    eprintln!("{err}");
+                                    continue;
+                                }
+                            },
+                        };
+                        match crate::control_commands::resume_session(paths, &session_id) {
+                            Ok(message) => {
+                                println!("{message}");
+                                state = StateStore::new(paths)?;
+                                state.init_files()?;
+                                input_history = load_repl_input_history(&state)?;
+                                prefill = None;
+                            }
+                            Err(err) => eprintln!("{err}"),
+                        }
+                    }
                     crate::control_commands::ControlCommand::Compact { keep_tail_turns } => {
                         let message = crate::control_commands::compact_conversation_with_agent(
                             &config,

@@ -32,6 +32,14 @@ fn shared_help_lines(surface: ControlSurface) -> Vec<String> {
         ),
         format!(
             "  {}  {}",
+            command_label(surface, "/resume [id]", "/恢复 [id]"),
+            t(
+                "resume a session interactively or by id",
+                "交互选择或按 ID 恢复会话"
+            )
+        ),
+        format!(
+            "  {}  {}",
             command_label(surface, "/compact [--keep N]", "/压缩 [--keep N]"),
             t(
                 "manually compact old turns; default keeps 2 recent turns",
