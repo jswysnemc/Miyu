@@ -21,6 +21,7 @@ struct FileQuery {
 struct SaveFileRequest {
     path: String,
     content: String,
+    expected_modified_at: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -95,6 +96,15 @@ async fn save_file(
     Json(request): Json<SaveFileRequest>,
 ) -> WebResult<Json<workspace::FileContent>> {
     let active = state.workspaces.active().map_err(WebError::from)?;
+    if let Some(expected) = request.expected_modified_at {
+        let current = workspace::read_file(std::path::Path::new(&active.path), &request.path)
+            .map_err(|error| WebError::bad_request(error.to_string()))?;
+        if current.modified_at != Some(expected) {
+            return Err(WebError::conflict(
+                "file changed outside the editor; review the latest content before saving",
+            ));
+        }
+    }
     let file = workspace::write_file(
         std::path::Path::new(&active.path),
         &request.path,

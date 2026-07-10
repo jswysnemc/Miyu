@@ -3,6 +3,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { AppConfig, PromptKind } from "../../api/contracts";
+import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 
 type PromptSettingsSectionProps = {
   config: AppConfig;
@@ -16,6 +17,7 @@ type PromptSettingsSectionProps = {
  * @returns 提示词管理区域
  */
 export function PromptSettingsSection({ config, onConfigChange }: PromptSettingsSectionProps) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [kind, setKind] = useState<PromptKind>("personas");
   const prompts = useQuery({ queryKey: ["prompts", kind], queryFn: () => api.prompts.list(kind) });
@@ -85,7 +87,9 @@ export function PromptSettingsSection({ config, onConfigChange }: PromptSettings
 
   /** 删除当前选中的提示词文件。 */
   const deletePrompt = async () => {
-    if (!selected || !window.confirm(`确定删除“${selected}”吗？`)) return;
+    if (!selected) return;
+    const confirmed = await confirm({ title: "删除提示词", description: `将删除“${selected}”及其关联文件。`, confirmLabel: "删除", danger: true });
+    if (!confirmed) return;
     setError("");
     try {
       await api.prompts.remove(kind, selected);

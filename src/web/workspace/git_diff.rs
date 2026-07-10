@@ -72,6 +72,10 @@ pub(crate) async fn apply_git_action(
     message: Option<&str>,
 ) -> Result<GitDiff> {
     match action {
+        "init" => {
+            let branch = message.map(str::trim).filter(|value| !value.is_empty()).unwrap_or("main");
+            run_git(root, &["init", "-b", branch]).await?;
+        }
         "stage" => run_paths_command(root, &["add"], paths, "-A").await?,
         "unstage" => run_paths_command(root, &["reset", "-q", "HEAD"], paths, ".").await?,
         "discard" => {

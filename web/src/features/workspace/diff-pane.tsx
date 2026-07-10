@@ -3,6 +3,7 @@ import { Check, GitBranch, Minus, Plus, RefreshCw, RotateCcw, Trash2 } from "luc
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { GitFileStatus } from "../../api/contracts";
+import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 
 /**
  * 渲染 Git 状态、暂存操作、提交输入和完整差异。
@@ -10,15 +11,20 @@ import type { GitFileStatus } from "../../api/contracts";
  * @returns Git 管理面板
  */
 export function DiffPane() {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const git = useQuery({ queryKey: ["workspace-diff"], queryFn: api.workspace.diff });
   const [message, setMessage] = useState("");
   const [pending, setPending] = useState("");
   const [error, setError] = useState("");
+  const [branch, setBranch] = useState("main");
 
   /** 执行 Git 操作并刷新文件树。 */
   const act = async (action: "stage" | "unstage" | "discard" | "commit", paths: string[] = []) => {
-    if (action === "discard" && !window.confirm(`确定撤销 ${paths.join("、")} 的工作区修改吗？`)) return;
+    if (action === "discard") {
+      const confirmed = await confirm({ title: "撤销工作区修改", description: `将恢复 ${paths.join("、")}，未保存修改无法恢复。`, confirmLabel: "撤销修改", danger: true });
+      if (!confirmed) return;
+    }
     setPending(`${action}:${paths.join("|")}`);
     setError("");
     try {
@@ -35,11 +41,26 @@ export function DiffPane() {
 
   /** 删除未跟踪文件。 */
   const removeUntracked = async (path: string) => {
-    if (!window.confirm(`确定删除未跟踪文件“${path}”吗？`)) return;
+    const confirmed = await confirm({ title: "删除未跟踪文件", description: `将永久删除“${path}”。`, confirmLabel: "删除文件", danger: true });
+    if (!confirmed) return;
     setPending(`delete:${path}`);
     try {
       await api.workspace.remove(path);
       await Promise.all([git.refetch(), queryClient.invalidateQueries({ queryKey: ["file-tree"] })]);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : String(reason));
+    } finally {
+      setPending("");
+    }
+  };
+
+  /** 初始化当前工作区 Git 仓库。 */
+  const initializeRepository = async () => {
+    setPending("init");
+    setError("");
+    try {
+      const next = await api.workspace.gitAction("init", [], branch);
+      queryClient.setQueryData(["workspace-diff"], next);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
@@ -53,7 +74,7 @@ export function DiffPane() {
         <div><span className="eyebrow">Git 工作区</span><h2><GitBranch size={15} />{git.data?.branch || "版本管理"}</h2></div>
         <button type="button" className="icon-button" onClick={() => void git.refetch()} aria-label="刷新变更"><RefreshCw size={14} /></button>
       </header>
-      {!git.data?.repository && !git.isLoading && <div className="editor-empty"><p>当前工作区不是 Git 仓库</p></div>}
+      {!git.data?.repository && !git.isLoading && <div className="git-init-panel"><GitBranch size={24} /><h3>初始化 Git 仓库</h3><p>为当前工作区创建本地版本历史，不会配置远程仓库。</p><label><span>默认分支</span><input value={branch} onChange={(event) => setBranch(event.target.value)} spellCheck={false} /></label><button type="button" onClick={() => void initializeRepository()} disabled={!branch.trim() || Boolean(pending)}>初始化仓库</button></div>}
       {git.data?.repository && (
         <div className="git-manager-body">
           <section className="git-change-panel">

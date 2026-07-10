@@ -31,8 +31,7 @@
   min-height: 49px;
 }
 
-.composer textarea,
-.composer-highlight {
+.composer textarea {
   display: block;
   width: 100%;
   min-height: 49px;
@@ -54,28 +53,6 @@
   color: var(--ink);
   caret-color: var(--ink);
   z-index: 2;
-}
-
-.composer-highlight {
-  position: absolute;
-  inset: 0;
-  overflow: hidden;
-  color: transparent;
-  pointer-events: none;
-  z-index: 1;
-}
-
-.input-plain-text {
-  color: transparent;
-}
-
-.input-image-token {
-  padding: 1px 2px;
-  border-radius: 4px;
-  background: color-mix(in srgb, var(--signal) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--signal) 30%, transparent);
-  color: var(--signal);
-  font: 500 13px/24px var(--font-code);
 }
 
 .composer textarea::placeholder {
@@ -101,13 +78,21 @@
   background: var(--paper-raised);
 }
 
-.composer-attachment img {
+.attachment-preview-button {
+  width: 100%;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
+.attachment-preview-button img {
   width: 100%;
   height: 100%;
   object-fit: cover;
 }
 
-.composer-attachment .attachment-token {
+.composer-attachment .attachment-name {
   position: absolute;
   right: 4px;
   bottom: 4px;
@@ -117,13 +102,15 @@
   border-radius: 4px;
   background: rgb(16 22 18 / 76%);
   color: #f2f5f3;
-  font: 500 9px/1.2 var(--font-code);
-  text-align: center;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font: 500 8px/1.2 var(--font-ui);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.composer-attachment button {
+.composer-attachment .attachment-remove {
   position: absolute;
   top: 4px;
   right: 4px;
@@ -137,8 +124,16 @@
   color: #f2f5f3;
 }
 
-.composer-attachment button:hover {
+.composer-attachment .attachment-remove:hover {
   background: rgb(16 22 18 / 95%);
+}
+
+.attachment-preview-image {
+  display: block;
+  max-width: 100%;
+  max-height: calc(100vh - 180px);
+  margin: 0 auto;
+  object-fit: contain;
 }
 
 .composer-footer {

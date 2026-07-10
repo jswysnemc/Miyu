@@ -1,7 +1,7 @@
 use super::super::app_state::WebAppState;
 use super::super::error::{WebError, WebResult};
 use super::super::workspaces::WorkspaceInfo;
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
@@ -24,6 +24,11 @@ struct RenameWorkspaceRequest {
     name: String,
 }
 
+#[derive(Deserialize)]
+struct BrowseDirectoryQuery {
+    path: Option<String>,
+}
+
 #[derive(Serialize)]
 struct RemovedResponse {
     removed: bool,
@@ -33,7 +38,7 @@ struct RemovedResponse {
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspaces", get(list).post(add))
-        .route("/api/workspaces/pick", post(pick))
+        .route("/api/workspaces/browse", get(browse))
         .route("/api/workspaces/:id", patch(rename).delete(remove))
         .route("/api/workspaces/:id/switch", post(switch))
 }
@@ -60,31 +65,13 @@ async fn add(
     Ok(Json(workspace))
 }
 
-/// 打开系统目录选择器并切换到所选工作区。
-///
-/// 参数:
-/// - `state`: Web 应用状态
-///
-/// 返回:
-/// - 选择并切换后的工作区，取消选择时返回空值
-async fn pick(State(state): State<WebAppState>) -> WebResult<Json<Option<WorkspaceInfo>>> {
-    ensure_workspace_switch_allowed(&state).await?;
-    let selected = rfd::AsyncFileDialog::new()
-        .set_title("选择 Miyu 工作区")
-        .pick_folder()
-        .await;
-    let Some(selected) = selected else {
-        return Ok(Json(None));
-    };
-    let workspace = state
-        .workspaces
-        .add(selected.path(), None)
+/// 浏览服务端允许选择的目录。
+async fn browse(
+    Query(query): Query<BrowseDirectoryQuery>,
+) -> WebResult<Json<super::super::workspaces::DirectoryListing>> {
+    let listing = super::super::workspaces::browse_directories(query.path.as_deref())
         .map_err(|error| WebError::bad_request(error.to_string()))?;
-    let workspace = state
-        .workspaces
-        .switch(&workspace.id)
-        .map_err(|error| WebError::bad_request(error.to_string()))?;
-    Ok(Json(Some(workspace)))
+    Ok(Json(listing))
 }
 
 /// 重命名工作区。

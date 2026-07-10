@@ -1,11 +1,9 @@
 import { useRef, useState } from "react";
-import { insertImageToken, nextImageToken, removeImageToken } from "./image-token";
 
 export type ComposerAttachment = {
   id: number;
   name: string;
   dataUrl: string;
-  token: string;
 };
 
 /**
@@ -15,12 +13,12 @@ export type ComposerAttachment = {
  * @param onValueChange 输入文本更新回调
  * @returns 图片附件状态和操作方法
  */
-export function useComposerAttachments(value: string, onValueChange: (value: string) => void) {
+export function useComposerAttachments() {
   const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
   const sequence = useRef(0);
 
   /**
-   * 读取并加入一组图片文件。
+   * 读取并加入一组独立图片附件。
    *
    * @param files 图片文件
    * @param selectionStart 插入选区起点
@@ -33,34 +31,22 @@ export function useComposerAttachments(value: string, onValueChange: (value: str
       name: file.name || `粘贴图片_${Date.now()}.png`,
       dataUrl: await readFileAsDataUrl(file)
     })));
-    let nextValue = value;
-    let caret = selectionStart;
-    let end = selectionEnd;
     const nextAttachments = [...attachments];
     for (const image of loaded) {
-      const token = nextImageToken(nextValue, nextAttachments.map((item) => item.token));
-      const inserted = insertImageToken(nextValue, caret, end, token);
-      nextValue = inserted.value;
-      caret = inserted.caret;
-      end = caret;
       sequence.current += 1;
-      nextAttachments.push({ id: sequence.current, ...image, token });
+      nextAttachments.push({ id: sequence.current, ...image });
     }
     setAttachments(nextAttachments);
-    onValueChange(nextValue);
-    return caret;
+    return selectionStart;
   };
 
   /**
-   * 删除指定附件及其文本 token。
+   * 删除指定附件。
    *
    * @param id 附件标识
    */
   const removeAttachment = (id: number) => {
-    const attachment = attachments.find((item) => item.id === id);
-    if (!attachment) return;
     setAttachments((items) => items.filter((item) => item.id !== id));
-    onValueChange(removeImageToken(value, attachment.token));
   };
 
   /**
@@ -68,10 +54,6 @@ export function useComposerAttachments(value: string, onValueChange: (value: str
    *
    * @param text 最新输入文本
    */
-  const syncFromText = (text: string) => {
-    setAttachments((items) => items.filter((item) => text.includes(item.token)));
-  };
-
   /** 清空全部附件。 */
   const clearAttachments = () => setAttachments([]);
 
@@ -82,7 +64,7 @@ export function useComposerAttachments(value: string, onValueChange: (value: str
    */
   const restoreAttachments = (items: ComposerAttachment[]) => setAttachments(items);
 
-  return { attachments, addFiles, removeAttachment, syncFromText, clearAttachments, restoreAttachments };
+  return { attachments, addFiles, removeAttachment, clearAttachments, restoreAttachments };
 }
 
 /**

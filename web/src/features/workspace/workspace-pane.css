@@ -32,6 +32,8 @@
 .editor-pane { display: grid; grid-template-rows: 37px minmax(0, 1fr); min-width: 0; min-height: 0; }
 .editor-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); background: var(--paper); }
 .editor-head > span { overflow: hidden; font: 400 11px var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.editor-external-change { margin-left: auto; color: var(--warning); font: 400 9px var(--font-ui) !important; }
+.editor-external-change + .editor-save { margin-left: 0; }
 .editor-save { display: flex; align-items: center; gap: 5px; height: 27px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper-deep); font-size: 11px; }
 .editor-save:disabled { cursor: not-allowed; opacity: 0.35; }
 .editor-area { position: relative; min-height: 0; }
@@ -61,6 +63,13 @@
 .git-file-actions { display: flex; opacity: 0; }
 .git-file-row:hover .git-file-actions { opacity: 1; }
 .git-clean { padding: 18px 10px; color: var(--ink-soft); font-size: 10px; text-align: center; }
+.git-init-panel { display: grid; width: min(380px, calc(100% - 32px)); margin: auto; place-items: center; padding: 28px; border: 1px solid var(--line); border-radius: 10px; text-align: center; }
+.git-init-panel > svg { color: var(--signal); }
+.git-init-panel h3 { margin: 10px 0 4px; font-size: 16px; }
+.git-init-panel p { margin: 0 0 16px; color: var(--ink-soft); font-size: 10px; line-height: 1.5; }
+.git-init-panel label { display: grid; gap: 5px; width: 100%; color: var(--ink-soft); font-size: 10px; text-align: left; }
+.git-init-panel input { min-height: 36px; padding: 0 9px; border: 1px solid var(--line); border-radius: 7px; outline: 0; background: transparent; font-family: var(--font-code); }
+.git-init-panel button { width: 100%; min-height: 35px; margin-top: 9px; border: 0; border-radius: 7px; background: var(--graphite); color: var(--paper); font-size: 11px; }
 .diff-clean { display: grid; height: 100%; place-content: center; }
 .panel-head h2 { display: flex; align-items: center; gap: 7px; }
 .diff-scroll { min-height: 0; overflow: auto; }

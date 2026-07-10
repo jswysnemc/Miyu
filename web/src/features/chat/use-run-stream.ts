@@ -12,6 +12,7 @@ const EVENT_TYPES = [
   "tool.call.started",
   "tool.progress",
   "tool.result",
+  "workspace.changed",
   "content.flushed",
   "compaction.started",
   "compaction.finished",
@@ -23,7 +24,7 @@ const EVENT_TYPES = [
 ] as const;
 
 /** 管理一轮 Agent 提交和 SSE 事件连接。 */
-export function useRunStream(onSettled: () => void) {
+export function useRunStream(onSettled: () => void, onWorkspaceChanged?: () => void) {
   const [state, dispatch] = useReducer(runEventReducer, initialRunState);
 
   useEffect(() => {
@@ -32,6 +33,7 @@ export function useRunStream(onSettled: () => void) {
     const handle = (message: MessageEvent<string>) => {
       const event = JSON.parse(message.data) as WebEvent;
       dispatch({ type: "event", event });
+      if (event.type === "workspace.changed") onWorkspaceChanged?.();
       if (["run.completed", "run.interrupted", "run.failed"].includes(event.type)) {
         source.close();
         onSettled();
@@ -42,7 +44,7 @@ export function useRunStream(onSettled: () => void) {
       // EventSource 会按 Last-Event-ID 自动重连，后端事件日志负责补发
     };
     return () => source.close();
-  }, [state.runId, state.completed, onSettled]);
+  }, [state.runId, state.completed, onSettled, onWorkspaceChanged]);
 
   /**
    * 启动一轮 Agent 运行。

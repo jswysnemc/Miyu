@@ -10,6 +10,7 @@ export function EditorPane({ path }: { path: string | null }) {
   const queryClient = useQueryClient();
   const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) });
   const [content, setContent] = useState("");
+  const [externalChange, setExternalChange] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
   useEffect(() => {
     let active = true;
@@ -19,12 +20,28 @@ export function EditorPane({ path }: { path: string | null }) {
     });
     return () => { active = false; };
   }, []);
-  useEffect(() => { if (file.data) setContent(file.data.content); }, [file.data]);
+  useEffect(() => {
+    setContent("");
+    setExternalChange(false);
+  }, [path]);
+  useEffect(() => {
+    if (!file.data) return;
+    setContent((current) => {
+      const dirty = current !== "" && current !== file.data.content;
+      if (dirty) {
+        setExternalChange(true);
+        return current;
+      }
+      setExternalChange(false);
+      return file.data.content;
+    });
+  }, [file.data]);
   const save = useMutation({
-    mutationFn: () => api.workspace.save(path!, content),
+    mutationFn: () => api.workspace.save(path!, content, file.data?.modified_at),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["file", path] });
       await queryClient.invalidateQueries({ queryKey: ["workspace-diff"] });
+      setExternalChange(false);
     }
   });
   if (!path) return <div className="editor-empty"><FileCodePlaceholder /><p>从文件树选择文本文件</p></div>;
@@ -32,6 +49,7 @@ export function EditorPane({ path }: { path: string | null }) {
     <section className="editor-pane">
       <header className="editor-head">
         <span title={path}>{path}</span>
+        {externalChange && <span className="editor-external-change">磁盘内容已变化</span>}
         <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
           <Save size={14} /> 保存
         </button>
@@ -49,6 +67,7 @@ export function EditorPane({ path }: { path: string | null }) {
         )}
         {(file.isLoading || !editorReady) && <div className="editor-state">加载编辑器</div>}
         {file.error && <div className="pane-error">{file.error.message}</div>}
+        {save.error && <div className="pane-error">{save.error.message}</div>}
       </div>
     </section>
   );

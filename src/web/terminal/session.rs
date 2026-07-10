@@ -43,6 +43,9 @@ impl TerminalSession {
         let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
         let mut command = CommandBuilder::new(&shell);
         command.cwd(cwd);
+        command.env("TERM", "xterm-256color");
+        command.env("COLORTERM", "truecolor");
+        command.env("TERM_PROGRAM", "Miyu Web");
         let child = pair
             .slave
             .spawn_command(command)

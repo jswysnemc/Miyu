@@ -1,4 +1,5 @@
 const SECRET_KEYS = ["api_key", "token", "secret", "password", "webhook"];
+import { PasswordField } from "../../shared/ui/password-field";
 
 type StructuredConfigFieldsProps = {
   value: Record<string, unknown>;
@@ -65,7 +66,8 @@ function StructuredField({ name, value, onChange }: { name: string; value: unkno
     );
   }
   const secret = SECRET_KEYS.some((key) => name.toLowerCase().includes(key));
-  return <label className="settings-field"><span>{label}</span><input type={secret ? "password" : "text"} value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} spellCheck={false} autoComplete="off" /><small>{name}</small></label>;
+  if (secret) return <div className="settings-field"><span>{label}</span><PasswordField value={String(value ?? "")} onChange={onChange} /><small>{name}</small></div>;
+  return <label className="settings-field"><span>{label}</span><input type="text" value={String(value ?? "")} onChange={(event) => onChange(event.target.value)} spellCheck={false} autoComplete="off" /><small>{name}</small></label>;
 }
 
 /**

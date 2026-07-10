@@ -24,12 +24,19 @@ export function ChatPage() {
   const onSettled = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: ["sessions"] });
   }, [queryClient]);
-  const run = useRunStream(onSettled);
+  const onWorkspaceChanged = useCallback(() => {
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["file-tree"] }),
+      queryClient.invalidateQueries({ queryKey: ["file"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-diff"] })
+    ]);
+  }, [queryClient]);
+  const run = useRunStream(onSettled, onWorkspaceChanged);
   const chatModel = useChatModel();
   const thinking = useThinkingLevel();
   const [input, setInput] = useState("");
   const [mode, setMode] = useState<"plan" | "yolo">("yolo");
-  const composerAttachments = useComposerAttachments(input, setInput);
+  const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -107,7 +114,6 @@ export function ChatPage() {
         onChange={setInput}
         onModeChange={setMode}
         onThinkingLevelChange={thinking.setThinkingLevel}
-        onAttachmentsSync={composerAttachments.syncFromText}
         onAddImages={composerAttachments.addFiles}
         onRemoveAttachment={composerAttachments.removeAttachment}
         onModelSelect={chatModel.selectModel}

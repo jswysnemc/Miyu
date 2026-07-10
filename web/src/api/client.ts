@@ -1,5 +1,6 @@
 import type {
   ConfigResponse,
+  DirectoryListing,
   FileContent,
   FileMutation,
   FileNode,
@@ -56,7 +57,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 export const api = {
   workspaces: {
     list: () => apiRequest<WorkspaceList>("/api/workspaces"),
-    pick: () => apiRequest<Workspace | null>("/api/workspaces/pick", { method: "POST" }),
+    browse: (path?: string) => apiRequest<DirectoryListing>(`/api/workspaces/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
     add: (path: string, name?: string) =>
       apiRequest<Workspace>("/api/workspaces", {
         method: "POST",
@@ -112,10 +113,10 @@ export const api = {
   workspace: {
     tree: () => apiRequest<FileNode[]>("/api/workspace/tree?depth=5"),
     file: (path: string) => apiRequest<FileContent>(`/api/workspace/file?path=${encodeURIComponent(path)}`),
-    save: (path: string, content: string) =>
+    save: (path: string, content: string, expectedModifiedAt?: number | null) =>
       apiRequest<FileContent>("/api/workspace/file", {
         method: "PUT",
-        body: JSON.stringify({ path, content })
+        body: JSON.stringify({ path, content, expected_modified_at: expectedModifiedAt })
       }),
     create: (path: string, kind: "file" | "directory") =>
       apiRequest<FileMutation>("/api/workspace/entry", {
@@ -133,7 +134,7 @@ export const api = {
         body: JSON.stringify({ path })
       }),
     diff: () => apiRequest<GitDiff>("/api/workspace/diff"),
-    gitAction: (action: "stage" | "unstage" | "discard" | "commit", paths: string[] = [], message?: string) =>
+    gitAction: (action: "init" | "stage" | "unstage" | "discard" | "commit", paths: string[] = [], message?: string) =>
       apiRequest<GitDiff>("/api/workspace/git", {
         method: "POST",
         body: JSON.stringify({ action, paths, message })

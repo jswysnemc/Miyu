@@ -3,6 +3,7 @@ import { Check, ChevronRight, File, FilePlus2, Folder, FolderOpen, FolderPlus, P
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { FileNode } from "../../api/contracts";
+import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 
 type FileTreeProps = {
   selectedFile: string | null;
@@ -19,6 +20,7 @@ type FileAction = { kind: "file" | "directory" | "rename"; value: string } | nul
  * @returns 文件浏览器
  */
 export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreeProps) {
+  const confirm = useConfirm();
   const queryClient = useQueryClient();
   const tree = useQuery({ queryKey: ["file-tree"], queryFn: api.workspace.tree });
   const [focusedPath, setFocusedPath] = useState<string | null>(selectedFile);
@@ -63,7 +65,14 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
 
   /** 删除当前聚焦的文件或目录。 */
   const deleteFocused = async () => {
-    if (!focusedPath || !window.confirm(`确定删除“${focusedPath}”吗？目录中的内容会一并删除。`)) return;
+    if (!focusedPath) return;
+    const confirmed = await confirm({
+      title: "删除工作区条目",
+      description: `将删除“${focusedPath}”${focusedNode?.kind === "directory" ? "及目录中的全部内容" : ""}。`,
+      confirmLabel: "删除",
+      danger: true
+    });
+    if (!confirmed) return;
     setError("");
     try {
       await api.workspace.remove(focusedPath);

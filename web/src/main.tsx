@@ -8,6 +8,7 @@ import "katex/dist/katex.min.css";
 import "./shared/styles/tokens.css";
 import "./shared/styles/global.css";
 import "./shared/styles/scrollbar.css";
+import "./shared/styles/surfaces.css";
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";

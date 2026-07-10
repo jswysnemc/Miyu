@@ -25,7 +25,6 @@ type ChatComposerProps = {
   onChange: (value: string) => void;
   onModeChange: (mode: "plan" | "yolo") => void;
   onThinkingLevelChange: (level: ThinkingLevel) => void;
-  onAttachmentsSync: (value: string) => void;
   onAddImages: (files: File[], selectionStart: number, selectionEnd: number) => Promise<number | undefined>;
   onRemoveAttachment: (id: number) => void;
   onModelSelect: (selection: RunModelSelection) => void;
@@ -77,7 +76,6 @@ export function ChatComposer(props: ChatComposerProps) {
           disabled={inputDisabled}
           placeholder={props.sessionAvailable ? "输入消息，Enter 发送" : "请先选择会话"}
           onChange={props.onChange}
-          onAttachmentsSync={props.onAttachmentsSync}
           onPasteImages={props.onAddImages}
           onSubmit={props.onSubmit}
         />

@@ -26,6 +26,23 @@
   background: var(--terminal-surface);
 }
 
+.terminal-connection-status {
+  position: absolute;
+  top: 9px;
+  right: 12px;
+  padding: 3px 7px;
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  background: var(--paper);
+  color: var(--ink-soft);
+  font: 400 9px var(--font-code);
+  z-index: 5;
+}
+
+.terminal-connection-status.failed {
+  color: var(--danger);
+}
+
 .terminal-dock {
   display: grid;
   grid-template-columns: 188px minmax(0, 1fr);

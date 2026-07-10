@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import type { TerminalInfo } from "../../api/contracts";
 
 /**
  * 管理终端列表、当前选择和显式关闭操作。
@@ -14,12 +15,19 @@ export function useTerminalManager() {
 
   useEffect(() => {
     const items = terminals.data?.terminals ?? [];
-    if (!items.some((item) => item.id === activeId)) setActiveId(items[0]?.id ?? null);
-  }, [terminals.data, activeId]);
+    if (!activeId) {
+      setActiveId(items[0]?.id ?? null);
+      return;
+    }
+    if (!terminals.isFetching && !items.some((item) => item.id === activeId)) setActiveId(items[0]?.id ?? null);
+  }, [terminals.data, terminals.isFetching, activeId]);
 
   /** 创建并选中新终端。 */
   const createTerminal = async () => {
     const terminal = await api.terminals.create(100, 28);
+    queryClient.setQueryData<{ terminals: TerminalInfo[] }>(["terminals"], (current) => ({
+      terminals: [...(current?.terminals ?? []), terminal]
+    }));
     setActiveId(terminal.id);
     await queryClient.invalidateQueries({ queryKey: ["terminals"] });
   };

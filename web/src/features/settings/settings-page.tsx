@@ -12,6 +12,7 @@ import { useSettingsConfig } from "./use-settings-config";
 import { useTheme } from "../theme/theme";
 import "./settings-page.css";
 import "./settings-extended.css";
+import "./settings-refined.css";
 
 const sections = [
   { id: "providers", label: "供应商与模型", description: "接口、凭据和模型列表", icon: KeyRound },

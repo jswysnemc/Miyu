@@ -14,7 +14,7 @@ pub(super) struct EventAssembler {
     tool_ids_by_index: HashMap<usize, String>,
     prepared_tool_indices: VecDeque<usize>,
     active_tools_by_name: HashMap<String, VecDeque<String>>,
-    next_tool_index: usize,
+    next_tool_id: usize,
 }
 
 impl EventAssembler {
@@ -36,7 +36,7 @@ impl EventAssembler {
             tool_ids_by_index: HashMap::new(),
             prepared_tool_indices: VecDeque::new(),
             active_tools_by_name: HashMap::new(),
-            next_tool_index: 0,
+            next_tool_id: 0,
         }
     }
 
@@ -150,6 +150,12 @@ impl EventAssembler {
                     "tool.result",
                     json!({ "tool_id": tool_id, "name": name, "ok": ok, "output": output }),
                 ));
+                if ok && matches!(name.as_str(), "edit_file" | "apply_patch") {
+                    events.push(self.event(
+                        "workspace.changed",
+                        json!({ "source": "tool", "tool_id": tool_id, "tool_name": name }),
+                    ));
+                }
                 events
             }
             AgentEvent::CompactionStarted { turn_count } => {
@@ -174,23 +180,35 @@ impl EventAssembler {
 
     /// 返回指定流式索引的稳定工具 ID。
     fn tool_id_for_index(&mut self, index: usize) -> String {
-        self.next_tool_index = self.next_tool_index.max(index.saturating_add(1));
-        self.tool_ids_by_index
-            .entry(index)
-            .or_insert_with(|| format!("{}-tool-{index}", self.run_id))
-            .clone()
+        if let Some(id) = self.tool_ids_by_index.get(&index) {
+            return id.clone();
+        }
+        let id = self.allocate_tool_id();
+        self.tool_ids_by_index.insert(index, id.clone());
+        id
     }
 
     /// 返回下一正式工具调用的 ID。
     fn tool_id_for_next_call(&mut self) -> String {
         let index = self
             .prepared_tool_indices
-            .pop_front()
-            .unwrap_or(self.next_tool_index);
-        let id = self.tool_id_for_index(index);
-        self.tool_ids_by_index.remove(&index);
-        self.next_tool_index = index.saturating_add(1);
-        id
+            .pop_front();
+        if let Some(index) = index {
+            let id = self.tool_id_for_index(index);
+            self.tool_ids_by_index.remove(&index);
+            return id;
+        }
+        self.allocate_tool_id()
+    }
+
+    /// 分配运行内全局唯一的工具 ID。
+    ///
+    /// 返回:
+    /// - 新工具 ID
+    fn allocate_tool_id(&mut self) -> String {
+        let sequence = self.next_tool_id;
+        self.next_tool_id = self.next_tool_id.saturating_add(1);
+        format!("{}-tool-{sequence}", self.run_id)
     }
 
     /// 返回指定名称当前活动工具 ID。
@@ -297,5 +315,55 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn allocates_new_id_when_provider_index_restarts_next_round() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+        let first = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCallProgress(
+            ToolCallStreamProgress {
+                index: 0,
+                name: Some("edit_file".to_string()),
+                arguments_chars: 10,
+                arguments_bytes: 10,
+                arguments_preview: "{}".to_string(),
+            },
+        )));
+        assembler.map(RunnerEvent::Agent(AgentEvent::ToolCall {
+            name: "edit_file".to_string(),
+            arguments: "{}".to_string(),
+        }));
+        assembler.map(RunnerEvent::Agent(AgentEvent::ToolResult {
+            name: "edit_file".to_string(),
+            ok: true,
+            output: "ok".to_string(),
+        }));
+        let second = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCallProgress(
+            ToolCallStreamProgress {
+                index: 0,
+                name: Some("read_file".to_string()),
+                arguments_chars: 10,
+                arguments_bytes: 10,
+                arguments_preview: "{}".to_string(),
+            },
+        )));
+        let first_id = first.last().unwrap().payload["tool_id"].as_str().unwrap();
+        let second_id = second.last().unwrap().payload["tool_id"].as_str().unwrap();
+        assert_ne!(first_id, second_id);
+    }
+
+    #[test]
+    fn emits_workspace_change_after_successful_edit() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+        assembler.map(RunnerEvent::Agent(AgentEvent::ToolCall {
+            name: "edit_file".to_string(),
+            arguments: "{}".to_string(),
+        }));
+        let events = assembler.map(RunnerEvent::Agent(AgentEvent::ToolResult {
+            name: "edit_file".to_string(),
+            ok: true,
+            output: "ok".to_string(),
+        }));
+        assert!(events.iter().any(|event| event.kind == "workspace.changed"));
     }
 }

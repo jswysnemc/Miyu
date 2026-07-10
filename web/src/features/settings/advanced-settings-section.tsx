@@ -1,4 +1,5 @@
 import { Braces } from "lucide-react";
+import { JsonCodeEditor } from "../../shared/ui/code-editor/json-code-editor";
 
 type AdvancedSettingsSectionProps = {
   value: string;
@@ -19,7 +20,7 @@ export function AdvancedSettingsSection({ value, onChange }: AdvancedSettingsSec
         <span className="advanced-settings-icon"><Braces size={17} /></span>
       </header>
       <div className="advanced-settings-note">结构化设置尚未覆盖的工具、显示、提示词和插件选项可在此修改。</div>
-      <textarea value={value} onChange={(event) => onChange(event.target.value)} spellCheck={false} aria-label="完整 AppConfig JSON" />
+      <JsonCodeEditor value={value} onChange={onChange} height="min(620px, calc(100vh - 320px))" ariaLabel="完整 AppConfig JSON" />
     </section>
   );
 }

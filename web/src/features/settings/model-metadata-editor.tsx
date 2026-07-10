@@ -1,6 +1,7 @@
 import { Plus, Trash2 } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ModelMetadata, ProviderConfig } from "../../api/contracts";
+import { Select } from "../../shared/ui/select/select";
 
 const MODEL_TAGS = ["tool", "thinking", "vision", "web_search", "fast", "low_cost"];
 
@@ -81,7 +82,7 @@ export function ModelMetadataEditor({ provider, onChange }: ModelMetadataEditorP
             <div className="model-metadata-head"><div><strong>{selected}</strong><small>单模型能力与上下文</small></div><button type="button" className={provider.default_model === selected ? "settings-secondary active" : "settings-secondary"} onClick={() => onChange({ default_model: selected })}>{provider.default_model === selected ? "默认模型" : "设为默认"}</button></div>
             <div className="settings-form-grid">
               <label className="settings-field"><span>上下文 token 数</span><input type="number" min="1" value={metadata.context_chars ?? ""} onChange={(event) => updateMetadata({ context_chars: event.target.value ? Number(event.target.value) : undefined })} placeholder="例如 128000" /><small>支持模型级上下文窗口</small></label>
-              <label className="settings-field"><span>工具调用</span><select value={metadata.tools_enabled === false ? "disabled" : "enabled"} onChange={(event) => updateMetadata({ tools_enabled: event.target.value === "enabled" ? undefined : false })}><option value="enabled">允许</option><option value="disabled">禁用</option></select><small>覆盖供应商默认能力</small></label>
+              <div className="settings-field"><span>工具调用</span><Select value={metadata.tools_enabled === false ? "disabled" : "enabled"} options={TOOL_OPTIONS} onChange={(value) => updateMetadata({ tools_enabled: value === "enabled" ? undefined : false })} ariaLabel="模型工具调用" /><small>覆盖供应商默认能力</small></div>
             </div>
             <div className="model-tag-field"><span>模型标签</span><div>{MODEL_TAGS.map((tag) => <button type="button" className={(metadata.tags ?? []).includes(tag) ? "active" : ""} key={tag} onClick={() => toggleTag(tag)}>{tag}</button>)}</div></div>
           </div>
@@ -90,3 +91,8 @@ export function ModelMetadataEditor({ provider, onChange }: ModelMetadataEditorP
     </section>
   );
 }
+
+const TOOL_OPTIONS = [
+  { value: "enabled", label: "允许" },
+  { value: "disabled", label: "禁用" }
+];

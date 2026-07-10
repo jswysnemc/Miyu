@@ -2,6 +2,8 @@ import { Bot, MessageCircleMore } from "lucide-react";
 import type { AppConfig } from "../../api/contracts";
 import { GatewayRuntimeControl } from "../gateways/gateway-runtime-control";
 import type { GatewayId } from "./settings-types";
+import { PasswordField } from "../../shared/ui/password-field";
+import { Select } from "../../shared/ui/select/select";
 
 type GatewaySettingsSectionProps = {
   config: AppConfig;
@@ -28,12 +30,12 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
           <label className="settings-switch"><input type="checkbox" checked={qq.enabled} onChange={(event) => onGatewayChange("qq", { enabled: event.target.checked })} /><span /><strong>{qq.enabled ? "已启用" : "未启用"}</strong></label>
         </header>
         <div className="settings-form-grid">
-          <label className="settings-field"><span>传输方式</span><select value={qq.transport} onChange={(event) => onGatewayChange("qq", { transport: event.target.value })}><option value="webhook">Webhook</option><option value="websocket">WebSocket</option></select><small>根据机器人接入方式选择</small></label>
+          <div className="settings-field"><span>传输方式</span><Select value={qq.transport} options={TRANSPORT_OPTIONS} onChange={(value) => onGatewayChange("qq", { transport: value })} ariaLabel="QQ 传输方式" /><small>根据机器人接入方式选择</small></div>
           <label className="settings-field"><span>监听地址</span><input value={qq.listen} onChange={(event) => onGatewayChange("qq", { listen: event.target.value })} spellCheck={false} /><small>本地服务绑定地址</small></label>
           <label className="settings-field full"><span>API 地址</span><input value={qq.base_url} onChange={(event) => onGatewayChange("qq", { base_url: event.target.value })} spellCheck={false} /></label>
           <label className="settings-field"><span>App ID</span><input value={qq.app_id} onChange={(event) => onGatewayChange("qq", { app_id: event.target.value })} /></label>
-          <label className="settings-field"><span>Client Secret</span><input type="password" value={qq.client_secret} onChange={(event) => onGatewayChange("qq", { client_secret: event.target.value })} autoComplete="off" /></label>
-          <label className="settings-field full"><span>兼容令牌</span><input type="password" value={qq.token} onChange={(event) => onGatewayChange("qq", { token: event.target.value })} autoComplete="off" /><small>需要时使用 `AppID:AppSecret` 格式</small></label>
+          <div className="settings-field"><span>Client Secret</span><PasswordField value={qq.client_secret} onChange={(value) => onGatewayChange("qq", { client_secret: value })} /></div>
+          <div className="settings-field full"><span>兼容令牌</span><PasswordField value={qq.token} onChange={(value) => onGatewayChange("qq", { token: value })} /><small>需要时使用 `AppID:AppSecret` 格式</small></div>
         </div>
         <GatewayRuntimeControl gatewayId="qq" enabled={qq.enabled} dirty={dirty} onSave={onSave} />
       </section>
@@ -50,10 +52,15 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
           <label className="settings-field"><span>机器人类型</span><input value={weixin.bot_type} onChange={(event) => onGatewayChange("weixin", { bot_type: event.target.value })} /></label>
           <label className="settings-field"><span>账户</span><input value={weixin.account} onChange={(event) => onGatewayChange("weixin", { account: event.target.value })} /></label>
           <label className="settings-field"><span>Agent</span><input value={weixin.bot_agent} onChange={(event) => onGatewayChange("weixin", { bot_agent: event.target.value })} /></label>
-          <label className="settings-field"><span>访问令牌</span><input type="password" value={weixin.token} onChange={(event) => onGatewayChange("weixin", { token: event.target.value })} autoComplete="off" /></label>
+          <div className="settings-field"><span>访问令牌</span><PasswordField value={weixin.token} onChange={(value) => onGatewayChange("weixin", { token: value })} /></div>
         </div>
         <GatewayRuntimeControl gatewayId="weixin" enabled={weixin.enabled} dirty={dirty} onSave={onSave} />
       </section>
     </div>
   );
 }
+
+const TRANSPORT_OPTIONS = [
+  { value: "webhook", label: "Webhook" },
+  { value: "websocket", label: "WebSocket" }
+];

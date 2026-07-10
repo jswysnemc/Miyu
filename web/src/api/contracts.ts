@@ -10,6 +10,19 @@ export type WorkspaceList = {
   workspaces: Workspace[];
 };
 
+export type DirectoryEntry = {
+  name: string;
+  path: string;
+  git_repository: boolean;
+};
+
+export type DirectoryListing = {
+  current: string;
+  parent?: string | null;
+  roots: DirectoryEntry[];
+  entries: DirectoryEntry[];
+};
+
 export type Session = {
   id: string;
   title: string;
