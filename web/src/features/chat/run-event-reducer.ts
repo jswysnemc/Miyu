@@ -97,6 +97,14 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
   }
 }
 
+/**
+ * 按工具 ID 创建或更新工具卡片。
+ *
+ * @param state 当前运行状态
+ * @param id 工具 ID
+ * @param patch 增量字段
+ * @returns 更新后的运行状态
+ */
 function upsertTool(state: LiveRunState, id: string, patch: Partial<ToolLifecycle>): LiveRunState {
   const index = state.tools.findIndex((tool) => tool.id === id);
   const base: ToolLifecycle = {
@@ -111,6 +119,12 @@ function upsertTool(state: LiveRunState, id: string, patch: Partial<ToolLifecycl
   if (index === -1) {
     const tool = { ...base, ...patch };
     return { ...state, tools: [...state.tools, tool], parts: [...state.parts, { id: `tool-${id}`, type: "tool", tool }] };
+  }
+  // 1. 后端 ID 配对异常时同一 ID 可能带来不同工具名，此时另建卡片避免覆盖已有视图
+  const existing = state.tools[index];
+  if (patch.name && existing.name !== "tool" && patch.name !== existing.name) {
+    const forkedId = `${id}-${patch.name}`;
+    return upsertTool(state, forkedId, patch);
   }
   const tools = state.tools.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...patch } : tool);
   return {

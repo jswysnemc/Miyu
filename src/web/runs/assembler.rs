@@ -12,9 +12,15 @@ pub(super) struct EventAssembler {
     session_id: String,
     status: Option<&'static str>,
     tool_ids_by_index: HashMap<usize, String>,
-    prepared_tool_indices: VecDeque<usize>,
+    prepared_tools: VecDeque<PreparedTool>,
     active_tools_by_name: HashMap<String, VecDeque<String>>,
     next_tool_id: usize,
+}
+
+/// 流式参数阶段观察到的工具调用。
+struct PreparedTool {
+    index: usize,
+    name: Option<String>,
 }
 
 impl EventAssembler {
@@ -34,7 +40,7 @@ impl EventAssembler {
             session_id: session_id.to_string(),
             status: None,
             tool_ids_by_index: HashMap::new(),
-            prepared_tool_indices: VecDeque::new(),
+            prepared_tools: VecDeque::new(),
             active_tools_by_name: HashMap::new(),
             next_tool_id: 0,
         }
@@ -105,8 +111,20 @@ impl EventAssembler {
             AgentEvent::ToolCallProgress(progress) => {
                 let mut events = self.status_event("working");
                 let tool_id = self.tool_id_for_index(progress.index);
-                if !self.prepared_tool_indices.contains(&progress.index) {
-                    self.prepared_tool_indices.push_back(progress.index);
+                // 1. 记录或更新该流式索引对应的调用名称，供正式调用按名称配对
+                if let Some(entry) = self
+                    .prepared_tools
+                    .iter_mut()
+                    .find(|entry| entry.index == progress.index)
+                {
+                    if entry.name.is_none() {
+                        entry.name = progress.name.clone();
+                    }
+                } else {
+                    self.prepared_tools.push_back(PreparedTool {
+                        index: progress.index,
+                        name: progress.name.clone(),
+                    });
                 }
                 events.push(self.event(
                     "tool.call.preparing",
@@ -123,7 +141,7 @@ impl EventAssembler {
             }
             AgentEvent::ToolCall { name, arguments } => {
                 let mut events = self.status_event("working");
-                let tool_id = self.tool_id_for_next_call();
+                let tool_id = self.tool_id_for_next_call(&name);
                 self.active_tools_by_name
                     .entry(name.clone())
                     .or_default()
@@ -150,7 +168,7 @@ impl EventAssembler {
                     "tool.result",
                     json!({ "tool_id": tool_id, "name": name, "ok": ok, "output": output }),
                 ));
-                if ok && matches!(name.as_str(), "edit_file" | "apply_patch") {
+                if ok && tool_can_mutate_workspace(&name) {
                     events.push(self.event(
                         "workspace.changed",
                         json!({ "source": "tool", "tool_id": tool_id, "tool_name": name }),
@@ -189,15 +207,33 @@ impl EventAssembler {
     }
 
     /// 返回下一正式工具调用的 ID。
-    fn tool_id_for_next_call(&mut self) -> String {
-        let index = self
-            .prepared_tool_indices
-            .pop_front();
-        if let Some(index) = index {
-            let id = self.tool_id_for_index(index);
-            self.tool_ids_by_index.remove(&index);
-            return id;
+    ///
+    /// 参数:
+    /// - `name`: 正式调用的工具名称
+    ///
+    /// 返回:
+    /// - 与 preparing 阶段对齐的稳定工具 ID
+    fn tool_id_for_next_call(&mut self, name: &str) -> String {
+        // 1. 优先匹配名称一致的 preparing 条目，避免供应商丢弃无名调用导致队列错位
+        let position = self
+            .prepared_tools
+            .iter()
+            .position(|entry| entry.name.as_deref() == Some(name))
+            // 2. 找不到同名条目时退回第一个未知名称的条目
+            .or_else(|| {
+                self.prepared_tools
+                    .iter()
+                    .position(|entry| entry.name.is_none())
+            });
+        if let Some(position) = position {
+            let entry = self.prepared_tools.remove(position);
+            if let Some(entry) = entry {
+                let id = self.tool_id_for_index(entry.index);
+                self.tool_ids_by_index.remove(&entry.index);
+                return id;
+            }
         }
+        // 3. 完全没有 preparing 记录时分配新 ID
         self.allocate_tool_id()
     }
 
@@ -247,6 +283,20 @@ impl EventAssembler {
             payload,
         )
     }
+}
+
+/// 判断工具执行成功后是否可能修改了工作区文件。
+///
+/// 参数:
+/// - `name`: 工具名称
+///
+/// 返回:
+/// - 是否需要通知前端刷新文件树与差异视图
+fn tool_can_mutate_workspace(name: &str) -> bool {
+    matches!(
+        name,
+        "edit_file" | "apply_patch" | "run_command" | "background_command" | "trash_path" | "task"
+    )
 }
 
 #[cfg(test)]
@@ -353,6 +403,41 @@ mod tests {
     }
 
     #[test]
+    fn pairs_started_by_name_when_unnamed_call_is_dropped() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+        // 1. 幻影调用只出现在流式阶段且没有名称，最终会被供应商丢弃
+        assembler.map(RunnerEvent::Agent(AgentEvent::ToolCallProgress(
+            ToolCallStreamProgress {
+                index: 0,
+                name: None,
+                arguments_chars: 0,
+                arguments_bytes: 1,
+                arguments_preview: String::new(),
+            },
+        )));
+        let edit_preparing = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCallProgress(
+            ToolCallStreamProgress {
+                index: 1,
+                name: Some("edit_file".to_string()),
+                arguments_chars: 10,
+                arguments_bytes: 10,
+                arguments_preview: "{\"patch\":".to_string(),
+            },
+        )));
+        let edit_started = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCall {
+            name: "edit_file".to_string(),
+            arguments: "{}".to_string(),
+        }));
+        let prepared_id = edit_preparing.last().unwrap().payload["tool_id"]
+            .as_str()
+            .unwrap();
+        let started_id = edit_started.last().unwrap().payload["tool_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(prepared_id, started_id);
+    }
+
+    #[test]
     fn emits_workspace_change_after_successful_edit() {
         let mut assembler = EventAssembler::new("run", "workspace", "session");
         assembler.map(RunnerEvent::Agent(AgentEvent::ToolCall {
@@ -367,3 +452,4 @@ mod tests {
         assert!(events.iter().any(|event| event.kind == "workspace.changed"));
     }
 }
+

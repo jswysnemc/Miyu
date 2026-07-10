@@ -3,8 +3,8 @@
 .generic-tool-view {
   display: grid;
   gap: 0;
-  background: #121815;
-  color: #dfe8e2;
+  background: var(--technical-surface);
+  color: var(--technical-text);
   font-family: var(--font-code);
 }
 
@@ -13,8 +13,8 @@
   grid-template-columns: 16px minmax(0, 1fr);
   gap: 7px;
   padding: 12px 14px;
-  border-bottom: 1px solid #303a34;
-  background: #171e1a;
+  border-bottom: 1px solid var(--technical-border);
+  background: var(--technical-surface-muted);
   font-size: 12px;
   line-height: 1.55;
 }
@@ -55,21 +55,21 @@
   padding: 13px 14px;
   border: 0;
   background: transparent;
-  color: #c8d2cc;
+  color: var(--technical-text);
   font: 400 11px/1.65 var(--font-code);
   white-space: pre-wrap;
 }
 
 .shell-output.stderr {
-  border-top: 1px solid #303a34;
+  border-top: 1px solid var(--technical-border);
   color: #ffaaa3;
 }
 
 .structured-diff {
   max-height: 460px;
   overflow: auto;
-  background: #121815;
-  color: #cfd8d2;
+  background: var(--technical-surface);
+  color: var(--technical-text);
   font: 400 11px/1.55 var(--font-code);
 }
 
@@ -82,7 +82,7 @@
 .structured-diff-number {
   padding: 1px 9px 1px 5px;
   border-right: 1px solid rgb(255 255 255 / 7%);
-  color: #69766f;
+  color: var(--technical-muted);
   text-align: right;
   user-select: none;
 }
@@ -103,10 +103,10 @@
 }
 
 .structured-diff-line.file {
-  border-top: 1px solid #354039;
-  border-bottom: 1px solid #354039;
-  background: #1b2420;
-  color: #f0f4f1;
+  border-top: 1px solid var(--technical-border);
+  border-bottom: 1px solid var(--technical-border);
+  background: var(--technical-surface-muted);
+  color: var(--technical-text);
   font-weight: 500;
 }
 
@@ -116,13 +116,13 @@
 }
 
 .structured-diff-line.meta {
-  color: #9eaaa3;
+  color: var(--technical-muted);
 }
 
 .changed-file-list {
   display: grid;
   gap: 1px;
-  border-bottom: 1px solid #303a34;
+  border-bottom: 1px solid var(--technical-border);
 }
 
 .changed-file {
@@ -131,7 +131,7 @@
   align-items: center;
   gap: 8px;
   padding: 9px 12px;
-  background: #171e1a;
+  background: var(--technical-surface-muted);
 }
 
 .changed-file > svg {
@@ -145,7 +145,7 @@
 
 .changed-file strong {
   overflow: hidden;
-  color: #e5ece8;
+  color: var(--technical-text);
   font-size: 11px;
   font-weight: 500;
   text-overflow: ellipsis;
@@ -153,7 +153,7 @@
 }
 
 .changed-file small {
-  color: #84918a;
+  color: var(--technical-muted);
   font-size: 9px;
 }
 
@@ -178,13 +178,13 @@
   align-items: center;
   gap: 9px;
   padding: 10px 13px;
-  border-bottom: 1px solid #303a34;
-  color: #8f9b94;
+  border-bottom: 1px solid var(--technical-border);
+  color: var(--technical-muted);
   font-size: 10px;
 }
 
 .legacy-edit-path code {
-  color: #dfe8e2;
+  color: var(--technical-text);
 }
 
 .generic-tool-view section {
@@ -192,16 +192,16 @@
 }
 
 .generic-tool-view section + section {
-  border-top: 1px solid #303a34;
+  border-top: 1px solid var(--technical-border);
 }
 
 .generic-tool-view section > span {
   padding: 8px 13px 0;
-  color: #7f8c84;
+  color: var(--technical-muted);
   font: 500 9px/1.2 var(--font-code);
   letter-spacing: 0.08em;
 }
 
 .generic-tool-block.result {
-  color: #b9c7bf;
+  color: var(--technical-text);
 }

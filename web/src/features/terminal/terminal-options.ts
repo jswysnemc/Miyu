@@ -8,8 +8,6 @@ export const TERMINAL_FONT_FAMILY = '"Fira Code", "SFMono-Regular", Consolas, "L
  * @returns xterm 终端选项
  */
 export function createTerminalOptions(): ITerminalOptions {
-  const theme = document.documentElement.dataset.theme;
-  const dark = theme === "graphite" || theme === "ocean" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches);
   return {
     fontFamily: TERMINAL_FONT_FAMILY,
     fontSize: 12,
@@ -18,18 +16,23 @@ export function createTerminalOptions(): ITerminalOptions {
     letterSpacing: 0,
     lineHeight: 1.3,
     cursorBlink: true,
-    theme: createTerminalTheme(dark)
+    theme: createTerminalTheme()
   };
 }
 
 /**
- * 按颜色模式创建终端主题。
+ * 从 CSS 主题令牌读取终端配色，保证终端背景与代码块、工具视图一致。
  *
- * @param dark 是否使用深色主题
  * @returns xterm 颜色主题
  */
-export function createTerminalTheme(dark: boolean): ITheme {
-  return dark
-    ? { background: "#101412", foreground: "#e5e9e6", cursor: "#9cbfb5", selectionBackground: "#2b3934" }
-    : { background: "#171c1e", foreground: "#e4e9e9", cursor: "#9dc2b8", selectionBackground: "#344247" };
+export function createTerminalTheme(): ITheme {
+  const tokens = getComputedStyle(document.documentElement);
+  // 1. 读取统一技术表面令牌，缺失时回退到内置深色值
+  const read = (name: string, fallback: string) => tokens.getPropertyValue(name).trim() || fallback;
+  return {
+    background: read("--terminal-surface", "#101412"),
+    foreground: read("--terminal-text", "#e5e9e6"),
+    cursor: read("--signal", "#9cbfb5"),
+    selectionBackground: read("--terminal-selection", "#2b3934")
+  };
 }

@@ -80,6 +80,8 @@
 .markdown-body img {
   display: block;
   max-width: 100%;
+  max-height: 420px;
+  object-fit: contain;
   margin: 10px 0;
   border: 1px solid var(--line);
   border-radius: 10px;

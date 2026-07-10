@@ -145,10 +145,10 @@
   overflow: auto;
   margin: 14px 0;
   padding: 16px;
-  border: 1px solid #343d38;
+  border: 1px solid var(--technical-border);
   border-radius: 9px;
-  background: #171d19;
-  color: #e2e8e4;
+  background: var(--technical-surface);
+  color: var(--technical-text);
   font-size: 12px;
   line-height: 1.65;
 }
@@ -191,7 +191,8 @@
   overflow: hidden;
   border: 0;
   border-radius: 5px;
-  background: var(--paper-deep);
+  background: var(--technical-surface);
+  color: var(--technical-text);
 }
 
 .tool-card.failed { box-shadow: inset 2px 0 var(--danger); }
@@ -227,9 +228,9 @@
 .tool-card.failed .tool-status { color: var(--danger); }
 .tool-detail { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }
 .tool-detail pre { max-height: 340px; margin: 0; border: 0; border-radius: 0; }
-.tool-output { border-top: 1px solid #343d38 !important; color: #b8c6bd !important; }
+.tool-output { border-top: 1px solid var(--technical-border) !important; color: var(--technical-muted) !important; }
 
-.inline-diff { overflow: auto; background: #171d19; color: #dce4df; font: 400 12px/1.55 var(--font-code); }
+.inline-diff { overflow: auto; background: var(--technical-surface); color: var(--technical-text); font: 400 12px/1.55 var(--font-code); }
 .diff-line { min-width: max-content; padding: 1px 12px; white-space: pre; }
 .diff-line.added { background: rgb(31 119 74 / 27%); color: #b7efce; }
 .diff-line.removed { background: rgb(165 55 47 / 26%); color: #ffc0ba; }

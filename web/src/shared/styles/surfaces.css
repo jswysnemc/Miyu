@@ -1,9 +1,12 @@
-:root {
-  --technical-surface: var(--paper);
-  --technical-surface-muted: var(--paper-deep);
-  --technical-border: var(--line);
-  --technical-text: var(--ink);
-  --technical-muted: var(--ink-soft);
+:root,
+:root[data-theme="graphite"],
+:root[data-theme="ocean"],
+:root[data-theme="system"] {
+  --technical-surface: var(--code-surface);
+  --technical-surface-muted: var(--code-head);
+  --technical-border: var(--terminal-line);
+  --technical-text: var(--code-text);
+  --technical-muted: var(--code-comment);
 }
 
 .markdown-code-block,
@@ -30,7 +33,8 @@
 .structured-diff,
 .workspace-diff,
 .terminal-pane,
-.terminal-dock {
+.terminal-dock,
+.terminal-surface {
   background: var(--technical-surface);
   color: var(--technical-text);
 }
@@ -43,23 +47,4 @@
 .terminal-sidebar {
   background: var(--technical-surface-muted);
   color: var(--technical-muted);
-}
-
-:root[data-theme="graphite"],
-:root[data-theme="ocean"] {
-  --technical-surface: var(--code-surface);
-  --technical-surface-muted: var(--code-head);
-  --technical-border: var(--terminal-line);
-  --technical-text: var(--code-text);
-  --technical-muted: var(--code-comment);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root[data-theme="system"] {
-    --technical-surface: var(--code-surface);
-    --technical-surface-muted: var(--code-head);
-    --technical-border: var(--terminal-line);
-    --technical-text: var(--code-text);
-    --technical-muted: var(--code-comment);
-  }
 }

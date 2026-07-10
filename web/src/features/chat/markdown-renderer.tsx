@@ -1,10 +1,21 @@
-import ReactMarkdown from "react-markdown";
+import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
 import { MarkdownCodeBlock } from "./markdown-code-block";
 import { MermaidDiagram } from "./mermaid-diagram";
 import "./markdown-renderer.css";
+
+/**
+ * 放行 data:image URL，其余交给默认清洗规则。
+ *
+ * @param url 原始 URL
+ * @returns 允许渲染的 URL
+ */
+function transformUrl(url: string): string {
+  if (url.startsWith("data:image/")) return url;
+  return defaultUrlTransform(url);
+}
 
 /**
  * 渲染支持 GFM、数学公式、代码块和 Mermaid 的 Markdown 内容。
@@ -18,6 +29,7 @@ export function MarkdownRenderer({ source }: { source: string }) {
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkMath]}
         rehypePlugins={[rehypeKatex]}
+        urlTransform={transformUrl}
         components={{
           code({ className, children, ...props }) {
             const language = /language-(\w+)/.exec(className ?? "")?.[1];
