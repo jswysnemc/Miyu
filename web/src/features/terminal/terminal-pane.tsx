@@ -1,9 +1,16 @@
 import { FitAddon } from "@xterm/addon-fit";
 import { Terminal } from "@xterm/xterm";
 import { useEffect, useRef, useState } from "react";
-import { api } from "../../api/client";
+import { createTerminalOptions } from "./terminal-options";
+import "./terminal-pane.css";
 
-export function TerminalPane() {
+/**
+ * 渲染与指定终端会话相连的 xterm 实例。
+ *
+ * @param props 终端会话标识
+ * @returns xterm 终端界面
+ */
+export function TerminalPane({ terminalId }: { terminalId: string }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
@@ -11,22 +18,15 @@ export function TerminalPane() {
     if (!container) return;
     let disposed = false;
     let socket: WebSocket | null = null;
-    let terminalId: string | null = null;
-    const terminal = new Terminal({ fontFamily: "Fira Code", fontSize: 12, lineHeight: 1.25, cursorBlink: true, theme: terminalTheme() });
+    const terminal = new Terminal(createTerminalOptions());
     const fit = new FitAddon();
     terminal.loadAddon(fit);
     terminal.open(container);
     fit.fit();
     const start = async () => {
-      const listed = await api.terminals.list();
-      const info = listed.terminals[0] ?? await api.terminals.create(terminal.cols, terminal.rows);
-      if (disposed) {
-        if (!listed.terminals[0]) await api.terminals.remove(info.id);
-        return;
-      }
-      terminalId = info.id;
+      if (disposed) return;
       const protocol = location.protocol === "https:" ? "wss:" : "ws:";
-      socket = new WebSocket(`${protocol}//${location.host}/api/terminals/${info.id}/socket`);
+      socket = new WebSocket(`${protocol}//${location.host}/api/terminals/${terminalId}/socket`);
       socket.binaryType = "arraybuffer";
       socket.onmessage = (event) => {
         if (event.data instanceof ArrayBuffer) terminal.write(new Uint8Array(event.data));
@@ -47,15 +47,7 @@ export function TerminalPane() {
       observer.disconnect();
       socket?.close();
       terminal.dispose();
-      if (terminalId) void api.terminals.remove(terminalId);
     };
-  }, []);
+  }, [terminalId]);
   return <section className="terminal-pane"><div className="terminal-surface" ref={containerRef} />{error && <div className="pane-error terminal-error">{error}</div>}</section>;
-}
-
-function terminalTheme() {
-  const dark = window.matchMedia("(prefers-color-scheme: dark)").matches;
-  return dark
-    ? { background: "#111512", foreground: "#e5e9e6", cursor: "#52c488", selectionBackground: "#315944" }
-    : { background: "#202723", foreground: "#eef3ef", cursor: "#67d496", selectionBackground: "#456052" };
 }

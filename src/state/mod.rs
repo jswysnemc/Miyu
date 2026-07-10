@@ -8,6 +8,7 @@ pub(crate) mod request_projection;
 mod runtime_recovery;
 pub(crate) mod session_memory;
 mod session_snapshot;
+mod session_timeline;
 mod sessions;
 pub(crate) mod tool_history;
 mod turns;
@@ -31,9 +32,11 @@ pub use pending_turn::PendingTurnGuard;
 #[allow(unused_imports)]
 pub use session_memory::summary::SessionMemorySummary;
 pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
+pub use session_timeline::SessionTimelineTurn;
 pub use sessions::{
-    active_state_dir, create_session, delete_session, ensure_active_session as active_session,
-    list_sessions, rename_session, switch_session, workspace_id_for_path,
+    active_state_dir, create_session, delete_session, delete_sessions,
+    ensure_active_session as active_session, list_sessions, rename_session, switch_session,
+    workspace_id_for_path,
 };
 #[allow(unused_imports)]
 pub use tool_history::{ToolCallStatus, ToolHistorySummary};

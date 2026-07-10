@@ -13,6 +13,7 @@ describe("runEventReducer", () => {
     const content = runEventReducer(reasoning, { type: "event", event: event("message.content.delta", { text: "answer" }) });
     expect(content.reasoning).toBe("think");
     expect(content.content).toBe("answer");
+    expect(content.parts.map((part) => part.type)).toEqual(["reasoning", "text"]);
   });
 
   it("updates one tool card through its lifecycle", () => {
@@ -22,5 +23,15 @@ describe("runEventReducer", () => {
     expect(completed.tools).toHaveLength(1);
     expect(completed.tools[0].status).toBe("completed");
     expect(completed.tools[0].output).toBe("ok");
+    expect(completed.parts).toHaveLength(1);
+    expect(completed.parts[0].type).toBe("tool");
+  });
+
+  it("keeps a tool at its original position when later content arrives", () => {
+    const first = runEventReducer(initialRunState, { type: "event", event: event("message.content.delta", { text: "before" }) });
+    const tool = runEventReducer(first, { type: "event", event: event("tool.call.started", { tool_id: "tool", name: "run_command", arguments: "{}" }) });
+    const after = runEventReducer(tool, { type: "event", event: event("message.content.delta", { text: "after" }) });
+    const completed = runEventReducer(after, { type: "event", event: event("tool.result", { tool_id: "tool", name: "run_command", ok: true, output: "ok" }) });
+    expect(completed.parts.map((part) => part.type)).toEqual(["text", "tool", "text"]);
   });
 });

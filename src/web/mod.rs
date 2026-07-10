@@ -6,6 +6,7 @@ mod error;
 mod runs;
 mod server;
 mod services;
+mod system_monitor;
 mod terminal;
 mod workspace;
 mod workspaces;

@@ -1,22 +1,9 @@
 import { useState } from "react";
-import { ChatPage } from "../chat/chat-page";
-import { SessionSidebar } from "../sessions/session-sidebar";
-import { WorkspacePane } from "./workspace-pane";
+import { WorkspaceLayout } from "./workspace-layout";
 import "./coding-page.css";
 
+/** 渲染编程页面并维护当前选中文件。 */
 export function CodingPage() {
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  return (
-    <div className="coding-layout">
-      <aside className="coding-sidebar">
-        <SessionSidebar />
-      </aside>
-      <section className="coding-chat">
-        <ChatPage />
-      </section>
-      <aside className="coding-workspace">
-        <WorkspacePane selectedFile={selectedFile} onSelectFile={setSelectedFile} />
-      </aside>
-    </div>
-  );
+  return <WorkspaceLayout selectedFile={selectedFile} onSelectFile={setSelectedFile} onClearFile={() => setSelectedFile(null)} />;
 }

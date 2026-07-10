@@ -1,6 +1,7 @@
-use super::path_guard::{existing_path, writable_path};
+use super::path_guard::{existing_path, mutable_existing_path, writable_path};
 use anyhow::{bail, Context, Result};
 use serde::Serialize;
+use std::fs::OpenOptions;
 use std::path::Path;
 use std::time::UNIX_EPOCH;
 
@@ -24,6 +25,13 @@ pub(crate) struct FileContent {
     pub content: String,
     pub size: u64,
     pub modified_at: Option<u64>,
+}
+
+/// 工作区文件变更结果。
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct FileMutation {
+    pub path: String,
+    pub kind: &'static str,
 }
 
 /// 读取工作区文件树。
@@ -84,6 +92,84 @@ pub(crate) fn write_file(root: &Path, relative: &str, content: &str) -> Result<F
     std::fs::write(temp.path(), content.as_bytes())?;
     temp.persist(&path)?;
     read_file(root, relative)
+}
+
+/// 创建空文件或目录。
+///
+/// 参数:
+/// - `root`: 工作区根目录
+/// - `relative`: 新条目相对路径
+/// - `directory`: 是否创建目录
+///
+/// 返回:
+/// - 创建后的条目摘要
+pub(crate) fn create_entry(root: &Path, relative: &str, directory: bool) -> Result<FileMutation> {
+    let path = writable_path(root, relative)?;
+    if path.exists() {
+        bail!("path already exists");
+    }
+    if directory {
+        std::fs::create_dir(&path)?;
+    } else {
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&path)?;
+    }
+    Ok(FileMutation {
+        path: relative.to_string(),
+        kind: if directory { "directory" } else { "file" },
+    })
+}
+
+/// 重命名工作区文件或目录。
+///
+/// 参数:
+/// - `root`: 工作区根目录
+/// - `from`: 原相对路径
+/// - `to`: 新相对路径
+///
+/// 返回:
+/// - 重命名后的条目摘要
+pub(crate) fn rename_entry(root: &Path, from: &str, to: &str) -> Result<FileMutation> {
+    let source = mutable_existing_path(root, from)?;
+    let target = writable_path(root, to)?;
+    if target.exists() {
+        bail!("target path already exists");
+    }
+    let metadata = std::fs::symlink_metadata(&source)?;
+    std::fs::rename(source, target)?;
+    Ok(FileMutation {
+        path: to.to_string(),
+        kind: if metadata.is_dir() {
+            "directory"
+        } else {
+            "file"
+        },
+    })
+}
+
+/// 删除工作区文件或目录。
+///
+/// 参数:
+/// - `root`: 工作区根目录
+/// - `relative`: 待删除相对路径
+///
+/// 返回:
+/// - 删除前的条目摘要
+pub(crate) fn delete_entry(root: &Path, relative: &str) -> Result<FileMutation> {
+    let path = mutable_existing_path(root, relative)?;
+    let metadata = std::fs::symlink_metadata(&path)?;
+    let directory = metadata.is_dir() && !metadata.file_type().is_symlink();
+    if directory {
+        std::fs::remove_dir_all(path)?;
+    } else {
+        std::fs::remove_file(path)?;
+    }
+    Ok(FileMutation {
+        path: relative.to_string(),
+        kind: if directory { "directory" } else { "file" },
+    })
 }
 
 /// 递归读取单个目录。

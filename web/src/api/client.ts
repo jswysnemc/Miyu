@@ -1,11 +1,21 @@
 import type {
   ConfigResponse,
   FileContent,
+  FileMutation,
   FileNode,
   GatewayStatus,
   GitDiff,
   HistoryEntry,
+  PromptDocument,
+  PromptKind,
+  PromptSummary,
+  ProviderConfig,
+  ProviderModelsResponse,
+  RunModelSelection,
+  ThinkingLevel,
   RunInfo,
+  SessionTimelineTurn,
+  SystemUsage,
   Session,
   TerminalInfo,
   Workspace,
@@ -46,6 +56,7 @@ export async function apiRequest<T>(path: string, init?: RequestInit): Promise<T
 export const api = {
   workspaces: {
     list: () => apiRequest<WorkspaceList>("/api/workspaces"),
+    pick: () => apiRequest<Workspace | null>("/api/workspaces/pick", { method: "POST" }),
     add: (path: string, name?: string) =>
       apiRequest<Workspace>("/api/workspaces", {
         method: "POST",
@@ -67,13 +78,34 @@ export const api = {
     rename: (id: string, title: string) =>
       apiRequest<Session>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
     remove: (id: string) => apiRequest<{ deleted: boolean }>(`/api/sessions/${id}`, { method: "DELETE" }),
-    messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`)
+    removeMany: (ids: string[]) =>
+      apiRequest<{ deleted_ids: string[] }>("/api/sessions/bulk-delete", {
+        method: "POST",
+        body: JSON.stringify({ ids })
+      }),
+    messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`),
+    timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`)
   },
   runs: {
-    start: (sessionId: string, input: string, mode: "plan" | "yolo") =>
+    start: (
+      sessionId: string,
+      input: string,
+      mode: "plan" | "yolo",
+      selection?: RunModelSelection,
+      imageUrls?: string[],
+      thinkingLevel?: ThinkingLevel
+    ) =>
       apiRequest<RunInfo>("/api/runs", {
         method: "POST",
-        body: JSON.stringify({ session_id: sessionId, input, mode })
+        body: JSON.stringify({
+          session_id: sessionId,
+          input,
+          mode,
+          provider_id: selection?.providerId,
+          model: selection?.model,
+          image_urls: imageUrls,
+          thinking_level: thinkingLevel
+        })
       }),
     stop: (id: string) => apiRequest<{ stopped: boolean }>(`/api/runs/${id}`, { method: "DELETE" })
   },
@@ -85,12 +117,55 @@ export const api = {
         method: "PUT",
         body: JSON.stringify({ path, content })
       }),
-    diff: () => apiRequest<GitDiff>("/api/workspace/diff")
+    create: (path: string, kind: "file" | "directory") =>
+      apiRequest<FileMutation>("/api/workspace/entry", {
+        method: "POST",
+        body: JSON.stringify({ path, kind })
+      }),
+    rename: (from: string, to: string) =>
+      apiRequest<FileMutation>("/api/workspace/entry", {
+        method: "PATCH",
+        body: JSON.stringify({ from, to })
+      }),
+    remove: (path: string) =>
+      apiRequest<FileMutation>("/api/workspace/entry", {
+        method: "DELETE",
+        body: JSON.stringify({ path })
+      }),
+    diff: () => apiRequest<GitDiff>("/api/workspace/diff"),
+    gitAction: (action: "stage" | "unstage" | "discard" | "commit", paths: string[] = [], message?: string) =>
+      apiRequest<GitDiff>("/api/workspace/git", {
+        method: "POST",
+        body: JSON.stringify({ action, paths, message })
+      })
   },
   config: {
     load: () => apiRequest<ConfigResponse>("/api/config"),
     save: (config: Record<string, unknown>) =>
       apiRequest<ConfigResponse>("/api/config", { method: "PUT", body: JSON.stringify(config) })
+  },
+  providers: {
+    models: (provider: ProviderConfig) =>
+      apiRequest<ProviderModelsResponse>("/api/providers/models", {
+        method: "POST",
+        body: JSON.stringify({ provider })
+      })
+  },
+  prompts: {
+    list: (kind: PromptKind) => apiRequest<{ items: PromptSummary[] }>(`/api/prompts/${kind}`),
+    read: (kind: PromptKind, name: string) => apiRequest<PromptDocument>(`/api/prompts/${kind}/${encodeURIComponent(name)}`),
+    create: (kind: PromptKind, name: string, content: string) =>
+      apiRequest<PromptDocument>(`/api/prompts/${kind}`, {
+        method: "POST",
+        body: JSON.stringify({ name, content })
+      }),
+    update: (kind: PromptKind, currentName: string, name: string, content: string) =>
+      apiRequest<PromptDocument>(`/api/prompts/${kind}/${encodeURIComponent(currentName)}`, {
+        method: "PUT",
+        body: JSON.stringify({ name, content })
+      }),
+    remove: (kind: PromptKind, name: string) =>
+      apiRequest<{ removed: boolean }>(`/api/prompts/${kind}/${encodeURIComponent(name)}`, { method: "DELETE" })
   },
   gateways: {
     list: () => apiRequest<GatewayStatus[]>("/api/gateways"),
@@ -102,5 +177,8 @@ export const api = {
     create: (cols: number, rows: number) =>
       apiRequest<TerminalInfo>("/api/terminals", { method: "POST", body: JSON.stringify({ cols, rows }) }),
     remove: (id: string) => apiRequest<{ removed: boolean }>(`/api/terminals/${id}`, { method: "DELETE" })
+  },
+  system: {
+    usage: () => apiRequest<SystemUsage>("/api/system/usage")
   }
 };

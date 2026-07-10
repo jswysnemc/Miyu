@@ -5,6 +5,7 @@ mod model_context;
 mod recovery;
 mod tool_history;
 mod tool_visibility;
+mod turn_orchestration;
 
 use crate::config::AppConfig;
 use crate::llm::{
@@ -18,13 +19,11 @@ use crate::state::request_projection::{
     project_provider_base_context_projection, project_provider_turn_from_base_projection,
     project_provider_turn_from_messages, DynamicContextSource, ProjectedBaseContext,
 };
-use crate::state::PendingTurnGuard;
 use crate::state::StateStore;
 use crate::tools::{self, memes, ToolPermission, ToolRegistry};
 use anyhow::{bail, Result};
-use message_context::{clean_user_visible_text, runtime_context_message, system_messages_first};
+use message_context::{runtime_context_message, system_messages_first};
 use model_context::selected_model_label;
-use recovery::is_context_overflow_error;
 use tokio::sync::mpsc;
 use tool_visibility::ToolVisibility;
 
@@ -208,7 +207,8 @@ impl Agent {
     /// 返回:
     /// - 刷新是否成功
     pub fn prepare_for_turn(&mut self) -> Result<()> {
-        self.tools_enabled = self.config.tools.enabled && self.config.active_model_tools_enabled()?;
+        self.tools_enabled =
+            self.config.tools.enabled && self.config.active_model_tools_enabled()?;
         self.base_system_prompt =
             build_base_system_prompt(&self.config, &self.paths, self.tools_enabled, None)?;
         if self.mode == AgentMode::Yolo {
@@ -323,153 +323,6 @@ impl Agent {
     /// - 动态上下文来源列表
     pub fn last_dynamic_sources(&self) -> Vec<DynamicContextSource> {
         self.last_dynamic_sources.clone()
-    }
-
-    /// 发送一轮带可选图片的流式对话。
-    ///
-    /// 参数:
-    /// - `input`: 用户文本输入
-    /// - `image_url`: 当前轮附加图片 data URL
-    /// - `on_event`: 流式事件回调
-    ///
-    /// 返回:
-    /// - 聊天结果
-    pub async fn chat_stream_with_image<F>(
-        &mut self,
-        input: &str,
-        image_url: Option<String>,
-        on_event: F,
-    ) -> Result<ChatResult>
-    where
-        F: FnMut(AgentEvent) -> Result<()>,
-    {
-        // HTTP 调试按会话落盘时绑定 session_id
-        let _http_debug_session =
-            crate::llm::HttpDebugSessionGuard::new(self.state.session_id());
-        let input = clean_user_visible_text(input);
-        let mut perf = PerfTrace::new("agent");
-        perf.mark("start turn");
-        let turn_id = new_turn_id();
-        self.state.start_turn(&turn_id, &input)?;
-        perf.mark("state start_turn");
-        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
-        let auto_meme_plan =
-            memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
-                .await?;
-        perf.mark("auto meme plan");
-        let association_prompt = self
-            .memory
-            .association(&input)?
-            .map(|association| self.memory.format_association(&association));
-        perf.mark("memory association");
-        let auto_meme_reminder = auto_meme_plan.as_ref().map(|plan| plan.reminder.as_str());
-        let mut messages = self.chat_messages_for_turn(
-            &turn_id,
-            &input,
-            image_url.as_deref(),
-            association_prompt.as_deref(),
-            auto_meme_reminder,
-        )?;
-        perf.mark("build initial messages");
-        let mut on_event = on_event;
-        if self
-            .compact_conversation_if_needed(&turn_id, &messages, &mut on_event)
-            .await?
-        {
-            perf.mark("compaction completed");
-            messages = self.chat_messages_for_turn(
-                &turn_id,
-                &input,
-                image_url.as_deref(),
-                association_prompt.as_deref(),
-                auto_meme_reminder,
-            )?;
-            perf.mark("rebuild messages after compaction");
-        }
-        let mut used_tools = Vec::new();
-        let mut persisted_tool_reports = Vec::new();
-        let result = match self
-            .chat_with_tools(
-                &turn_id,
-                &mut messages,
-                &mut used_tools,
-                &mut persisted_tool_reports,
-                &mut on_event,
-                &mut perf,
-            )
-            .await
-        {
-            Ok(result) => result,
-            Err(err) if is_context_overflow_error(&err) => {
-                if !used_tools.is_empty() || !persisted_tool_reports.is_empty() {
-                    self.record_overflow_retry_failed(&turn_id, &messages, &err)?;
-                    return Err(err);
-                }
-                if !self
-                    .recover_after_provider_overflow(
-                        &turn_id,
-                        &messages,
-                        &err,
-                        &input,
-                        image_url.as_deref(),
-                        association_prompt.as_deref(),
-                        auto_meme_reminder,
-                    )
-                    .await?
-                {
-                    return Err(err);
-                }
-                messages = self.chat_messages_for_turn(
-                    &turn_id,
-                    &input,
-                    image_url.as_deref(),
-                    association_prompt.as_deref(),
-                    auto_meme_reminder,
-                )?;
-                match self
-                    .chat_with_tools(
-                        &turn_id,
-                        &mut messages,
-                        &mut used_tools,
-                        &mut persisted_tool_reports,
-                        &mut on_event,
-                        &mut perf,
-                    )
-                    .await
-                {
-                    Ok(result) => result,
-                    Err(retry_err) if is_context_overflow_error(&retry_err) => {
-                        self.record_overflow_retry_failed(&turn_id, &messages, &retry_err)?;
-                        return Err(retry_err);
-                    }
-                    Err(retry_err) => return Err(retry_err),
-                }
-            }
-            Err(err) => return Err(err),
-        };
-        on_event(AgentEvent::FlushContent)?;
-        perf.mark("final content flushed");
-        if let Some(plan) = auto_meme_plan {
-            on_event(AgentEvent::ExternalOutput)?;
-            memes::render_auto_meme(&self.config, &self.paths, &plan.event).await?;
-            memes::record_auto_meme_event(&self.config, &self.paths, &plan.event)?;
-        }
-        for (tool_name, report) in persisted_tool_reports {
-            self.state
-                .append_tool_report_context(&turn_id, &tool_name, &report)?;
-        }
-        perf.mark("persist tool reports");
-        guard.complete(&result.content, result.reasoning.as_deref())?;
-        perf.mark("complete turn");
-        self.spawn_session_memory_extraction();
-        perf.mark("session memory extraction spawned");
-        self.memory.process_after_turn(&input, &result.content)?;
-        perf.mark("memory process after turn");
-        if let Some(usage) = &result.usage {
-            self.state.add_usage(usage)?;
-        }
-        perf.mark("usage saved");
-        Ok(result)
     }
 
     async fn chat_with_tools<F>(
@@ -737,7 +590,7 @@ impl Agent {
     /// 参数:
     /// - `turn_id`: 当前运行中轮次标识
     /// - `input`: 当前用户输入
-    /// - `image_url`: 可选图片 data URL
+    /// - `image_urls`: 图片 data URL 列表
     /// - `association_prompt`: 可选关联记忆上下文
     /// - `auto_meme_reminder`: 可选自动表情包提醒
     ///
@@ -747,7 +600,7 @@ impl Agent {
         &mut self,
         turn_id: &str,
         input: &str,
-        image_url: Option<&str>,
+        image_urls: &[String],
         association_prompt: Option<&str>,
         auto_meme_reminder: Option<&str>,
     ) -> Result<Vec<ChatMessage>> {
@@ -755,7 +608,7 @@ impl Agent {
         let projection = project_provider_turn_from_base_projection(
             base_projection,
             input,
-            image_url,
+            image_urls,
             association_prompt,
             auto_meme_reminder,
             0,
@@ -848,18 +701,6 @@ fn build_base_system_prompt(
         base_system_prompt.push_str(prompt);
     }
     Ok(base_system_prompt)
-}
-
-/// 创建当前对话轮次标识。
-///
-/// 返回:
-/// - 当前轮唯一标识
-fn new_turn_id() -> String {
-    format!(
-        "turn_{}_{}",
-        chrono::Utc::now().timestamp_millis(),
-        rand::random::<u16>()
-    )
 }
 
 fn extract_persistable_tool_report(tool_name: &str, output: &str) -> Option<String> {

@@ -3,8 +3,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Save } from "lucide-react";
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
+import { useTheme } from "../theme/theme";
 
 export function EditorPane({ path }: { path: string | null }) {
+  const { theme } = useTheme();
   const queryClient = useQueryClient();
   const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) });
   const [content, setContent] = useState("");
@@ -41,7 +43,7 @@ export function EditorPane({ path }: { path: string | null }) {
             language={languageForPath(path)}
             value={content}
             onChange={(value) => setContent(value ?? "")}
-            theme={window.matchMedia("(prefers-color-scheme: dark)").matches ? "vs-dark" : "light"}
+            theme={theme === "graphite" || theme === "ocean" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "vs-dark" : "light"}
             options={{ minimap: { enabled: false }, fontFamily: "Fira Code", fontSize: 13, lineHeight: 21, padding: { top: 12 }, automaticLayout: true, scrollBeyondLastLine: false }}
           />
         )}

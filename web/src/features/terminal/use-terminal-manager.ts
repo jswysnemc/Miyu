@@ -1,0 +1,43 @@
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useEffect, useState } from "react";
+import { api } from "../../api/client";
+
+/**
+ * 管理终端列表、当前选择和显式关闭操作。
+ *
+ * @returns 终端管理状态与操作方法
+ */
+export function useTerminalManager() {
+  const queryClient = useQueryClient();
+  const terminals = useQuery({ queryKey: ["terminals"], queryFn: api.terminals.list });
+  const [activeId, setActiveId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const items = terminals.data?.terminals ?? [];
+    if (!items.some((item) => item.id === activeId)) setActiveId(items[0]?.id ?? null);
+  }, [terminals.data, activeId]);
+
+  /** 创建并选中新终端。 */
+  const createTerminal = async () => {
+    const terminal = await api.terminals.create(100, 28);
+    setActiveId(terminal.id);
+    await queryClient.invalidateQueries({ queryKey: ["terminals"] });
+  };
+
+  /** 显式终止并移除终端。 */
+  const closeTerminal = async (id: string) => {
+    await api.terminals.remove(id);
+    if (activeId === id) setActiveId(null);
+    await queryClient.invalidateQueries({ queryKey: ["terminals"] });
+  };
+
+  return {
+    terminals: terminals.data?.terminals ?? [],
+    activeId,
+    loading: terminals.isLoading,
+    error: terminals.error as Error | null,
+    setActiveId,
+    createTerminal,
+    closeTerminal
+  };
+}

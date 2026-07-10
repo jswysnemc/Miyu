@@ -7,6 +7,7 @@ import "@xterm/xterm/css/xterm.css";
 import "katex/dist/katex.min.css";
 import "./shared/styles/tokens.css";
 import "./shared/styles/global.css";
+import "./shared/styles/scrollbar.css";
 
 import { QueryClientProvider } from "@tanstack/react-query";
 import { StrictMode } from "react";
@@ -15,8 +16,10 @@ import { BrowserRouter } from "react-router-dom";
 import { App } from "./app/app";
 import { queryClient } from "./app/query-client";
 import { bootstrapSession } from "./api/client";
+import { initializeTheme } from "./features/theme/theme";
 
 async function start() {
+  initializeTheme();
   await bootstrapSession();
   const root = document.getElementById("root");
   if (!root) throw new Error("root element is missing");

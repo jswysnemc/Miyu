@@ -103,26 +103,48 @@ pub fn rename_session(paths: &MiyuPaths, session_id: &str, title: &str) -> Resul
 /// 返回:
 /// - 是否删除了会话
 pub fn delete_session(paths: &MiyuPaths, session_id: &str) -> Result<bool> {
+    Ok(!delete_sessions(paths, &[session_id.to_string()])?.is_empty())
+}
+
+/// 批量删除会话并仅写入一次索引。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `session_ids`: 待删除会话 ID 列表
+///
+/// 返回:
+/// - 实际删除的会话 ID 列表
+pub fn delete_sessions(paths: &MiyuPaths, session_ids: &[String]) -> Result<Vec<String>> {
     let scope = current_session_scope(paths)?;
-    let session_id = session_id.trim();
-    if session_id == DEFAULT_SESSION_ID {
+    let requested = session_ids
+        .iter()
+        .map(|id| id.trim())
+        .filter(|id| !id.is_empty())
+        .collect::<std::collections::BTreeSet<_>>();
+    if requested.contains(DEFAULT_SESSION_ID) {
         bail!("default session cannot be deleted");
     }
     let mut sessions = ensure_default_session_for_base(&scope.state_dir)?;
-    let before = sessions.len();
-    sessions.retain(|session| session.id != session_id);
-    if before == sessions.len() {
-        return Ok(false);
+    let deleted = sessions
+        .iter()
+        .filter(|session| requested.contains(session.id.as_str()))
+        .map(|session| session.id.clone())
+        .collect::<Vec<_>>();
+    if deleted.is_empty() {
+        return Ok(Vec::new());
     }
+    sessions.retain(|session| !requested.contains(session.id.as_str()));
     save_sessions_to_base(&scope.state_dir, &sessions)?;
-    let state_dir = session_state_dir(&scope.state_dir, session_id);
-    if state_dir.exists() {
-        std::fs::remove_dir_all(state_dir)?;
+    for session_id in &deleted {
+        let state_dir = session_state_dir(&scope.state_dir, session_id);
+        if state_dir.exists() {
+            std::fs::remove_dir_all(state_dir)?;
+        }
     }
-    if read_current_session_id_from_base(&scope.state_dir)? == session_id {
+    if deleted.contains(&read_current_session_id_from_base(&scope.state_dir)?) {
         write_current_session_id_to_base(&scope.state_dir, DEFAULT_SESSION_ID)?;
     }
-    Ok(true)
+    Ok(deleted)
 }
 
 /// 确保当前会话存在。
@@ -618,6 +640,26 @@ mod tests {
 
         assert!(delete_session(&paths, &session.id).unwrap());
 
+        assert_eq!(
+            ensure_active_session(&paths).unwrap().id,
+            DEFAULT_SESSION_ID
+        );
+    }
+
+    #[test]
+    fn deletes_multiple_sessions_with_one_index_update() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let first = create_session(&paths, Some("First")).unwrap();
+        let second = create_session(&paths, Some("Second")).unwrap();
+
+        let deleted = delete_sessions(&paths, &[first.id.clone(), second.id.clone()]).unwrap();
+        let remaining = list_sessions(&paths).unwrap();
+
+        assert_eq!(deleted.len(), 2);
+        assert!(remaining
+            .iter()
+            .all(|session| session.id == DEFAULT_SESSION_ID));
         assert_eq!(
             ensure_active_session(&paths).unwrap().id,
             DEFAULT_SESSION_ID

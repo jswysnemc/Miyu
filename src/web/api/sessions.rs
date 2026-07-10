@@ -26,6 +26,11 @@ struct RenameSessionRequest {
 }
 
 #[derive(Deserialize)]
+struct BulkDeleteSessionsRequest {
+    ids: Vec<String>,
+}
+
+#[derive(Deserialize)]
 struct HistoryQuery {
     limit: Option<usize>,
 }
@@ -35,13 +40,20 @@ struct DeleteResponse {
     deleted: bool,
 }
 
+#[derive(Serialize)]
+struct BulkDeleteResponse {
+    deleted_ids: Vec<String>,
+}
+
 /// 返回会话管理路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/sessions", get(list).post(create))
+        .route("/api/sessions/bulk-delete", post(remove_many))
         .route("/api/sessions/:id", patch(rename).delete(remove))
         .route("/api/sessions/:id/switch", post(switch))
         .route("/api/sessions/:id/messages", get(messages))
+        .route("/api/sessions/:id/timeline", get(timeline))
 }
 
 /// 列出当前工作区会话。
@@ -125,6 +137,27 @@ async fn remove(
     Ok(Json(DeleteResponse { deleted }))
 }
 
+/// 批量删除会话。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `request`: 待删除会话 ID 列表
+///
+/// 返回:
+/// - 实际删除的会话 ID 列表
+async fn remove_many(
+    State(state): State<WebAppState>,
+    Json(request): Json<BulkDeleteSessionsRequest>,
+) -> WebResult<Json<BulkDeleteResponse>> {
+    reject_during_run(&state).await?;
+    if request.ids.is_empty() {
+        return Err(WebError::bad_request("session ids cannot be empty"));
+    }
+    let deleted_ids = crate::state::delete_sessions(&state.paths, &request.ids)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(BulkDeleteResponse { deleted_ids }))
+}
+
 /// 读取指定会话消息历史。
 async fn messages(
     State(state): State<WebAppState>,
@@ -139,6 +172,30 @@ async fn messages(
         .history(query.limit.unwrap_or(200).clamp(1, 2000))
         .map_err(WebError::from)?;
     Ok(Json(history))
+}
+
+/// 读取指定会话的结构化轮次与工具时间线。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `id`: 会话 ID
+/// - `query`: 轮次数量限制
+///
+/// 返回:
+/// - 会话时间线
+async fn timeline(
+    State(state): State<WebAppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> WebResult<Json<Vec<crate::state::SessionTimelineTurn>>> {
+    reject_during_run(&state).await?;
+    crate::state::switch_session(&state.paths, &id)
+        .map_err(|error| WebError::not_found(error.to_string()))?;
+    let store = StateStore::new(&state.paths).map_err(WebError::from)?;
+    let timeline = store
+        .session_timeline(query.limit.unwrap_or(200).clamp(1, 2000))
+        .map_err(WebError::from)?;
+    Ok(Json(timeline))
 }
 
 /// 活动运行期间禁止切换会话状态。

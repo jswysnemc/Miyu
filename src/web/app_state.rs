@@ -1,4 +1,5 @@
 use super::runs::RunManager;
+use super::system_monitor::SystemMonitor;
 use super::terminal::TerminalManager;
 use super::workspaces::WorkspaceManager;
 use crate::paths::MiyuPaths;
@@ -12,4 +13,5 @@ pub(super) struct WebAppState {
     pub workspaces: WorkspaceManager,
     pub runs: RunManager,
     pub terminals: TerminalManager,
+    pub system_monitor: SystemMonitor,
 }

@@ -13,6 +13,71 @@
   padding: 3px 6px 12px;
 }
 
+.sidebar-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.new-session-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--graphite);
+  color: var(--paper-raised);
+  font-size: 11px;
+}
+
+.new-session-button:disabled {
+  opacity: 0.45;
+}
+
+.session-bulk-bar {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 6px 8px;
+  margin: 0 0 8px;
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-raised);
+}
+
+.session-bulk-bar > span {
+  align-self: center;
+  color: var(--ink-soft);
+  font-size: 10px;
+  text-align: right;
+}
+
+.session-bulk-bar button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 27px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: var(--paper-deep);
+  color: var(--ink-soft);
+  font-size: 10px;
+}
+
+.session-bulk-bar button.danger {
+  grid-column: 1 / -1;
+  color: var(--danger);
+}
+
+.session-bulk-bar button.confirming {
+  border-color: color-mix(in srgb, var(--danger) 48%, var(--line));
+  background: color-mix(in srgb, var(--danger) 10%, var(--paper-raised));
+}
+
 .sidebar-heading h2 {
   margin: 2px 0 0;
   font-size: 18px;
@@ -40,6 +105,29 @@
   grid-template-columns: minmax(0, 1fr) 28px;
   align-items: center;
   border-radius: 8px;
+}
+
+.session-row:has(.session-check) {
+  grid-template-columns: 28px minmax(0, 1fr);
+}
+
+.session-row.selected {
+  background: var(--signal-soft);
+}
+
+.session-check {
+  display: grid;
+  width: 28px;
+  height: 34px;
+  place-items: center;
+  border: 0;
+  background: transparent;
+  color: var(--signal);
+}
+
+.session-check:disabled {
+  color: var(--line-strong);
+  opacity: 0.45;
 }
 
 .session-row:hover,

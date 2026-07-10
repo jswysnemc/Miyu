@@ -1,6 +1,7 @@
 import { Bot, Cable, Code2, Settings } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { WorkspaceSwitcher } from "../features/workspaces/workspace-switcher";
+import { SystemUsage } from "../features/usage/system-usage";
 import "./app-shell.css";
 
 const navigation = [
@@ -19,14 +20,16 @@ export function AppShell() {
           <span className="brand-surface">Web</span>
         </div>
         <WorkspaceSwitcher />
-        <nav className="topnav" aria-label="主导航">
-          {navigation.map(({ to, label, icon: Icon }) => (
-            <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
-              <Icon size={16} strokeWidth={1.8} />
-              <span>{label}</span>
-            </NavLink>
-          ))}
-        </nav>
+        <div className="topbar-actions">
+          <SystemUsage />
+          <nav className="topnav" aria-label="主导航">
+            {navigation.map(({ to, label, icon: Icon }) => (
+              <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>
+                <Icon size={16} strokeWidth={1.8} /><span>{label}</span>
+              </NavLink>
+            ))}
+          </nav>
+        </div>
       </header>
       <main className="app-content">
         <Outlet />

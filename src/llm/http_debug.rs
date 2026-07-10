@@ -188,13 +188,16 @@ impl HttpDebugRecorder {
                 redact_header_value(name.as_str(), value)
             ));
         }
-        fs::write(self.dir.join("response_headers.txt"), lines.join("\n") + "\n")
-            .with_context(|| {
-                format!(
-                    "failed to write response headers {}",
-                    self.dir.join("response_headers.txt").display()
-                )
-            })?;
+        fs::write(
+            self.dir.join("response_headers.txt"),
+            lines.join("\n") + "\n",
+        )
+        .with_context(|| {
+            format!(
+                "failed to write response headers {}",
+                self.dir.join("response_headers.txt").display()
+            )
+        })?;
         Ok(())
     }
 
@@ -236,7 +239,10 @@ impl HttpDebugRecorder {
             "usage": usage,
             "tool_calls": result.tool_calls,
         });
-        write_json(&self.dir.join("response_reconstructed.json"), &reconstructed)?;
+        write_json(
+            &self.dir.join("response_reconstructed.json"),
+            &reconstructed,
+        )?;
         Ok(())
     }
 
@@ -304,7 +310,9 @@ fn is_truthy(value: &str) -> bool {
 fn redact_header_value(name: &str, value: &str) -> String {
     let lower = name.to_ascii_lowercase();
     if lower == "authorization" || lower == "x-api-key" || lower == "api-key" {
-        if let Some(rest) = value.strip_prefix("Bearer ").or_else(|| value.strip_prefix("bearer "))
+        if let Some(rest) = value
+            .strip_prefix("Bearer ")
+            .or_else(|| value.strip_prefix("bearer "))
         {
             return format!("Bearer {}", redact_secret(rest));
         }
@@ -339,11 +347,7 @@ fn redact_secret(secret: &str) -> String {
 fn write_headers_file(path: &Path, headers: &[(String, String)]) -> Result<()> {
     let mut lines = Vec::with_capacity(headers.len());
     for (name, value) in headers {
-        lines.push(format!(
-            "{}: {}",
-            name,
-            redact_header_value(name, value)
-        ));
+        lines.push(format!("{}: {}", name, redact_header_value(name, value)));
     }
     fs::write(path, lines.join("\n") + "\n")
         .with_context(|| format!("failed to write headers {}", path.display()))
@@ -372,10 +376,7 @@ fn write_json(path: &Path, value: &Value) -> Result<()> {
 /// - 头列表
 pub fn bearer_request_headers(api_key: &str, extra: &[(&str, &str)]) -> Vec<(String, String)> {
     let mut headers = vec![
-        (
-            "Authorization".to_string(),
-            format!("Bearer {api_key}"),
-        ),
+        ("Authorization".to_string(), format!("Bearer {api_key}")),
         ("Content-Type".to_string(), "application/json".to_string()),
         ("Accept".to_string(), "text/event-stream".to_string()),
     ];
@@ -482,8 +483,7 @@ mod tests {
         assert!(dir.join("request_body.json").is_file());
         assert!(dir.join("request_headers.txt").is_file());
         assert!(dir.join("response_stream.sse").is_file());
-        let reconstructed =
-            fs::read_to_string(dir.join("response_reconstructed.json")).unwrap();
+        let reconstructed = fs::read_to_string(dir.join("response_reconstructed.json")).unwrap();
         assert!(reconstructed.contains("你好"));
         assert!(reconstructed.contains("\"stream\": false"));
         let headers_text = fs::read_to_string(dir.join("request_headers.txt")).unwrap();

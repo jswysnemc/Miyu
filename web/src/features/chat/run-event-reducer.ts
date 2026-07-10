@@ -10,19 +10,26 @@ export type ToolLifecycle = {
   status: "preparing" | "running" | "completed" | "failed";
 };
 
+export type LiveMessagePart =
+  | { id: string; type: "reasoning"; source: string; startedAt: string; endedAt?: string }
+  | { id: string; type: "text"; source: string }
+  | { id: string; type: "tool"; tool: ToolLifecycle };
+
 export type LiveRunState = {
   runId: string | null;
   status: "idle" | "waiting_response" | "thinking" | "working";
   userInput: string;
+  imageUrls: string[];
   content: string;
   reasoning: string;
   tools: ToolLifecycle[];
+  parts: LiveMessagePart[];
   error: string | null;
   completed: boolean;
 };
 
 export type RunAction =
-  | { type: "start"; runId: string; userInput: string }
+  | { type: "start"; runId: string; userInput: string; imageUrls?: string[] }
   | { type: "event"; event: WebEvent }
   | { type: "reset" };
 
@@ -30,9 +37,11 @@ export const initialRunState: LiveRunState = {
   runId: null,
   status: "idle",
   userInput: "",
+  imageUrls: [],
   content: "",
   reasoning: "",
   tools: [],
+  parts: [],
   error: null,
   completed: false
 };
@@ -41,7 +50,7 @@ export const initialRunState: LiveRunState = {
 export function runEventReducer(state: LiveRunState, action: RunAction): LiveRunState {
   if (action.type === "reset") return initialRunState;
   if (action.type === "start") {
-    return { ...initialRunState, runId: action.runId, userInput: action.userInput, status: "waiting_response" };
+    return { ...initialRunState, runId: action.runId, userInput: action.userInput, imageUrls: action.imageUrls ?? [], status: "waiting_response" };
   }
   const { event } = action;
   const payload = event.payload;
@@ -49,40 +58,40 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
     case "status.changed":
       return { ...state, status: String(payload.status) as LiveRunState["status"] };
     case "message.content.delta":
-      return { ...state, content: state.content + String(payload.text ?? "") };
+      return appendTextPart(closeActiveReasoning(state, event.timestamp), event.sequence, String(payload.text ?? ""));
     case "message.reasoning.delta":
-      return { ...state, reasoning: state.reasoning + String(payload.text ?? "") };
+      return appendReasoningPart(state, event.sequence, event.timestamp, String(payload.text ?? ""));
     case "tool.call.preparing":
-      return upsertTool(state, String(payload.tool_id), {
+      return upsertTool(closeActiveReasoning(state, event.timestamp), String(payload.tool_id), {
         name: String(payload.name ?? "tool"),
         argumentsPreview: String(payload.arguments_preview ?? ""),
         status: "preparing"
       });
     case "tool.call.started":
-      return upsertTool(state, String(payload.tool_id), {
+      return upsertTool(closeActiveReasoning(state, event.timestamp), String(payload.tool_id), {
         name: String(payload.name ?? "tool"),
         arguments: String(payload.arguments ?? ""),
         argumentsPreview: String(payload.arguments ?? ""),
         status: "running"
       });
     case "tool.progress":
-      return upsertTool(state, String(payload.tool_id), {
+      return upsertTool(closeActiveReasoning(state, event.timestamp), String(payload.tool_id), {
         name: String(payload.name ?? "tool"),
         progress: String(payload.message ?? ""),
         status: "running"
       });
     case "tool.result":
-      return upsertTool(state, String(payload.tool_id), {
+      return upsertTool(closeActiveReasoning(state, event.timestamp), String(payload.tool_id), {
         name: String(payload.name ?? "tool"),
         output: String(payload.output ?? ""),
         status: payload.ok === false ? "failed" : "completed"
       });
     case "run.failed":
-      return { ...state, error: String(payload.message ?? "运行失败"), status: "idle", completed: true };
+      return { ...closeActiveReasoning(state, event.timestamp), error: String(payload.message ?? "运行失败"), status: "idle", completed: true };
     case "run.interrupted":
-      return { ...state, error: "运行已中断", status: "idle", completed: true };
+      return { ...closeActiveReasoning(state, event.timestamp), error: "运行已中断", status: "idle", completed: true };
     case "run.completed":
-      return { ...state, status: "idle", completed: true };
+      return { ...closeActiveReasoning(state, event.timestamp), status: "idle", completed: true };
     default:
       return state;
   }
@@ -99,9 +108,63 @@ function upsertTool(state: LiveRunState, id: string, patch: Partial<ToolLifecycl
     output: "",
     status: "preparing"
   };
-  if (index === -1) return { ...state, tools: [...state.tools, { ...base, ...patch }] };
+  if (index === -1) {
+    const tool = { ...base, ...patch };
+    return { ...state, tools: [...state.tools, tool], parts: [...state.parts, { id: `tool-${id}`, type: "tool", tool }] };
+  }
+  const tools = state.tools.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...patch } : tool);
   return {
     ...state,
-    tools: state.tools.map((tool, toolIndex) => toolIndex === index ? { ...tool, ...patch } : tool)
+    tools,
+    parts: state.parts.map((part) => part.type === "tool" && part.tool.id === id ? { ...part, tool: tools[index] } : part)
+  };
+}
+
+/**
+ * 将正文增量追加到当前连续正文部件。
+ *
+ * @param state 当前运行状态
+ * @param sequence 事件序号
+ * @param text 正文增量
+ * @returns 更新后的运行状态
+ */
+function appendTextPart(state: LiveRunState, sequence: number, text: string): LiveRunState {
+  const last = state.parts.at(-1);
+  const parts = last?.type === "text"
+    ? state.parts.map((part, index) => index === state.parts.length - 1 && part.type === "text" ? { ...part, source: part.source + text } : part)
+    : [...state.parts, { id: `text-${sequence}`, type: "text" as const, source: text }];
+  return { ...state, content: state.content + text, parts };
+}
+
+/**
+ * 将思考增量追加到当前连续思考部件。
+ *
+ * @param state 当前运行状态
+ * @param sequence 事件序号
+ * @param timestamp 事件时间
+ * @param text 思考增量
+ * @returns 更新后的运行状态
+ */
+function appendReasoningPart(state: LiveRunState, sequence: number, timestamp: string, text: string): LiveRunState {
+  const last = state.parts.at(-1);
+  const parts = last?.type === "reasoning" && !last.endedAt
+    ? state.parts.map((part, index) => index === state.parts.length - 1 && part.type === "reasoning" ? { ...part, source: part.source + text } : part)
+    : [...state.parts, { id: `reasoning-${sequence}`, type: "reasoning" as const, source: text, startedAt: timestamp }];
+  return { ...state, reasoning: state.reasoning + text, parts };
+}
+
+/**
+ * 在正文或工具事件开始前结束当前思考部件。
+ *
+ * @param state 当前运行状态
+ * @param timestamp 结束时间
+ * @returns 更新后的运行状态
+ */
+function closeActiveReasoning(state: LiveRunState, timestamp: string): LiveRunState {
+  const last = state.parts.at(-1);
+  if (last?.type !== "reasoning" || last.endedAt) return state;
+  return {
+    ...state,
+    parts: state.parts.map((part, index) => index === state.parts.length - 1 && part.type === "reasoning" ? { ...part, endedAt: timestamp } : part)
   };
 }

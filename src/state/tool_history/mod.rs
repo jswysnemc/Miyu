@@ -16,3 +16,4 @@ pub(in crate::state) use model::{
 };
 pub use model::{ToolCallStatus, ToolHistorySummary};
 pub(in crate::state) use projection::project_turn_messages_with_tool_history;
+pub(in crate::state) use repository::load_tool_exchanges_for_turn;

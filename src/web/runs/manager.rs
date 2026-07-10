@@ -1,4 +1,5 @@
 use super::assembler::EventAssembler;
+use super::model_override::resolve_run_config;
 use super::{EventJournal, WebEvent};
 use crate::agent::AgentMode;
 use crate::paths::MiyuPaths;
@@ -22,7 +23,15 @@ pub(crate) struct StartRunRequest {
     #[serde(default)]
     pub image_url: Option<String>,
     #[serde(default)]
+    pub image_urls: Vec<String>,
+    #[serde(default)]
     pub mode: Option<String>,
+    #[serde(default)]
+    pub provider_id: Option<String>,
+    #[serde(default)]
+    pub model: Option<String>,
+    #[serde(default)]
+    pub thinking_level: Option<String>,
 }
 
 /// 活动运行摘要。
@@ -75,7 +84,10 @@ impl RunManager {
         workspace: WorkspaceInfo,
         request: StartRunRequest,
     ) -> Result<ActiveRunInfo> {
-        if request.input.trim().is_empty() && request.image_url.is_none() {
+        if request.input.trim().is_empty()
+            && request.image_url.is_none()
+            && request.image_urls.is_empty()
+        {
             bail!("message cannot be empty");
         }
         parse_mode(request.mode.as_deref())?;
@@ -207,9 +219,7 @@ async fn run_agent(
         }
     };
     let mut input = UserInputSubmission::new(request.input, mode);
-    if let Some(image_url) = request.image_url {
-        input = input.with_image_url(image_url);
-    }
+    input = input.with_image_urls(request.image_url.into_iter().chain(request.image_urls));
     let submission = RunnerSubmission::user_input(SubmissionSource::Web, input)
         .with_session_id(info.session_id.clone())
         .with_final_summary(true);
@@ -220,10 +230,29 @@ async fn run_agent(
         }
         Ok(())
     };
-    if let Err(error) = SessionRunner::new(&paths)
-        .run_submission(submission, &mut sink)
-        .await
-    {
+    let run_config = match resolve_run_config(
+        &paths,
+        request.provider_id.as_deref(),
+        request.model.as_deref(),
+        request.thinking_level.as_deref(),
+    ) {
+        Ok(config) => config,
+        Err(error) => {
+            journal.publish(WebEvent::new(
+                &info.run_id,
+                &info.workspace_id,
+                &info.session_id,
+                "run.failed",
+                json!({ "message": error.to_string() }),
+            ));
+            return;
+        }
+    };
+    let runner = match run_config {
+        Some(config) => SessionRunner::new(&paths).with_config(config),
+        None => SessionRunner::new(&paths),
+    };
+    if let Err(error) = runner.run_submission(submission, &mut sink).await {
         journal.publish(WebEvent::new(
             &info.run_id,
             &info.workspace_id,

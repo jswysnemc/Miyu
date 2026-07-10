@@ -1,5 +1,5 @@
 import { useEffect, useReducer } from "react";
-import type { WebEvent } from "../../api/contracts";
+import type { RunModelSelection, ThinkingLevel, WebEvent } from "../../api/contracts";
 import { api } from "../../api/client";
 import { initialRunState, runEventReducer } from "./run-event-reducer";
 
@@ -44,9 +44,26 @@ export function useRunStream(onSettled: () => void) {
     return () => source.close();
   }, [state.runId, state.completed, onSettled]);
 
-  const start = async (sessionId: string, input: string, mode: "plan" | "yolo") => {
-    const run = await api.runs.start(sessionId, input, mode);
-    dispatch({ type: "start", runId: run.run_id, userInput: input });
+  /**
+   * 启动一轮 Agent 运行。
+   *
+   * @param sessionId 会话标识
+   * @param input 用户输入
+   * @param mode 运行模式
+   * @param selection 本轮供应商和模型
+   * @param imageUrls 图片 data URL 列表
+   * @param thinkingLevel 本轮思考等级
+   */
+  const start = async (
+    sessionId: string,
+    input: string,
+    mode: "plan" | "yolo",
+    selection?: RunModelSelection,
+    imageUrls?: string[],
+    thinkingLevel?: ThinkingLevel
+  ) => {
+    const run = await api.runs.start(sessionId, input, mode, selection, imageUrls, thinkingLevel);
+    dispatch({ type: "start", runId: run.run_id, userInput: input, imageUrls });
   };
 
   const stop = async () => {

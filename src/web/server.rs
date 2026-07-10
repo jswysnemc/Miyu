@@ -2,6 +2,7 @@ use super::api;
 use super::app_state::WebAppState;
 use super::assets;
 use super::runs::RunManager;
+use super::system_monitor::SystemMonitor;
 use super::terminal::TerminalManager;
 use super::workspaces::WorkspaceManager;
 use crate::cli::WebArgs;
@@ -32,6 +33,7 @@ pub(super) async fn run(paths: &MiyuPaths, args: WebArgs) -> Result<()> {
         workspaces: WorkspaceManager::new(paths)?,
         runs: RunManager::new(),
         terminals: TerminalManager::new(),
+        system_monitor: SystemMonitor::new(),
     };
     let app = Router::new()
         .merge(api::router(state.clone()))

@@ -60,8 +60,7 @@ impl Agent {
             ),
             ChatMessage::plain("user", prompt),
         ];
-        let _http_debug_session =
-            crate::llm::HttpDebugSessionGuard::new(self.state.session_id());
+        let _http_debug_session = crate::llm::HttpDebugSessionGuard::new(self.state.session_id());
         let result = self
             .client
             .chat_stream_events(messages, Vec::new(), |_| Ok(()))

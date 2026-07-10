@@ -1,9 +1,17 @@
-import { useEffect, useId, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
+import { MarkdownCodeBlock } from "./markdown-code-block";
+import { MermaidDiagram } from "./mermaid-diagram";
+import "./markdown-renderer.css";
 
+/**
+ * 渲染支持 GFM、数学公式、代码块和 Mermaid 的 Markdown 内容。
+ *
+ * @param props Markdown 源文本
+ * @returns Markdown 内容
+ */
 export function MarkdownRenderer({ source }: { source: string }) {
   return (
     <div className="markdown-body">
@@ -15,8 +23,17 @@ export function MarkdownRenderer({ source }: { source: string }) {
             const language = /language-(\w+)/.exec(className ?? "")?.[1];
             const text = String(children).replace(/\n$/, "");
             if (language === "mermaid") return <MermaidDiagram source={text} />;
-            if (language) return <pre className="code-block"><span className="code-label">{language}</span><code {...props}>{text}</code></pre>;
+            if (language || text.includes("\n")) return <MarkdownCodeBlock language={language} source={text} />;
             return <code className="inline-code" {...props}>{children}</code>;
+          },
+          a({ children, ...props }) {
+            return <a {...props} target="_blank" rel="noreferrer">{children}</a>;
+          },
+          table({ children }) {
+            return <div className="markdown-table-wrap"><table>{children}</table></div>;
+          },
+          img({ alt, ...props }) {
+            return <img {...props} alt={alt ?? ""} loading="lazy" />;
           }
         }}
       >
@@ -24,25 +41,4 @@ export function MarkdownRenderer({ source }: { source: string }) {
       </ReactMarkdown>
     </div>
   );
-}
-
-function MermaidDiagram({ source }: { source: string }) {
-  const reactId = useId().replace(/:/g, "");
-  const [svg, setSvg] = useState<string>("");
-  const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let active = true;
-    const timer = window.setTimeout(() => {
-      import("mermaid").then(({ default: mermaid }) => {
-        mermaid.initialize({ startOnLoad: false, theme: "neutral", securityLevel: "strict" });
-        return mermaid.render(`miyu-mermaid-${reactId}`, source);
-      })
-        .then((result) => { if (active) { setSvg(result.svg); setError(null); } })
-        .catch((reason: unknown) => { if (active) setError(reason instanceof Error ? reason.message : "Mermaid 渲染失败"); });
-    }, 120);
-    return () => { active = false; window.clearTimeout(timer); };
-  }, [reactId, source]);
-  if (error) return <pre className="asset-source"><code>{source}</code></pre>;
-  if (!svg) return <pre className="asset-source"><code>{source}</code></pre>;
-  return <div className="mermaid-diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
 }

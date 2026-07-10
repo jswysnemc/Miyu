@@ -108,16 +108,28 @@ impl ChatMessage {
     }
 
     pub fn user_with_image(text: impl Into<String>, image_url: impl Into<String>) -> Self {
+        Self::user_with_images(text, [image_url.into()])
+    }
+
+    /// 创建包含一张或多张图片的用户消息。
+    ///
+    /// 参数:
+    /// - `text`: 用户文本
+    /// - `image_urls`: 图片 data URL 列表
+    ///
+    /// 返回:
+    /// - 多模态用户消息
+    pub fn user_with_images(
+        text: impl Into<String>,
+        image_urls: impl IntoIterator<Item = String>,
+    ) -> Self {
+        let mut parts = vec![ChatContentPart::Text { text: text.into() }];
+        parts.extend(image_urls.into_iter().map(|url| ChatContentPart::ImageUrl {
+            image_url: ImageUrlContent { url },
+        }));
         Self {
             role: "user".to_string(),
-            content: Some(ChatContent::Parts(vec![
-                ChatContentPart::Text { text: text.into() },
-                ChatContentPart::ImageUrl {
-                    image_url: ImageUrlContent {
-                        url: image_url.into(),
-                    },
-                },
-            ])),
+            content: Some(ChatContent::Parts(parts)),
             tool_call_id: None,
             tool_calls: None,
         }

@@ -135,7 +135,7 @@ pub(crate) fn project_provider_base_context_projection(
 /// 参数:
 /// - `base_messages`: 已有系统、历史和运行时上下文消息
 /// - `input`: 当前用户输入
-/// - `image_url`: 可选图片 data URL
+/// - `image_urls`: 图片 data URL 列表
 /// - `association_prompt`: 可选关联记忆上下文
 /// - `auto_meme_reminder`: 可选自动表情包提醒
 /// - `tool_count`: 当前可见工具数量
@@ -153,13 +153,16 @@ pub(crate) fn project_provider_turn_from_parts(
     tool_count: usize,
     context_limit_chars: usize,
 ) -> ProjectedRequest {
+    let image_urls = image_url
+        .map(|url| vec![url.to_string()])
+        .unwrap_or_default();
     project_provider_turn_from_base_projection(
         ProjectedBaseContext {
             messages: base_messages,
             dynamic_sources: Vec::new(),
         },
         input,
-        image_url,
+        &image_urls,
         association_prompt,
         auto_meme_reminder,
         tool_count,
@@ -172,7 +175,7 @@ pub(crate) fn project_provider_turn_from_parts(
 /// 参数:
 /// - `base_projection`: 已有系统、历史和运行时上下文投影
 /// - `input`: 当前用户输入
-/// - `image_url`: 可选图片 data URL
+/// - `image_urls`: 图片 data URL 列表
 /// - `association_prompt`: 可选关联记忆上下文
 /// - `auto_meme_reminder`: 可选自动表情包提醒
 /// - `tool_count`: 当前可见工具数量
@@ -183,7 +186,7 @@ pub(crate) fn project_provider_turn_from_parts(
 pub(crate) fn project_provider_turn_from_base_projection(
     base_projection: ProjectedBaseContext,
     input: &str,
-    image_url: Option<&str>,
+    image_urls: &[String],
     association_prompt: Option<&str>,
     auto_meme_reminder: Option<&str>,
     tool_count: usize,
@@ -199,12 +202,13 @@ pub(crate) fn project_provider_turn_from_base_projection(
         dynamic_sources.push(dynamic_source("auto_meme", reminder));
         base_messages.push(ChatMessage::system(reminder));
     }
-    if let Some(url) = image_url {
-        dynamic_sources.push(dynamic_source("image", url));
+    for (index, url) in image_urls.iter().enumerate() {
+        dynamic_sources.push(dynamic_source(&format!("image_{}", index + 1), url));
     }
-    let user_message = match image_url {
-        Some(url) => ChatMessage::user_with_image(input, url),
-        None => ChatMessage::plain("user", input),
+    let user_message = if image_urls.is_empty() {
+        ChatMessage::plain("user", input)
+    } else {
+        ChatMessage::user_with_images(input, image_urls.iter().cloned())
     };
     base_messages.push(user_message);
     let mut projection =
@@ -389,7 +393,7 @@ mod tests {
             .map(|source| (source.key.as_str(), source.chars))
             .collect::<Vec<_>>();
 
-        assert_eq!(sources, [("image", image_url.chars().count())]);
+        assert_eq!(sources, [("image_1", image_url.chars().count())]);
     }
 
     #[test]

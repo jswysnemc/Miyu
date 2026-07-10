@@ -399,11 +399,7 @@ mod tests {
         assert!(line2.arguments_preview.contains(r#"line1\nline2"#));
 
         let line3 = tracker
-            .update(
-                0,
-                "run_command",
-                r#"{"command":"line1\nline2\nline3"#,
-            )
+            .update(0, "run_command", r#"{"command":"line1\nline2\nline3"#)
             .unwrap();
         assert!(line3.arguments_preview.contains(r#"line3"#));
     }
@@ -418,7 +414,10 @@ mod tests {
             .unwrap();
         assert!(started.arguments_preview.contains("echo"));
 
-        let long = format!(r#"{{"command":"echo {}"#, "x".repeat(TARGET_CONTENT_BYTE_STEP));
+        let long = format!(
+            r#"{{"command":"echo {}"#,
+            "x".repeat(TARGET_CONTENT_BYTE_STEP)
+        );
         let grown = tracker.update(0, "run_command", &long).unwrap();
         assert!(grown.arguments_preview.contains("echo"));
     }

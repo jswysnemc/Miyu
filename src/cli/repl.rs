@@ -485,9 +485,9 @@ mod tests {
         assert!(matches!(
             submission.kind,
             crate::runner::RunnerSubmissionKind::UserInput(crate::runner::UserInputSubmission {
-                image_url: Some(_),
+                image_urls,
                 ..
-            })
+            }) if image_urls.len() == 1
         ));
     }
 }

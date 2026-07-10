@@ -33,6 +33,7 @@ struct RemovedResponse {
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspaces", get(list).post(add))
+        .route("/api/workspaces/pick", post(pick))
         .route("/api/workspaces/:id", patch(rename).delete(remove))
         .route("/api/workspaces/:id/switch", post(switch))
 }
@@ -59,6 +60,33 @@ async fn add(
     Ok(Json(workspace))
 }
 
+/// 打开系统目录选择器并切换到所选工作区。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+///
+/// 返回:
+/// - 选择并切换后的工作区，取消选择时返回空值
+async fn pick(State(state): State<WebAppState>) -> WebResult<Json<Option<WorkspaceInfo>>> {
+    ensure_workspace_switch_allowed(&state).await?;
+    let selected = rfd::AsyncFileDialog::new()
+        .set_title("选择 Miyu 工作区")
+        .pick_folder()
+        .await;
+    let Some(selected) = selected else {
+        return Ok(Json(None));
+    };
+    let workspace = state
+        .workspaces
+        .add(selected.path(), None)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    let workspace = state
+        .workspaces
+        .switch(&workspace.id)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(Some(workspace)))
+}
+
 /// 重命名工作区。
 async fn rename(
     State(state): State<WebAppState>,
@@ -77,6 +105,22 @@ async fn switch(
     State(state): State<WebAppState>,
     Path(id): Path<String>,
 ) -> WebResult<Json<WorkspaceInfo>> {
+    ensure_workspace_switch_allowed(&state).await?;
+    let workspace = state
+        .workspaces
+        .switch(&id)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(workspace))
+}
+
+/// 校验当前状态是否允许切换工作区。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+///
+/// 返回:
+/// - 允许切换时返回成功
+async fn ensure_workspace_switch_allowed(state: &WebAppState) -> WebResult<()> {
     if state.runs.is_active().await {
         return Err(WebError::conflict(
             "stop the active agent run before switching workspace",
@@ -87,11 +131,7 @@ async fn switch(
             "close active terminals before switching workspace",
         ));
     }
-    let workspace = state
-        .workspaces
-        .switch(&id)
-        .map_err(|error| WebError::bad_request(error.to_string()))?;
-    Ok(Json(workspace))
+    Ok(())
 }
 
 /// 移除非活动工作区。

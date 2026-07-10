@@ -136,7 +136,7 @@ impl Agent {
     /// - `messages`: 触发溢出的 provider 消息
     /// - `err`: provider 错误
     /// - `input`: 当前用户输入
-    /// - `image_url`: 可选图片 data URL
+    /// - `image_urls`: 图片 data URL 列表
     /// - `association_prompt`: 可选关联记忆上下文
     /// - `auto_meme_reminder`: 可选自动表情包提醒
     ///
@@ -148,7 +148,7 @@ impl Agent {
         messages: &[ChatMessage],
         err: &anyhow::Error,
         input: &str,
-        image_url: Option<&str>,
+        image_urls: &[String],
         association_prompt: Option<&str>,
         auto_meme_reminder: Option<&str>,
     ) -> Result<bool> {
@@ -198,7 +198,7 @@ impl Agent {
         let reprojected = self.chat_messages_for_turn(
             turn_id,
             input,
-            image_url,
+            image_urls,
             association_prompt,
             auto_meme_reminder,
         )?;

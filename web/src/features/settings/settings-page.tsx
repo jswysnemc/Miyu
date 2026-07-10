@@ -1,95 +1,68 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Braces, KeyRound, Save, ServerCog } from "lucide-react";
-import { useEffect, useState } from "react";
-import { api } from "../../api/client";
+import { Braces, Cable, KeyRound, MessageSquareText, Palette, Plug, Save, Settings2, SlidersHorizontal } from "lucide-react";
+import { useState } from "react";
+import { AdvancedSettingsSection } from "./advanced-settings-section";
+import { AppearanceSettingsSection } from "./appearance-settings-section";
+import { GatewaySettingsSection } from "./gateway-settings-section";
+import { ProviderSettingsSection } from "./provider-settings-section";
+import { PluginSettingsSection } from "./plugin-settings-section";
+import { PromptSettingsSection } from "./prompt-settings-section";
+import { RuntimeSettingsSection } from "./runtime-settings-section";
+import type { SettingsSectionId } from "./settings-types";
+import { useSettingsConfig } from "./use-settings-config";
+import { useTheme } from "../theme/theme";
 import "./settings-page.css";
+import "./settings-extended.css";
 
-type Provider = {
-  id?: string;
-  display_name?: string;
-  base_url?: string;
-  api_key?: string;
-  default_model?: string;
-  models?: string[];
-};
+const sections = [
+  { id: "providers", label: "供应商与模型", description: "接口、凭据和模型列表", icon: KeyRound },
+  { id: "plugins", label: "插件配置", description: "搜索、视觉、知识库和记忆", icon: Plug },
+  { id: "prompts", label: "提示词", description: "AI 人设和用户身份", icon: MessageSquareText },
+  { id: "runtime", label: "运行参数", description: "工具、技能、显示和上下文", icon: SlidersHorizontal },
+  { id: "appearance", label: "主题与配色", description: "界面主题和颜色方案", icon: Palette },
+  { id: "gateways", label: "消息网关", description: "QQ、微信和运行状态", icon: Cable },
+  { id: "advanced", label: "高级配置", description: "完整 AppConfig JSON", icon: Braces }
+] satisfies Array<{ id: SettingsSectionId; label: string; description: string; icon: typeof KeyRound }>;
 
-/** 渲染供应商表单和完整 JSON 配置编辑器。 */
+/** 渲染分类式专业配置管理界面。 */
 export function SettingsPage() {
-  const queryClient = useQueryClient();
-  const response = useQuery({ queryKey: ["config"], queryFn: api.config.load });
-  const [config, setConfig] = useState<Record<string, unknown> | null>(null);
-  const [raw, setRaw] = useState("");
-  const [tab, setTab] = useState<"providers" | "advanced">("providers");
-  useEffect(() => {
-    if (response.data) {
-      setConfig(response.data.config);
-      setRaw(JSON.stringify(response.data.config, null, 2));
-    }
-  }, [response.data]);
-  const save = useMutation({
-    mutationFn: async () => {
-      const value = tab === "advanced" ? JSON.parse(raw) as Record<string, unknown> : config!;
-      return api.config.save(value);
-    },
-    onSuccess: async (saved) => {
-      setConfig(saved.config);
-      setRaw(JSON.stringify(saved.config, null, 2));
-      await queryClient.invalidateQueries({ queryKey: ["config"] });
-    }
-  });
-  const providers = Array.isArray(config?.providers) ? config.providers as Provider[] : [];
-  const activeProvider = String(config?.active_provider ?? "");
-
-  /** 同步结构化表单与高级 JSON 文本。 */
-  const updateConfig = (updated: Record<string, unknown>) => {
-    setConfig(updated);
-    setRaw(JSON.stringify(updated, null, 2));
-  };
-
-  /** 更新指定供应商配置。 */
-  const updateProvider = (index: number, patch: Partial<Provider>) => {
-    if (!config) return;
-    const next = providers.map((provider, providerIndex) => providerIndex === index ? { ...provider, ...patch } : provider);
-    const updated = { ...config, providers: next };
-    updateConfig(updated);
-  };
+  const settings = useSettingsConfig();
+  const theme = useTheme();
+  const [section, setSection] = useState<SettingsSectionId>("providers");
+  const activeSection = sections.find((item) => item.id === section)!;
 
   return (
-    <div className="management-page">
-      <header className="management-hero">
-        <div className="hero-icon"><ServerCog size={24} /></div>
-        <div><span className="eyebrow">Miyu configuration</span><h1>配置管理</h1><p>修改供应商、模型、工具、显示和网关配置。敏感字段不会由服务端返回明文。</p></div>
-        <button type="button" className="button primary save-config" onClick={() => save.mutate()} disabled={!config || save.isPending}><Save size={15} /> 保存配置</button>
+    <div className="settings-page">
+      <header className="settings-header">
+        <div className="settings-title-icon"><Settings2 size={21} /></div>
+        <div><span className="settings-kicker">应用配置</span><h1>设置</h1><p>管理模型、插件、提示词、工具、网关和界面偏好。</p></div>
+        <div className="settings-save-area">
+          {settings.dirty && <span className="settings-dirty">存在未保存修改</span>}
+          <button type="button" className="settings-save" onClick={() => void settings.saveConfig()} disabled={!settings.config || !settings.dirty || settings.saving}><Save size={15} />{settings.saving ? "正在保存" : "保存修改"}</button>
+        </div>
       </header>
-      <div className="settings-tabs">
-        <button type="button" className={tab === "providers" ? "active" : ""} onClick={() => setTab("providers")}><KeyRound size={15} />供应商</button>
-        <button type="button" className={tab === "advanced" ? "active" : ""} onClick={() => setTab("advanced")}><Braces size={15} />高级 JSON</button>
-      </div>
-      <div className="settings-content">
-        {response.isLoading && <div className="settings-state">正在读取配置</div>}
-        {config && tab === "providers" && (
-          <section className="provider-section">
-            <label className="field active-provider-field"><span>当前供应商</span><select value={activeProvider} onChange={(event) => updateConfig({ ...config, active_provider: event.target.value })}>{providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.display_name || provider.id}</option>)}</select></label>
-            <div className="provider-grid">
-              {providers.map((provider, index) => (
-                <article className={provider.id === activeProvider ? "provider-card active" : "provider-card"} key={`${provider.id}-${index}`}>
-                  <div className="provider-card-head"><span>{String(index + 1).padStart(2, "0")}</span><strong>{provider.display_name || provider.id || "未命名供应商"}</strong></div>
-                  <div className="field-grid">
-                    <label className="field"><span>ID</span><input value={provider.id ?? ""} onChange={(event) => updateProvider(index, { id: event.target.value })} /></label>
-                    <label className="field"><span>名称</span><input value={provider.display_name ?? ""} onChange={(event) => updateProvider(index, { display_name: event.target.value })} /></label>
-                    <label className="field full"><span>API 地址</span><input value={provider.base_url ?? ""} onChange={(event) => updateProvider(index, { base_url: event.target.value })} /></label>
-                    <label className="field"><span>默认模型</span><input value={provider.default_model ?? ""} onChange={(event) => updateProvider(index, { default_model: event.target.value })} /></label>
-                    <label className="field"><span>API Key</span><input type="password" value={provider.api_key ?? ""} onChange={(event) => updateProvider(index, { api_key: event.target.value })} /></label>
-                    <label className="field full"><span>模型列表，每行一个</span><textarea rows={4} value={(provider.models ?? []).join("\n")} onChange={(event) => updateProvider(index, { models: event.target.value.split("\n").map((value) => value.trim()).filter(Boolean) })} /></label>
-                  </div>
-                </article>
-              ))}
-            </div>
-          </section>
-        )}
-        {config && tab === "advanced" && <section className="advanced-config"><div className="advanced-note">高级编辑器覆盖完整 AppConfig。服务端会重新执行反序列化和配置校验。</div><textarea value={raw} onChange={(event) => setRaw(event.target.value)} spellCheck={false} /></section>}
-        {(response.error || save.error) && <div className="settings-error">{(response.error ?? save.error)?.message}</div>}
-        {save.isSuccess && <div className="settings-success">配置已经保存</div>}
+      <div className="settings-workspace">
+        <nav className="settings-navigation" aria-label="设置分类">
+          <div className="settings-navigation-label">设置分类</div>
+          {sections.map(({ id, label, description, icon: Icon }) => (
+            <button type="button" key={id} className={id === section ? "active" : ""} onClick={() => setSection(id)}>
+              <span><Icon size={16} /></span>
+              <span><strong>{label}</strong><small>{description}</small></span>
+            </button>
+          ))}
+        </nav>
+        <main className="settings-main">
+          <div className="settings-section-title"><h2>{activeSection.label}</h2><p>{activeSection.description}</p></div>
+          {settings.loading && <div className="settings-state">正在读取配置</div>}
+          {settings.config && section === "providers" && <ProviderSettingsSection config={settings.config} onConfigChange={settings.updateConfig} onProviderChange={settings.updateProvider} />}
+          {settings.config && section === "plugins" && <PluginSettingsSection config={settings.config} onConfigChange={settings.updateConfig} />}
+          {settings.config && section === "prompts" && <PromptSettingsSection config={settings.config} onConfigChange={settings.updateConfig} />}
+          {settings.config && section === "runtime" && <RuntimeSettingsSection config={settings.config} onConfigChange={settings.updateConfig} />}
+          {section === "appearance" && <AppearanceSettingsSection theme={theme.theme} onThemeChange={theme.setTheme} />}
+          {settings.config && section === "gateways" && <GatewaySettingsSection config={settings.config} dirty={settings.dirty} onGatewayChange={settings.updateGateway} onSave={settings.saveConfig} />}
+          {settings.config && section === "advanced" && <AdvancedSettingsSection value={settings.raw} onChange={settings.updateRaw} />}
+          {settings.error && <div className="settings-error">{settings.error.message}</div>}
+          {settings.saved && !settings.dirty && <div className="settings-success">配置已经保存并通过校验</div>}
+        </main>
       </div>
     </div>
   );

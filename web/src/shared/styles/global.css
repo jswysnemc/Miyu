@@ -12,10 +12,7 @@ body,
 
 body {
   overflow: hidden;
-  background:
-    linear-gradient(120deg, transparent 0 62%, color-mix(in srgb, var(--signal) 7%, transparent) 62% 63%, transparent 63%),
-    radial-gradient(circle at 8% 0%, color-mix(in srgb, var(--signal) 10%, transparent), transparent 32%),
-    var(--paper);
+  background: var(--paper);
   color: var(--ink);
   font-family: var(--font-ui);
   font-size: 15px;

@@ -2,6 +2,7 @@ mod assembler;
 mod event;
 mod journal;
 mod manager;
+mod model_override;
 
 pub(crate) use event::WebEvent;
 pub(crate) use journal::EventJournal;

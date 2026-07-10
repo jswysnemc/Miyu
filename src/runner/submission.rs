@@ -23,7 +23,7 @@ pub(crate) enum RunnerSubmissionKind {
 #[derive(Debug, Clone, Eq, PartialEq)]
 pub(crate) struct UserInputSubmission {
     pub(crate) input: String,
-    pub(crate) image_url: Option<String>,
+    pub(crate) image_urls: Vec<String>,
     pub(crate) extra_system_prompt: Option<String>,
     pub(crate) mode: AgentMode,
 }
@@ -40,7 +40,7 @@ impl UserInputSubmission {
     pub(crate) fn new(input: impl Into<String>, mode: AgentMode) -> Self {
         Self {
             input: input.into(),
-            image_url: None,
+            image_urls: Vec::new(),
             extra_system_prompt: None,
             mode,
         }
@@ -54,7 +54,19 @@ impl UserInputSubmission {
     /// 返回:
     /// - 更新后的用户输入 submission
     pub(crate) fn with_image_url(mut self, image_url: impl Into<String>) -> Self {
-        self.image_url = Some(image_url.into());
+        self.image_urls.push(image_url.into());
+        self
+    }
+
+    /// 设置当前轮多张图片 data URL。
+    ///
+    /// 参数:
+    /// - `image_urls`: 图片 data URL 列表
+    ///
+    /// 返回:
+    /// - 更新后的用户输入 submission
+    pub(crate) fn with_image_urls(mut self, image_urls: impl IntoIterator<Item = String>) -> Self {
+        self.image_urls.extend(image_urls);
         self
     }
 

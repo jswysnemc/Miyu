@@ -1,0 +1,35 @@
+import type { AppConfig } from "../../api/contracts";
+import { StructuredConfigFields } from "./structured-config-fields";
+
+type RuntimeSettingsSectionProps = {
+  config: AppConfig;
+  onConfigChange: (config: AppConfig) => void;
+};
+
+/**
+ * 渲染工具、技能、显示和上下文运行参数。
+ *
+ * @param props 应用配置和更新回调
+ * @returns 运行参数设置区域
+ */
+export function RuntimeSettingsSection({ config, onConfigChange }: RuntimeSettingsSectionProps) {
+  const groups = [
+    ["tools", "工具执行", "控制工具轮次、Shell 和后台命令。"],
+    ["skills", "技能系统", "控制技能加载和命令执行权限。"],
+    ["display", "输出显示", "控制思考、工具调用和等待状态。"],
+    ["context", "上下文管理", "配置模型窗口和自动压缩阈值。"]
+  ] as const;
+  return (
+    <div className="runtime-settings-grid">
+      {groups.map(([key, title, description]) => (
+        <section className="settings-panel runtime-settings-card" key={key}>
+          <header className="settings-panel-header"><div><span className="settings-kicker">{key}</span><h2>{title}</h2><p>{description}</p></div></header>
+          <StructuredConfigFields
+            value={(config[key] as Record<string, unknown> | undefined) ?? {}}
+            onChange={(next) => onConfigChange({ ...config, [key]: next })}
+          />
+        </section>
+      ))}
+    </div>
+  );
+}

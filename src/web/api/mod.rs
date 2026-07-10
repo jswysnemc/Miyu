@@ -1,8 +1,11 @@
 mod config;
 mod gateways;
 mod health;
+mod prompts;
+mod providers;
 mod runs;
 mod sessions;
+mod system;
 mod terminal;
 mod workspace;
 mod workspaces;
@@ -24,10 +27,13 @@ pub(super) fn router(state: WebAppState) -> Router<WebAppState> {
     let protected = Router::new()
         .merge(workspaces::routes())
         .merge(config::routes())
+        .merge(providers::routes())
+        .merge(prompts::routes())
         .merge(gateways::routes())
         .merge(sessions::routes())
         .merge(runs::routes())
         .merge(workspace::routes())
+        .merge(system::routes())
         .merge(terminal::routes())
         .layer(middleware::from_fn_with_state(
             state.clone(),

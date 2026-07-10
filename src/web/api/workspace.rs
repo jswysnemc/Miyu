@@ -23,12 +23,44 @@ struct SaveFileRequest {
     content: String,
 }
 
+#[derive(Deserialize)]
+struct CreateEntryRequest {
+    path: String,
+    kind: String,
+}
+
+#[derive(Deserialize)]
+struct RenameEntryRequest {
+    from: String,
+    to: String,
+}
+
+#[derive(Deserialize)]
+struct DeleteEntryRequest {
+    path: String,
+}
+
+#[derive(Deserialize)]
+struct GitActionRequest {
+    action: String,
+    #[serde(default)]
+    paths: Vec<String>,
+    message: Option<String>,
+}
+
 /// 返回工作区文件与 Diff 路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspace/tree", get(tree))
         .route("/api/workspace/file", get(file).put(save_file))
+        .route(
+            "/api/workspace/entry",
+            axum::routing::post(create_entry)
+                .patch(rename_entry)
+                .delete(delete_entry),
+        )
         .route("/api/workspace/diff", get(diff))
+        .route("/api/workspace/git", axum::routing::post(git_action))
 }
 
 /// 读取文件树。
@@ -72,6 +104,47 @@ async fn save_file(
     Ok(Json(file))
 }
 
+/// 创建工作区文件或目录。
+async fn create_entry(
+    State(state): State<WebAppState>,
+    Json(request): Json<CreateEntryRequest>,
+) -> WebResult<Json<workspace::FileMutation>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let entry = workspace::create_entry(
+        std::path::Path::new(&active.path),
+        &request.path,
+        request.kind == "directory",
+    )
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(entry))
+}
+
+/// 重命名工作区文件或目录。
+async fn rename_entry(
+    State(state): State<WebAppState>,
+    Json(request): Json<RenameEntryRequest>,
+) -> WebResult<Json<workspace::FileMutation>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let entry = workspace::rename_entry(
+        std::path::Path::new(&active.path),
+        &request.from,
+        &request.to,
+    )
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(entry))
+}
+
+/// 删除工作区文件或目录。
+async fn delete_entry(
+    State(state): State<WebAppState>,
+    Json(request): Json<DeleteEntryRequest>,
+) -> WebResult<Json<workspace::FileMutation>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let entry = workspace::delete_entry(std::path::Path::new(&active.path), &request.path)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(entry))
+}
+
 /// 读取当前工作区 Git Diff。
 async fn diff(State(state): State<WebAppState>) -> WebResult<Json<workspace::GitDiff>> {
     let active = state.workspaces.active().map_err(WebError::from)?;
@@ -79,4 +152,21 @@ async fn diff(State(state): State<WebAppState>) -> WebResult<Json<workspace::Git
         .await
         .map_err(WebError::from)?;
     Ok(Json(diff))
+}
+
+/// 执行 Git 暂存、取消暂存、撤销或提交操作。
+async fn git_action(
+    State(state): State<WebAppState>,
+    Json(request): Json<GitActionRequest>,
+) -> WebResult<Json<workspace::GitDiff>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let git = workspace::apply_git_action(
+        std::path::Path::new(&active.path),
+        &request.action,
+        &request.paths,
+        request.message.as_deref(),
+    )
+    .await
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(git))
 }

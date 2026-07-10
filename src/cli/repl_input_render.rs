@@ -1,4 +1,4 @@
-use super::repl_chrome::{ReplChrome, chrome_fixed_rows};
+use super::repl_chrome::{chrome_fixed_rows, ReplChrome};
 use super::repl_runtime::ReplRuntime;
 use super::*;
 

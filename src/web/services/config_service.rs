@@ -85,16 +85,16 @@ fn merge_secret_sentinels(submitted: &mut Value, current: &Value) {
 
 /// 判断配置键是否包含敏感凭据。
 fn is_sensitive_key(key: &str) -> bool {
-    matches!(
-        key.to_ascii_lowercase().as_str(),
-        "api_key"
-            | "token"
-            | "client_secret"
-            | "access_token"
-            | "authorization"
-            | "password"
-            | "webhook_url"
-    )
+    let key = key.to_ascii_lowercase();
+    key == "token"
+        || key.ends_with("_token")
+        || key.ends_with("_tokens")
+        || key.ends_with("api_key")
+        || key.ends_with("api_keys")
+        || key.ends_with("secret")
+        || key.ends_with("password")
+        || key.ends_with("webhook_url")
+        || key == "authorization"
 }
 
 #[cfg(test)]
@@ -121,5 +121,13 @@ mod tests {
         let mut value = json!({ "api_key": "$env:OPENAI_API_KEY" });
         redact_value(&mut value, None);
         assert_eq!(value["api_key"], "$env:OPENAI_API_KEY");
+    }
+
+    #[test]
+    fn redacts_plugin_key_arrays() {
+        let mut value = json!({ "tinyfish_api_keys": ["first", "$env:TINYFISH_KEY"] });
+        redact_value(&mut value, None);
+        assert_eq!(value["tinyfish_api_keys"][0], SECRET_SENTINEL);
+        assert_eq!(value["tinyfish_api_keys"][1], "$env:TINYFISH_KEY");
     }
 }
