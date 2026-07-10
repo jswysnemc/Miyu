@@ -33,7 +33,7 @@ pub use session_memory::summary::SessionMemorySummary;
 pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
 pub use sessions::{
     active_state_dir, create_session, delete_session, ensure_active_session as active_session,
-    list_sessions, rename_session, switch_session,
+    list_sessions, rename_session, switch_session, workspace_id_for_path,
 };
 #[allow(unused_imports)]
 pub use tool_history::{ToolCallStatus, ToolHistorySummary};

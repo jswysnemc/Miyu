@@ -1,0 +1,44 @@
+:root {
+  color-scheme: light;
+  --paper: #f3f0e8;
+  --paper-raised: #fbf9f4;
+  --paper-deep: #e8e3d8;
+  --ink: #17201c;
+  --ink-soft: #5c645f;
+  --line: #cfc9bc;
+  --line-strong: #999f99;
+  --graphite: #202723;
+  --graphite-soft: #303a34;
+  --signal: #1d8c59;
+  --signal-soft: #d7eee2;
+  --danger: #b33a32;
+  --warning: #a96913;
+  --blue: #2f668c;
+  --shadow: 0 18px 50px rgb(28 35 31 / 12%);
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --font-ui: "Fira Sans", sans-serif;
+  --font-code: "Fira Code", monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    color-scheme: dark;
+    --paper: #151a17;
+    --paper-raised: #1c231f;
+    --paper-deep: #111512;
+    --ink: #e5e9e6;
+    --ink-soft: #9ba59f;
+    --line: #354039;
+    --line-strong: #65726a;
+    --graphite: #0d110f;
+    --graphite-soft: #202923;
+    --signal: #52c488;
+    --signal-soft: #173d29;
+    --danger: #eb766c;
+    --warning: #dba85e;
+    --blue: #76acd0;
+    --shadow: 0 18px 50px rgb(0 0 0 / 28%);
+  }
+}

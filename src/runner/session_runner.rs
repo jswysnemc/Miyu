@@ -135,6 +135,9 @@ impl<'paths> SessionRunner<'paths> {
         S: RunnerEventSink,
     {
         AppConfig::init_files(self.paths)?;
+        if let Some(session_id) = submission.session_id.as_deref() {
+            crate::state::switch_session(self.paths, session_id)?;
+        }
         let mut perf = PerfTrace::new("runner");
         perf.mark("start submission");
         let config = self.load_config()?;
@@ -305,7 +308,9 @@ fn build_submission_tool_registry(
     session_id: &str,
 ) -> Result<ToolRegistry> {
     let mut registry = match source {
-        SubmissionSource::Repl => build_repl_tool_registry(config, paths, mode),
+        SubmissionSource::Repl | SubmissionSource::Web => {
+            build_repl_tool_registry(config, paths, mode)
+        }
         SubmissionSource::Command
         | SubmissionSource::Gateway
         | SubmissionSource::ShellIntercept => build_tool_registry(config, paths, mode),

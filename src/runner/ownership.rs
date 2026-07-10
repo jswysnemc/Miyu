@@ -17,6 +17,7 @@ const ACTIVE_RUN_LOCK_FILE: &str = "active-run.json";
 pub(crate) enum SessionOwner {
     Command,
     Repl,
+    Web,
     Gateway,
     ShellIntercept,
 }
@@ -33,6 +34,7 @@ impl SessionOwner {
         match self {
             Self::Command => "command",
             Self::Repl => "repl",
+            Self::Web => "web",
             Self::Gateway => "gateway",
             Self::ShellIntercept => "shell_intercept",
         }
@@ -51,6 +53,7 @@ impl From<SubmissionSource> for SessionOwner {
         match source {
             SubmissionSource::Command => Self::Command,
             SubmissionSource::Repl => Self::Repl,
+            SubmissionSource::Web => Self::Web,
             SubmissionSource::Gateway => Self::Gateway,
             SubmissionSource::ShellIntercept => Self::ShellIntercept,
         }

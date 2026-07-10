@@ -60,7 +60,7 @@ mod sessions;
 mod skills_commands;
 
 use alarm_worker::run_alarm_worker;
-use args::*;
+pub(crate) use args::*;
 use background_commands::run_background_commands;
 use chat::{run_chat_with_options, run_shell_intercept, ChatRunOptions};
 use config_commands::run_config;
@@ -122,6 +122,7 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
         Some(Command::Tool(args)) => run_tool(&paths, mode, args).await,
+        Some(Command::Web(args)) => crate::web::run(&paths, args).await,
         Some(Command::Ask(args)) => {
             let input = parse_message_input_flags(args.message, args.clipb, args.web_search);
             run_chat_with_options(

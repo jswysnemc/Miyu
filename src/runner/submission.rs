@@ -7,6 +7,7 @@ use crate::render::{ReasoningDisplayMode, StreamRenderOptions, ToolCallDisplayMo
 pub(crate) enum SubmissionSource {
     Command,
     Repl,
+    Web,
     Gateway,
     ShellIntercept,
 }

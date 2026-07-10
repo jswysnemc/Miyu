@@ -1,0 +1,301 @@
+use super::WebEvent;
+use crate::agent::AgentEvent;
+use crate::llm::ChatStreamKind;
+use crate::runner::RunnerEvent;
+use serde_json::{json, Value};
+use std::collections::{HashMap, VecDeque};
+
+/// 将 Miyu 运行事件关联成稳定的浏览器消息与工具生命周期。
+pub(super) struct EventAssembler {
+    run_id: String,
+    workspace_id: String,
+    session_id: String,
+    status: Option<&'static str>,
+    tool_ids_by_index: HashMap<usize, String>,
+    prepared_tool_indices: VecDeque<usize>,
+    active_tools_by_name: HashMap<String, VecDeque<String>>,
+    next_tool_index: usize,
+}
+
+impl EventAssembler {
+    /// 创建运行事件组装器。
+    ///
+    /// 参数:
+    /// - `run_id`: 运行 ID
+    /// - `workspace_id`: 工作区 ID
+    /// - `session_id`: 会话 ID
+    ///
+    /// 返回:
+    /// - 事件组装器
+    pub(super) fn new(run_id: &str, workspace_id: &str, session_id: &str) -> Self {
+        Self {
+            run_id: run_id.to_string(),
+            workspace_id: workspace_id.to_string(),
+            session_id: session_id.to_string(),
+            status: None,
+            tool_ids_by_index: HashMap::new(),
+            prepared_tool_indices: VecDeque::new(),
+            active_tools_by_name: HashMap::new(),
+            next_tool_index: 0,
+        }
+    }
+
+    /// 转换单条 RunnerEvent。
+    ///
+    /// 参数:
+    /// - `event`: Miyu 运行事件
+    ///
+    /// 返回:
+    /// - 一条或多条 Web 事件
+    pub(super) fn map(&mut self, event: RunnerEvent) -> Vec<WebEvent> {
+        match event {
+            RunnerEvent::Started => {
+                let mut events = self.status_event("waiting_response");
+                events.push(self.event("run.started", json!({})));
+                events
+            }
+            RunnerEvent::Agent(event) => self.map_agent_event(event),
+            RunnerEvent::Interrupted => {
+                self.status = None;
+                vec![self.event("run.interrupted", json!({}))]
+            }
+            RunnerEvent::Completed(result) => {
+                self.status = None;
+                vec![self.event(
+                    "run.completed",
+                    json!({
+                        "content": result.content,
+                        "reasoning": result.reasoning,
+                        "usage": result.usage,
+                    }),
+                )]
+            }
+            RunnerEvent::Failed(message) => {
+                self.status = None;
+                vec![self.event("run.failed", json!({ "message": message }))]
+            }
+            RunnerEvent::LoadedToolsChanged(tools) => {
+                vec![self.event("loaded_tools.changed", json!({ "tools": tools }))]
+            }
+            RunnerEvent::FinalSummary(summary) => vec![self.event(
+                "session.summary",
+                json!({
+                    "session_id": summary.session_id,
+                    "turn_count": summary.turn_count,
+                    "context_chars": summary.context_chars,
+                    "context_limit_chars": summary.context_limit_chars,
+                    "context_ratio": summary.context_ratio,
+                }),
+            )],
+        }
+    }
+
+    /// 转换 AgentEvent。
+    fn map_agent_event(&mut self, event: AgentEvent) -> Vec<WebEvent> {
+        match event {
+            AgentEvent::Chunk(chunk) => {
+                let (status, kind) = match chunk.kind {
+                    ChatStreamKind::Content => ("working", "message.content.delta"),
+                    ChatStreamKind::Reasoning => ("thinking", "message.reasoning.delta"),
+                };
+                let mut events = self.status_event(status);
+                events.push(self.event(kind, json!({ "text": chunk.text })));
+                events
+            }
+            AgentEvent::ToolCallProgress(progress) => {
+                let mut events = self.status_event("working");
+                let tool_id = self.tool_id_for_index(progress.index);
+                if !self.prepared_tool_indices.contains(&progress.index) {
+                    self.prepared_tool_indices.push_back(progress.index);
+                }
+                events.push(self.event(
+                    "tool.call.preparing",
+                    json!({
+                        "tool_id": tool_id,
+                        "index": progress.index,
+                        "name": progress.name,
+                        "arguments_chars": progress.arguments_chars,
+                        "arguments_bytes": progress.arguments_bytes,
+                        "arguments_preview": progress.arguments_preview,
+                    }),
+                ));
+                events
+            }
+            AgentEvent::ToolCall { name, arguments } => {
+                let mut events = self.status_event("working");
+                let tool_id = self.tool_id_for_next_call();
+                self.active_tools_by_name
+                    .entry(name.clone())
+                    .or_default()
+                    .push_back(tool_id.clone());
+                events.push(self.event(
+                    "tool.call.started",
+                    json!({ "tool_id": tool_id, "name": name, "arguments": arguments }),
+                ));
+                events
+            }
+            AgentEvent::ToolProgress { name, message } => {
+                let mut events = self.status_event("working");
+                let tool_id = self.active_tool_id(&name);
+                events.push(self.event(
+                    "tool.progress",
+                    json!({ "tool_id": tool_id, "name": name, "message": message }),
+                ));
+                events
+            }
+            AgentEvent::ToolResult { name, ok, output } => {
+                let mut events = self.status_event("working");
+                let tool_id = self.finish_tool_id(&name);
+                events.push(self.event(
+                    "tool.result",
+                    json!({ "tool_id": tool_id, "name": name, "ok": ok, "output": output }),
+                ));
+                events
+            }
+            AgentEvent::CompactionStarted { turn_count } => {
+                vec![self.event("compaction.started", json!({ "turn_count": turn_count }))]
+            }
+            AgentEvent::CompactionFinished { applied } => {
+                vec![self.event("compaction.finished", json!({ "applied": applied }))]
+            }
+            AgentEvent::FlushContent => vec![self.event("content.flushed", json!({}))],
+            AgentEvent::ExternalOutput => vec![self.event("external.output", json!({}))],
+        }
+    }
+
+    /// 仅在工作状态变化时生成事件。
+    fn status_event(&mut self, status: &'static str) -> Vec<WebEvent> {
+        if self.status == Some(status) {
+            return Vec::new();
+        }
+        self.status = Some(status);
+        vec![self.event("status.changed", json!({ "status": status }))]
+    }
+
+    /// 返回指定流式索引的稳定工具 ID。
+    fn tool_id_for_index(&mut self, index: usize) -> String {
+        self.next_tool_index = self.next_tool_index.max(index.saturating_add(1));
+        self.tool_ids_by_index
+            .entry(index)
+            .or_insert_with(|| format!("{}-tool-{index}", self.run_id))
+            .clone()
+    }
+
+    /// 返回下一正式工具调用的 ID。
+    fn tool_id_for_next_call(&mut self) -> String {
+        let index = self
+            .prepared_tool_indices
+            .pop_front()
+            .unwrap_or(self.next_tool_index);
+        let id = self.tool_id_for_index(index);
+        self.tool_ids_by_index.remove(&index);
+        self.next_tool_index = index.saturating_add(1);
+        id
+    }
+
+    /// 返回指定名称当前活动工具 ID。
+    fn active_tool_id(&self, name: &str) -> String {
+        self.active_tools_by_name
+            .get(name)
+            .and_then(|ids| ids.front())
+            .cloned()
+            .unwrap_or_else(|| format!("{}-tool-unknown", self.run_id))
+    }
+
+    /// 结束并移除指定名称的活动工具 ID。
+    fn finish_tool_id(&mut self, name: &str) -> String {
+        let id = self
+            .active_tools_by_name
+            .get_mut(name)
+            .and_then(VecDeque::pop_front)
+            .unwrap_or_else(|| format!("{}-tool-unknown", self.run_id));
+        if self
+            .active_tools_by_name
+            .get(name)
+            .is_some_and(VecDeque::is_empty)
+        {
+            self.active_tools_by_name.remove(name);
+        }
+        id
+    }
+
+    /// 创建当前运行上下文中的 Web 事件。
+    fn event(&self, kind: &str, payload: Value) -> WebEvent {
+        WebEvent::new(
+            &self.run_id,
+            &self.workspace_id,
+            &self.session_id,
+            kind,
+            payload,
+        )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::llm::ToolCallStreamProgress;
+
+    #[test]
+    fn keeps_tool_progress_and_result_on_one_tool_id() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+        let preparing = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCallProgress(
+            ToolCallStreamProgress {
+                index: 0,
+                name: Some("edit_file".to_string()),
+                arguments_chars: 10,
+                arguments_bytes: 10,
+                arguments_preview: "{\"patch\":".to_string(),
+            },
+        )));
+        let started = assembler.map(RunnerEvent::Agent(AgentEvent::ToolCall {
+            name: "edit_file".to_string(),
+            arguments: "{}".to_string(),
+        }));
+        let result = assembler.map(RunnerEvent::Agent(AgentEvent::ToolResult {
+            name: "edit_file".to_string(),
+            ok: true,
+            output: "ok".to_string(),
+        }));
+        let id = preparing
+            .iter()
+            .find(|event| event.kind == "tool.call.preparing")
+            .unwrap()
+            .payload["tool_id"]
+            .as_str()
+            .unwrap();
+        assert_eq!(started.last().unwrap().payload["tool_id"], id);
+        assert_eq!(result.last().unwrap().payload["tool_id"], id);
+    }
+
+    #[test]
+    fn emits_status_only_when_it_changes() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+        let first = assembler.map(RunnerEvent::Agent(AgentEvent::Chunk(
+            crate::llm::ChatStreamChunk {
+                kind: ChatStreamKind::Content,
+                text: "a".to_string(),
+            },
+        )));
+        let second = assembler.map(RunnerEvent::Agent(AgentEvent::Chunk(
+            crate::llm::ChatStreamChunk {
+                kind: ChatStreamKind::Content,
+                text: "b".to_string(),
+            },
+        )));
+        assert_eq!(
+            first
+                .iter()
+                .filter(|event| event.kind == "status.changed")
+                .count(),
+            1
+        );
+        assert_eq!(
+            second
+                .iter()
+                .filter(|event| event.kind == "status.changed")
+                .count(),
+            0
+        );
+    }
+}

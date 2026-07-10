@@ -10,7 +10,7 @@ description = "Command-line AI assistant"
 anyhow = "1.0"
 arboard = { version = "3.6.1", features = ["wayland-data-control"] }
 aes = "0.8"
-axum = "0.7"
+axum = { version = "0.7", features = ["ws"] }
 base64 = "0.22"
 blake3 = "1.5"
 blake2 = "0.10"
@@ -33,7 +33,9 @@ libc = "0.2"
 mermaid-rs-renderer = { version = "0.2.2", default-features = false, features = ["png"] }
 md5 = "0.7"
 mime_guess = "2.0"
+open = "5.3"
 png = "0.17"
+portable-pty = "0.9"
 qrcode = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls", "stream"] }
 rand = "0.8"
@@ -44,6 +46,7 @@ ratex-render = { version = "0.1.12", features = ["embed-fonts"] }
 ratex-types = "0.1.12"
 rusqlite = { version = "0.32", features = ["bundled"] }
 rustyline = "14.0"
+rust-embed = "8.5"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 sha1 = "0.10"
@@ -53,9 +56,11 @@ syntect = { version = "5.2", default-features = false, features = ["default-synt
 termimad = "0.34"
 tempfile = "3.15"
 tar = "0.4"
-tokio = { version = "1.38", features = ["io-util", "macros", "net", "process", "rt-multi-thread", "signal", "time"] }
+tokio = { version = "1.38", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+tokio-stream = { version = "0.1", features = ["sync"] }
 tokio-tungstenite = { version = "0.24", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 trash = "5.2"
 unicode-segmentation = "1.13"
 unicode-width = "0.1"
 urlencoding = "2.1"
+uuid = { version = "1.11", features = ["v4"] }

@@ -1,0 +1,15 @@
+use super::runs::RunManager;
+use super::terminal::TerminalManager;
+use super::workspaces::WorkspaceManager;
+use crate::paths::MiyuPaths;
+use std::sync::Arc;
+
+/// Web 路由共享依赖。
+#[derive(Clone)]
+pub(super) struct WebAppState {
+    pub paths: MiyuPaths,
+    pub auth_token: Arc<str>,
+    pub workspaces: WorkspaceManager,
+    pub runs: RunManager,
+    pub terminals: TerminalManager,
+}

@@ -37,6 +37,8 @@ pub enum Command {
     AlarmWorker(AlarmWorkerArgs),
     #[command(name = "__tool", hide = true)]
     Tool(ToolArgs),
+    /// 启动 Miyu Web 编程工作台
+    Web(WebArgs),
     Ask(MessageArgs),
     Init,
     Paths,
@@ -126,6 +128,15 @@ pub struct AlarmWorkerArgs {
 pub struct ToolArgs {
     pub name: String,
     pub arguments: Option<String>,
+}
+
+#[derive(Debug, Args)]
+pub struct WebArgs {
+    #[arg(long, visible_alias = "prot", default_value_t = 4096)]
+    pub port: u16,
+
+    #[arg(long)]
+    pub no_open: bool,
 }
 
 #[derive(Debug, Args)]
