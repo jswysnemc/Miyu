@@ -1,4 +1,5 @@
-import { Check, ChevronDown, Cpu, Search } from "lucide-react";
+import { Check, ChevronDown, Search } from "lucide-react";
+import { ModelIcon } from "../../shared/ui/model-icon";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { RunModelSelection } from "../../api/contracts";
@@ -86,7 +87,7 @@ export function ModelSelector({ choices, selection, loading, disabled, onSelect 
         aria-haspopup="listbox"
         aria-expanded={open}
       >
-        <Cpu size={14} />
+        {selection?.model ? <ModelIcon model={selection.model} size={15} /> : null}
         <span>{loading ? "读取模型" : selection?.model ?? "未配置模型"}</span>
         <ChevronDown size={12} className={open ? "model-chevron open" : "model-chevron"} />
       </button>
@@ -108,7 +109,7 @@ export function ModelSelector({ choices, selection, loading, disabled, onSelect 
                   key={`${choice.providerId}-${choice.model}`}
                   onClick={() => handleSelect(choice)}
                 >
-                  <span className="model-menu-main"><Cpu size={14} /><strong>{choice.model}</strong></span>
+                  <span className="model-menu-main"><ModelIcon model={choice.model} size={15} /><strong>{choice.model}</strong></span>
                   <span className="model-provider">{choice.providerName}</span>
                   <Check size={14} className="model-check" />
                 </button>

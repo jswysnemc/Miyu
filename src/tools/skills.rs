@@ -151,6 +151,35 @@ fn skill_entries(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillEntry
     Ok(entries)
 }
 
+/// Skill 目录条目，仅包含名称与描述。
+pub struct SkillCatalogEntry {
+    /// Skill 名称
+    pub name: String,
+    /// Skill 简介
+    pub description: String,
+}
+
+/// 枚举当前可用的 skill 名称与描述。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 去重后的 skill 目录条目列表
+pub fn skill_catalog(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillCatalogEntry>> {
+    // 1. 复用 skill 发现逻辑读取全部条目
+    let entries = skill_entries(config, paths)?;
+    // 2. 只保留名称与描述返回
+    Ok(entries
+        .into_iter()
+        .map(|entry| SkillCatalogEntry {
+            name: entry.name,
+            description: entry.description,
+        })
+        .collect())
+}
+
 fn skill_name(raw: &str, fallback: &str) -> String {
     frontmatter_value(raw, "name").unwrap_or_else(|| fallback.to_string())
 }

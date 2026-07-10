@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, Plus, RefreshCw, Square, Trash2, X } from "lucide-react";
+import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
 import { useState } from "react";
+import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
 import "./session-sidebar.css";
 
@@ -124,6 +125,11 @@ export function SessionSidebar() {
         })}
       </div>
       {error && <p className="sidebar-error">{error.message}</p>}
+      <div className="sidebar-footer">
+        <NavLink to="/settings" className={({ isActive }) => isActive ? "sidebar-settings-link active" : "sidebar-settings-link"}>
+          <Settings size={15} strokeWidth={1.8} /><span>配置</span>
+        </NavLink>
+      </div>
     </div>
   );
 }

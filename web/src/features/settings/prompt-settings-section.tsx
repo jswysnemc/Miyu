@@ -1,8 +1,10 @@
-import { Check, Copy, FilePlus2, Save, Trash2 } from "lucide-react";
+import { Check, Copy, FileText, Save, Trash2 } from "lucide-react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { AppConfig, PromptKind } from "../../api/contracts";
+import { EditorHeader } from "./editor-layout";
+import { ObjectListPanel } from "./object-list-panel";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 
 type PromptSettingsSectionProps = {
@@ -109,40 +111,51 @@ export function PromptSettingsSection({ config, onConfigChange }: PromptSettings
     onConfigChange({ ...config, prompt: { ...promptConfig, [key]: value ? `${value}.md` : "" } });
   };
 
+  const items = prompts.data?.items ?? [];
   return (
-    <div className="prompt-settings-layout">
-      <aside className="prompt-library">
-        <div className="prompt-kind-tabs">
-          <button type="button" className={kind === "personas" ? "active" : ""} onClick={() => setKind("personas")}>AI 人设</button>
-          <button type="button" className={kind === "identities" ? "active" : ""} onClick={() => setKind("identities")}>用户身份</button>
-        </div>
-        <button type="button" className="prompt-default-row" onClick={() => activatePrompt("")}>
-          <span><strong>{kind === "personas" ? "内置 Miyu" : "不使用用户身份"}</strong><small>默认配置</small></span>
-          {!activeName && <Check size={14} />}
-        </button>
-        <div className="prompt-list-scroll">
-          {prompts.data?.items.map((item) => (
-            <button type="button" className={item.name === selected ? "active" : ""} key={item.name} onClick={() => void selectPrompt(item.name)}>
-              <span><strong>{item.name}</strong><small>Markdown</small></span>
-              {(activeName === item.name || activeName === `${item.name}.md`) && <Check size={14} />}
-            </button>
-          ))}
-        </div>
-        <button type="button" className="settings-secondary prompt-new" onClick={createDraft}><FilePlus2 size={14} />新增{kind === "personas" ? "人设" : "身份"}</button>
-      </aside>
-      <section className="settings-panel prompt-editor">
-        <header className="settings-panel-header">
-          <div><span className="settings-kicker">自定义提示词</span><h2>{selected ? name : name || "选择或新增提示词"}</h2><p>内容以 Markdown 文件保存，并与 TUI 使用相同目录。</p></div>
-          <div className="provider-header-actions">
+    <div className="settings-objects-layout">
+      <ObjectListPanel
+        title={kind === "personas" ? "AI 人设" : "用户身份"}
+        items={items.map((item) => ({
+          id: item.name,
+          name: item.name,
+          meta: "Markdown",
+          icon: <FileText size={14} />,
+          marked: activeName === item.name || activeName === `${item.name}.md`
+        }))}
+        selectedId={selected ?? ""}
+        searchPlaceholder="搜索提示词"
+        addLabel={kind === "personas" ? "新增人设" : "新增身份"}
+        onSelect={(id) => void selectPrompt(id)}
+        onAdd={createDraft}
+        headerSlot={
+          <div className="prompt-kind-tabs">
+            <button type="button" className={kind === "personas" ? "active" : ""} onClick={() => setKind("personas")}>AI 人设</button>
+            <button type="button" className={kind === "identities" ? "active" : ""} onClick={() => setKind("identities")}>用户身份</button>
+          </div>
+        }
+        topSlot={
+          <button type="button" className="prompt-default-row" onClick={() => activatePrompt("")}>
+            <span><strong>{kind === "personas" ? "内置 Miyu" : "不使用用户身份"}</strong><small>默认配置</small></span>
+            {!activeName && <Check size={14} />}
+          </button>
+        }
+      />
+      <section className="settings-editor prompt-editor">
+        <EditorHeader
+          kicker="自定义提示词"
+          title={selected ? name : name || "选择或新增提示词"}
+          description="内容以 Markdown 文件保存，并与 TUI 使用相同目录。"
+          actions={<>
             <button type="button" className="settings-secondary" onClick={copyDraft} disabled={!name}><Copy size={14} />复制</button>
             <button type="button" className="settings-secondary" onClick={() => activatePrompt(name)} disabled={!name || activeName === name || activeName === `${name}.md`}><Check size={14} />设为当前</button>
-            <button type="button" className="settings-secondary danger" onClick={() => void deletePrompt()} disabled={!selected}><Trash2 size={14} />删除</button>
-          </div>
-        </header>
+            <button type="button" className="settings-danger" onClick={() => void deletePrompt()} disabled={!selected}><Trash2 size={14} />删除</button>
+          </>}
+        />
         <label className="settings-field"><span>名称</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="提示词名称" /></label>
         <label className="settings-field prompt-content-field"><span>提示词内容</span><textarea value={content} onChange={(event) => setContent(event.target.value)} placeholder="输入系统提示词或用户身份说明" spellCheck={false} /></label>
         <div className="prompt-editor-footer">
-          {error && <span className="settings-error">{error}</span>}
+          {error && <span className="settings-inline-error">{error}</span>}
           <button type="button" className="settings-save" onClick={() => void savePrompt()} disabled={!name.trim() || saving}><Save size={14} />{saving ? "正在保存" : "保存提示词"}</button>
         </div>
       </section>

@@ -20,8 +20,19 @@ pub(crate) async fn serve_socket(socket: WebSocket, session: Arc<TerminalSession
     let (mut sender, mut receiver) = socket.split();
     let mut output = session.subscribe();
     let replay = session.replay();
-    if !replay.is_empty() && sender.send(Message::Binary(replay)).await.is_err() {
-        return;
+    if !replay.is_empty() {
+        // 1. 先发送 replay_start 标记，提示前端进入回放阶段并抑制自动响应
+        if sender.send(Message::Text(r#"{"type":"replay_start"}"#.into())).await.is_err() {
+            return;
+        }
+        // 2. 发送回放缓冲的历史输出
+        if sender.send(Message::Binary(replay)).await.is_err() {
+            return;
+        }
+        // 3. 发送 replay_end 标记，前端在解析完回放数据后恢复输入转发
+        if sender.send(Message::Text(r#"{"type":"replay_end"}"#.into())).await.is_err() {
+            return;
+        }
     }
     loop {
         tokio::select! {

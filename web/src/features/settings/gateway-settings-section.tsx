@@ -1,6 +1,6 @@
-import { Bot, MessageCircleMore } from "lucide-react";
 import type { AppConfig } from "../../api/contracts";
 import { GatewayRuntimeControl } from "../gateways/gateway-runtime-control";
+import { SettingsGroup } from "./editor-layout";
 import type { GatewayId } from "./settings-types";
 import { PasswordField } from "../../shared/ui/password-field";
 import { Select } from "../../shared/ui/select/select";
@@ -22,13 +22,12 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
   const qq = config.gateways.qq;
   const weixin = config.gateways.weixin;
   return (
-    <div className="gateway-settings-grid">
-      <section className="settings-panel gateway-settings-card">
-        <header className="gateway-settings-head">
-          <span className="gateway-brand-icon"><MessageCircleMore size={18} /></span>
-          <div><span className="settings-kicker">消息网关</span><h2>QQ</h2><p>配置 QQ 机器人监听方式和认证信息。</p></div>
-          <label className="settings-switch"><input type="checkbox" checked={qq.enabled} onChange={(event) => onGatewayChange("qq", { enabled: event.target.checked })} /><span /><strong>{qq.enabled ? "已启用" : "未启用"}</strong></label>
-        </header>
+    <div className="settings-editor gateway-settings">
+      <SettingsGroup
+        title="QQ"
+        description="配置 QQ 机器人监听方式和认证信息。"
+        actions={<label className="settings-switch"><input type="checkbox" checked={qq.enabled} onChange={(event) => onGatewayChange("qq", { enabled: event.target.checked })} /><span /><strong>{qq.enabled ? "已启用" : "未启用"}</strong></label>}
+      >
         <div className="settings-form-grid">
           <div className="settings-field"><span>传输方式</span><Select value={qq.transport} options={TRANSPORT_OPTIONS} onChange={(value) => onGatewayChange("qq", { transport: value })} ariaLabel="QQ 传输方式" /><small>根据机器人接入方式选择</small></div>
           <label className="settings-field"><span>监听地址</span><input value={qq.listen} onChange={(event) => onGatewayChange("qq", { listen: event.target.value })} spellCheck={false} /><small>本地服务绑定地址</small></label>
@@ -38,14 +37,12 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
           <div className="settings-field full"><span>兼容令牌</span><PasswordField value={qq.token} onChange={(value) => onGatewayChange("qq", { token: value })} /><small>需要时使用 `AppID:AppSecret` 格式</small></div>
         </div>
         <GatewayRuntimeControl gatewayId="qq" enabled={qq.enabled} dirty={dirty} onSave={onSave} />
-      </section>
-
-      <section className="settings-panel gateway-settings-card">
-        <header className="gateway-settings-head">
-          <span className="gateway-brand-icon"><Bot size={18} /></span>
-          <div><span className="settings-kicker">消息网关</span><h2>微信</h2><p>配置微信机器人服务、账户和访问令牌。</p></div>
-          <label className="settings-switch"><input type="checkbox" checked={weixin.enabled} onChange={(event) => onGatewayChange("weixin", { enabled: event.target.checked })} /><span /><strong>{weixin.enabled ? "已启用" : "未启用"}</strong></label>
-        </header>
+      </SettingsGroup>
+      <SettingsGroup
+        title="微信"
+        description="配置微信机器人服务、账户和访问令牌。"
+        actions={<label className="settings-switch"><input type="checkbox" checked={weixin.enabled} onChange={(event) => onGatewayChange("weixin", { enabled: event.target.checked })} /><span /><strong>{weixin.enabled ? "已启用" : "未启用"}</strong></label>}
+      >
         <div className="settings-form-grid">
           <label className="settings-field full"><span>API 地址</span><input value={weixin.base_url} onChange={(event) => onGatewayChange("weixin", { base_url: event.target.value })} spellCheck={false} /></label>
           <label className="settings-field full"><span>CDN 地址</span><input value={weixin.cdn_base_url} onChange={(event) => onGatewayChange("weixin", { cdn_base_url: event.target.value })} spellCheck={false} /></label>
@@ -55,7 +52,7 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
           <div className="settings-field"><span>访问令牌</span><PasswordField value={weixin.token} onChange={(value) => onGatewayChange("weixin", { token: value })} /></div>
         </div>
         <GatewayRuntimeControl gatewayId="weixin" enabled={weixin.enabled} dirty={dirty} onSave={onSave} />
-      </section>
+      </SettingsGroup>
     </div>
   );
 }

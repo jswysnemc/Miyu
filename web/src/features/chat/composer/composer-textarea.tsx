@@ -1,7 +1,8 @@
-import { useEffect, useRef } from "react";
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from "react";
 import { isCursorOnFirstLine, isCursorOnLastLine, navigateInputHistory } from "./input-history";
 import type { InputHistoryState } from "./input-history";
+import { FileMentionPopover } from "./file-mention-popover";
 
 type ComposerTextareaProps = {
   value: string;
@@ -13,16 +14,33 @@ type ComposerTextareaProps = {
   onSubmit: () => void;
 };
 
+export type ComposerTextareaHandle = {
+  openMentionPicker: () => void;
+};
+
 /**
- * 渲染支持图片 token、高亮、历史切换和原子删除的输入框。
+ * 渲染支持图片粘贴、历史切换和 @ 文件引用的输入框。
  *
  * @param props 输入内容、历史记录、附件回调和提交回调
+ * @param ref 暴露 openMentionPicker 的句柄
  * @returns 聊天文本输入框
  */
-export function ComposerTextarea(props: ComposerTextareaProps) {
+export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTextareaProps>(function ComposerTextarea(props, ref) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const historyRef = useRef<InputHistoryState>({ index: null, draft: "" });
   const lastEscapeRef = useRef(0);
+  const [mentionOpen, setMentionOpen] = useState(false);
+  const mentionRangeRef = useRef<{ start: number; end: number } | null>(null);
+
+  useImperativeHandle(ref, () => ({
+    /** 以当前选区为插入点打开文件引用浮层。 */
+    openMentionPicker: () => {
+      const textarea = textareaRef.current;
+      const caret = textarea ? textarea.selectionStart : props.value.length;
+      mentionRangeRef.current = { start: caret, end: textarea ? textarea.selectionEnd : caret };
+      setMentionOpen(true);
+    }
+  }));
 
   useEffect(() => {
     const textarea = textareaRef.current;
@@ -33,13 +51,40 @@ export function ComposerTextarea(props: ComposerTextareaProps) {
   }, [props.value]);
 
   /**
-   * 更新文本并退出历史浏览状态。
+   * 更新文本、退出历史浏览，并在输入 @ 时打开文件引用浮层。
    *
    * @param event 文本输入事件
    */
   const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
     historyRef.current = { index: null, draft: "" };
-    props.onChange(event.target.value);
+    const next = event.target.value;
+    const caret = event.target.selectionStart;
+    // 1. 仅在本次输入新增了一个 @ 字符时触发浮层
+    if (next.length === props.value.length + 1 && next[caret - 1] === "@") {
+      mentionRangeRef.current = { start: caret - 1, end: caret };
+      setMentionOpen(true);
+    }
+    props.onChange(next);
+  };
+
+  /**
+   * 在触发位置插入文件引用并删除触发的 @ 字符。
+   *
+   * @param path 选中的文件相对路径
+   */
+  const handleMentionSelect = (path: string) => {
+    const range = mentionRangeRef.current ?? { start: props.value.length, end: props.value.length };
+    const insertion = `@${path} `;
+    props.onChange(`${props.value.slice(0, range.start)}${insertion}${props.value.slice(range.end)}`);
+    closeMention();
+    requestAnimationFrame(() => setTextareaSelection(textareaRef.current, range.start + insertion.length));
+  };
+
+  /** 关闭文件引用浮层并把焦点交还文本框。 */
+  const closeMention = () => {
+    mentionRangeRef.current = null;
+    setMentionOpen(false);
+    requestAnimationFrame(() => textareaRef.current?.focus());
   };
 
   /**
@@ -92,6 +137,7 @@ export function ComposerTextarea(props: ComposerTextareaProps) {
 
   return (
     <div className="composer-text-wrap">
+      <FileMentionPopover open={mentionOpen} onSelect={handleMentionSelect} onClose={closeMention} />
       <textarea
         ref={textareaRef}
         value={props.value}
@@ -104,7 +150,7 @@ export function ComposerTextarea(props: ComposerTextareaProps) {
       />
     </div>
   );
-}
+});
 
 /**
  * 应用一次输入历史导航并安排光标位置。

@@ -73,50 +73,198 @@
   font: 400 11px/1.55 var(--font-code);
 }
 
-.structured-diff-line {
+.diff-file + .diff-file {
+  border-top: 1px solid var(--technical-border);
+}
+
+.diff-file-head {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--technical-border);
+  background: var(--technical-surface-muted);
+}
+
+.diff-file-head strong {
+  overflow: hidden;
+  color: var(--technical-text);
+  font-size: 11px;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.diff-file-head small {
+  color: var(--technical-muted);
+  font-size: 9px;
+}
+
+.diff-file-stats {
+  display: flex;
+  gap: 6px;
+  margin-left: auto;
+  font-size: 10px;
+}
+
+.diff-file-stats b {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--diff-added-bg);
+  color: var(--diff-added-text);
+  font-weight: 500;
+}
+
+.diff-file-stats i {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-text);
+  font-style: normal;
+}
+
+.diff-file-lines {
+  overflow-x: auto;
+}
+
+.diff-row {
   display: grid;
-  grid-template-columns: 42px minmax(max-content, 1fr);
+  grid-template-columns: 38px 38px minmax(max-content, 1fr);
   min-width: max-content;
 }
 
-.structured-diff-number {
-  padding: 1px 9px 1px 5px;
+.diff-gutter {
+  padding: 1px 8px 1px 4px;
   border-right: 1px solid var(--technical-border);
   color: var(--technical-muted);
+  font-size: 10px;
   text-align: right;
   user-select: none;
 }
 
-.structured-diff-line code {
-  padding: 1px 12px;
+.diff-row code {
+  padding: 1px 12px 1px 6px;
+  font-family: var(--font-code);
   white-space: pre;
 }
 
-.structured-diff-line.added {
+.diff-marker {
+  display: inline-block;
+  width: 12px;
+  user-select: none;
+}
+
+.diff-row.added {
+  border-left: 3px solid var(--diff-added-text);
   background: var(--diff-added-bg);
   color: var(--diff-added-text);
 }
 
-.structured-diff-line.removed {
+.diff-row.removed {
+  border-left: 3px solid var(--diff-removed-text);
   background: var(--diff-removed-bg);
   color: var(--diff-removed-text);
 }
 
-.structured-diff-line.file {
-  border-top: 1px solid var(--technical-border);
-  border-bottom: 1px solid var(--technical-border);
-  background: var(--technical-surface-muted);
-  color: var(--technical-text);
-  font-weight: 500;
+.diff-row.context,
+.diff-row.hunk {
+  border-left: 3px solid transparent;
 }
 
-.structured-diff-line.hunk {
+.diff-row.hunk {
   background: var(--diff-hunk-bg);
   color: var(--diff-hunk-text);
 }
 
-.structured-diff-line.meta {
+.diff-row.hunk code {
+  font-size: 10px;
+  opacity: 0.85;
+}
+
+.read-tool-view {
+  display: grid;
+  background: var(--technical-surface);
+  color: var(--technical-text);
+  font-family: var(--font-code);
+}
+
+.read-file-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--technical-border);
+  background: var(--technical-surface-muted);
+}
+
+.read-file-head small {
+  flex-shrink: 0;
   color: var(--technical-muted);
+  font-size: 9px;
+}
+
+.open-file-link {
+  overflow: hidden;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--technical-text);
+  font: 500 11px var(--font-code);
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.open-file-link:hover {
+  color: var(--signal);
+  text-decoration: underline;
+}
+
+.read-file-content {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  max-height: 420px;
+  overflow: auto;
+}
+
+.read-file-gutter {
+  display: grid;
+  min-width: 40px;
+  padding: 10px 0;
+  border-right: 1px solid var(--technical-border);
+  color: var(--technical-muted);
+  font: 400 11px/1.65 var(--font-code);
+  text-align: right;
+  user-select: none;
+}
+
+.read-file-gutter span {
+  display: block;
+  min-height: calc(11px * 1.65);
+  padding: 0 8px 0 5px;
+}
+
+.read-file-code {
+  min-width: max-content;
+  margin: 0;
+  padding: 10px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--technical-text);
+  font: 400 11px/1.65 var(--font-code);
+  white-space: pre;
+}
+
+.read-file-code code.hljs {
+  display: block;
+  padding: 0;
+  background: transparent;
+  font: inherit;
+  white-space: pre;
 }
 
 .changed-file-list {

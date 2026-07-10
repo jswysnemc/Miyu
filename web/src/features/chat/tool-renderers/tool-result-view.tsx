@@ -1,5 +1,6 @@
 import { EditToolView } from "./edit-tool-view";
 import { GenericToolView } from "./generic-tool-view";
+import { ReadToolView } from "./read-tool-view";
 import { ShellToolView } from "./shell-tool-view";
 
 type ToolResultViewProps = {
@@ -17,6 +18,9 @@ type ToolResultViewProps = {
 export function ToolResultView({ name, argumentsText, output }: ToolResultViewProps) {
   if (name === "run_command" || name.includes("background_command")) {
     return <ShellToolView argumentsText={argumentsText} output={output} />;
+  }
+  if (name === "read_file") {
+    return <ReadToolView argumentsText={argumentsText} output={output} />;
   }
   if (name === "edit_file" || name === "apply_patch") {
     return <EditToolView argumentsText={argumentsText} output={output} />;

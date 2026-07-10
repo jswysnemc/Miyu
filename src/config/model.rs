@@ -1,3 +1,4 @@
+use super::agents::AgentProfile;
 use super::defaults::*;
 use super::model_metadata::ModelMetadata;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -19,6 +20,9 @@ pub struct AppConfig {
     pub prompt: PromptConfig,
     #[serde(default)]
     pub gateways: GatewayConfig,
+    /// Agent 配置档案列表；本期只做配置存取与 Web 编辑，运行时暂不消费
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub agents: Vec<AgentProfile>,
     #[serde(default)]
     pub plugins: PluginsConfig,
     #[serde(default, skip_serializing)]

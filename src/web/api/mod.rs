@@ -1,3 +1,4 @@
+mod agent_options;
 mod config;
 mod gateways;
 mod health;
@@ -27,6 +28,7 @@ pub(super) fn router(state: WebAppState) -> Router<WebAppState> {
     let protected = Router::new()
         .merge(workspaces::routes())
         .merge(config::routes())
+        .merge(agent_options::routes())
         .merge(providers::routes())
         .merge(prompts::routes())
         .merge(gateways::routes())

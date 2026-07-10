@@ -33,6 +33,14 @@
   grid-template-columns: minmax(360px, 1fr) 7px var(--workspace-panel-width);
 }
 
+.layout-swapped.workspace-open.chat-open:not(.workspace-maximized) .workbench-main {
+  grid-template-columns: var(--workspace-panel-width) 7px minmax(360px, 1fr);
+}
+
+.layout-swapped .coding-workspace { order: 1; }
+.layout-swapped .workspace-resize-handle { order: 2; }
+.layout-swapped .coding-chat { order: 3; }
+
 .workspace-closed .workbench-main,
 .chat-closed .workbench-main,
 .workspace-maximized .workbench-main {

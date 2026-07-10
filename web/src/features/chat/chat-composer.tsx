@@ -1,11 +1,11 @@
-import { ArrowRight, AtSign, BriefcaseBusiness, Eraser, ListTree, Paperclip, Square, Wrench } from "lucide-react";
+import { ArrowRight, AtSign, BriefcaseBusiness, Eraser, ListTree, Paperclip, Square } from "lucide-react";
 import { useRef } from "react";
-import { useNavigate } from "react-router-dom";
 import type { ChangeEvent, FormEvent } from "react";
 import type { RunModelSelection, ThinkingLevel } from "../../api/contracts";
 import type { ChatModelChoice } from "./chat-model-options";
 import { AttachmentStrip } from "./composer/attachment-strip";
 import { ComposerTextarea } from "./composer/composer-textarea";
+import type { ComposerTextareaHandle } from "./composer/composer-textarea";
 import type { ComposerAttachment } from "./composer/use-composer-attachments";
 import { ModelSelector } from "./model-selector";
 import { ThinkingSelector } from "./thinking-selector";
@@ -40,7 +40,7 @@ type ChatComposerProps = {
  */
 export function ChatComposer(props: ChatComposerProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const navigate = useNavigate();
+  const textareaRef = useRef<ComposerTextareaHandle>(null);
 
   /**
    * 提交当前输入内容。
@@ -71,6 +71,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <form className="composer" onSubmit={handleSubmit}>
         <AttachmentStrip attachments={props.attachments} onRemove={props.onRemoveAttachment} />
         <ComposerTextarea
+          ref={textareaRef}
           value={props.value}
           historyEntries={props.historyEntries}
           disabled={inputDisabled}
@@ -97,8 +98,7 @@ export function ChatComposer(props: ChatComposerProps) {
               <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
               <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
             </div>
-            <button type="button" className="composer-rail-button" onClick={() => navigate("/settings")} title="工具与插件设置" aria-label="工具与插件设置"><Wrench size={14} /></button>
-            <button type="button" className="composer-rail-button" onClick={() => props.onChange(`${props.value}@`)} disabled={inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
+            <button type="button" className="composer-rail-button" onClick={() => textareaRef.current?.openMentionPicker()} disabled={inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
             <button type="button" className="composer-rail-button" onClick={() => { props.onChange(""); for (const attachment of props.attachments) props.onRemoveAttachment(attachment.id); }} disabled={inputDisabled || (!props.value && props.attachments.length === 0)} title="清空输入" aria-label="清空输入"><Eraser size={14} /></button>
           </div>
           <div className="composer-actions">

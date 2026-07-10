@@ -1,4 +1,5 @@
 import type { AppConfig } from "../../api/contracts";
+import { SettingsGroup } from "./editor-layout";
 import { StructuredConfigFields } from "./structured-config-fields";
 
 type RuntimeSettingsSectionProps = {
@@ -20,15 +21,14 @@ export function RuntimeSettingsSection({ config, onConfigChange }: RuntimeSettin
     ["context", "上下文管理", "配置模型窗口和自动压缩阈值。"]
   ] as const;
   return (
-    <div className="runtime-settings-grid">
+    <div className="runtime-groups">
       {groups.map(([key, title, description]) => (
-        <section className="settings-panel runtime-settings-card" key={key}>
-          <header className="settings-panel-header"><div><span className="settings-kicker">{key}</span><h2>{title}</h2><p>{description}</p></div></header>
+        <SettingsGroup title={title} description={description} key={key}>
           <StructuredConfigFields
             value={(config[key] as Record<string, unknown> | undefined) ?? {}}
             onChange={(next) => onConfigChange({ ...config, [key]: next })}
           />
-        </section>
+        </SettingsGroup>
       ))}
     </div>
   );

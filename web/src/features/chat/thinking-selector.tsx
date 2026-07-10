@@ -3,14 +3,14 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { ThinkingLevel } from "../../api/contracts";
 
-const THINKING_OPTIONS: Array<{ value: ThinkingLevel; label: string; description: string }> = [
-  { value: "auto", label: "自动", description: "由服务商按模型能力决定" },
-  { value: "none", label: "关闭", description: "不请求额外推理" },
-  { value: "low", label: "低", description: "更快响应，较少推理" },
-  { value: "medium", label: "中", description: "速度与推理深度平衡" },
-  { value: "high", label: "高", description: "适合复杂实现任务" },
-  { value: "xhigh", label: "极高", description: "增加复杂问题推理预算" },
-  { value: "max", label: "最大", description: "使用服务商支持的最高等级" }
+const THINKING_OPTIONS: Array<{ value: ThinkingLevel; code: string; description: string }> = [
+  { value: "auto", code: "auto", description: "自动，由服务商按模型能力决定" },
+  { value: "none", code: "off", description: "关闭，不请求额外推理" },
+  { value: "low", code: "low", description: "低，更快响应，较少推理" },
+  { value: "medium", code: "medium", description: "中，速度与推理深度平衡" },
+  { value: "high", code: "high", description: "高，适合复杂实现任务" },
+  { value: "xhigh", code: "xhigh", description: "极高，增加复杂问题推理预算" },
+  { value: "max", code: "max", description: "最大，使用服务商支持的最高等级" }
 ];
 
 type ThinkingSelectorProps = {
@@ -86,7 +86,7 @@ export function ThinkingSelector({ value, disabled, onChange }: ThinkingSelector
         aria-expanded={open}
       >
         <BrainCircuit size={14} />
-        <span>思考 {current.label}</span>
+        <span>思考 {current.code}</span>
         <ChevronDown size={12} className={open ? "thinking-chevron open" : "thinking-chevron"} />
       </button>
       {open && createPortal(
@@ -102,7 +102,7 @@ export function ThinkingSelector({ value, disabled, onChange }: ThinkingSelector
                 onClick={() => selectLevel(option.value)}
                 key={option.value}
               >
-                <span><strong>{option.label}</strong><small>{option.description}</small></span>
+                <span><strong>{option.code}</strong><small>{option.description}</small></span>
                 <Check size={14} />
               </button>
             ))}

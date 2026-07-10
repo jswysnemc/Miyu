@@ -14,6 +14,7 @@ impl Default for AppConfig {
             display: DisplayConfig::default(),
             prompt: PromptConfig::default(),
             gateways: GatewayConfig::default(),
+            agents: Vec::new(),
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
             system_prompt_file: Some("system-prompt.md".to_string()),

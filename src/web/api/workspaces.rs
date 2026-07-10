@@ -29,6 +29,17 @@ struct BrowseDirectoryQuery {
     path: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct CreateDirectoryRequest {
+    path: String,
+    name: String,
+}
+
+#[derive(Deserialize)]
+struct SwitchWorkspaceQuery {
+    close_terminals: Option<bool>,
+}
+
 #[derive(Serialize)]
 struct RemovedResponse {
     removed: bool,
@@ -39,6 +50,7 @@ pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspaces", get(list).post(add))
         .route("/api/workspaces/browse", get(browse))
+        .route("/api/workspaces/browse/directory", post(create_browse_directory))
         .route("/api/workspaces/:id", patch(rename).delete(remove))
         .route("/api/workspaces/:id/switch", post(switch))
 }
@@ -74,6 +86,21 @@ async fn browse(
     Ok(Json(listing))
 }
 
+/// 在允许浏览的目录下创建子目录。
+///
+/// 参数:
+/// - `request`: 父目录路径与新目录名
+///
+/// 返回:
+/// - 新目录的目录条目
+async fn create_browse_directory(
+    Json(request): Json<CreateDirectoryRequest>,
+) -> WebResult<Json<super::super::workspaces::DirectoryEntry>> {
+    let entry = super::super::workspaces::create_directory(&request.path, &request.name)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(entry))
+}
+
 /// 重命名工作区。
 async fn rename(
     State(state): State<WebAppState>,
@@ -88,10 +115,28 @@ async fn rename(
 }
 
 /// 切换活动工作区。
+///
+/// 参数:
+/// - `id`: 目标工作区 ID
+/// - `query`: 可选 `close_terminals=true` 时先关闭全部终端
+///
+/// 返回:
+/// - 切换后的工作区信息
 async fn switch(
     State(state): State<WebAppState>,
     Path(id): Path<String>,
+    Query(query): Query<SwitchWorkspaceQuery>,
 ) -> WebResult<Json<WorkspaceInfo>> {
+    // 1. 有活动 run 时始终拒绝切换
+    if state.runs.is_active().await {
+        return Err(WebError::conflict(
+            "stop the active agent run before switching workspace",
+        ));
+    }
+    // 2. 按请求先关闭全部终端，否则有终端时拒绝
+    if query.close_terminals.unwrap_or(false) {
+        close_all_terminals(&state)?;
+    }
     ensure_workspace_switch_allowed(&state).await?;
     let workspace = state
         .workspaces
@@ -117,6 +162,23 @@ async fn ensure_workspace_switch_allowed(state: &WebAppState) -> WebResult<()> {
         return Err(WebError::conflict(
             "close active terminals before switching workspace",
         ));
+    }
+    Ok(())
+}
+
+/// 关闭全部终端会话。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+///
+/// 返回:
+/// - 全部关闭时返回成功
+fn close_all_terminals(state: &WebAppState) -> WebResult<()> {
+    // 1. 列出当前全部终端
+    let terminals = state.terminals.list().map_err(WebError::from)?;
+    // 2. 逐个终止并移除
+    for terminal in terminals {
+        state.terminals.remove(&terminal.id).map_err(WebError::from)?;
     }
     Ok(())
 }

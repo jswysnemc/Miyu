@@ -15,7 +15,8 @@ describe("workspace layout state", () => {
       workspaceWidth: 480,
       workspaceMaximized: false,
       terminalOpen: false,
-      terminalHeight: 280
+      terminalHeight: 280,
+      swapped: false
     });
   });
 
@@ -26,7 +27,8 @@ describe("workspace layout state", () => {
       workspaceWidth: 520,
       workspaceMaximized: false,
       terminalOpen: false,
-      terminalHeight: 280
+      terminalHeight: 280,
+      swapped: false
     });
   });
 });

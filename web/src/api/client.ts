@@ -1,5 +1,6 @@
 import type {
   ConfigResponse,
+  DirectoryEntry,
   DirectoryListing,
   FileContent,
   FileMutation,
@@ -58,12 +59,18 @@ export const api = {
   workspaces: {
     list: () => apiRequest<WorkspaceList>("/api/workspaces"),
     browse: (path?: string) => apiRequest<DirectoryListing>(`/api/workspaces/browse${path ? `?path=${encodeURIComponent(path)}` : ""}`),
+    createDirectory: (path: string, name: string) =>
+      apiRequest<DirectoryEntry>("/api/workspaces/browse/directory", {
+        method: "POST",
+        body: JSON.stringify({ path, name })
+      }),
     add: (path: string, name?: string) =>
       apiRequest<Workspace>("/api/workspaces", {
         method: "POST",
         body: JSON.stringify({ path, name })
       }),
-    switch: (id: string) => apiRequest<Workspace>(`/api/workspaces/${id}/switch`, { method: "POST" }),
+    switch: (id: string, closeTerminals = false) =>
+      apiRequest<Workspace>(`/api/workspaces/${id}/switch${closeTerminals ? "?close_terminals=true" : ""}`, { method: "POST" }),
     rename: (id: string, name: string) =>
       apiRequest<Workspace>(`/api/workspaces/${id}`, {
         method: "PATCH",

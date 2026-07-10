@@ -8,9 +8,15 @@ import { useEffect, useState } from "react";
  * @returns sai-chat 风格思考区域
  */
 export function ReasoningBlock({ source, live, startedAt, endedAt }: { source: string; live?: boolean; startedAt?: string; endedAt?: string }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useState(Boolean(live));
   const [clock, setClock] = useState(() => Date.now());
 
+  // 1. 流式输出时自动展开，结束或历史加载时自动收起
+  useEffect(() => {
+    setOpen(Boolean(live));
+  }, [live]);
+
+  // 2. 流式期间每秒刷新耗时显示
   useEffect(() => {
     if (!live || !startedAt) return;
     const timer = window.setInterval(() => setClock(Date.now()), 1_000);

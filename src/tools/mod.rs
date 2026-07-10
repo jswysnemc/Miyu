@@ -46,7 +46,37 @@ pub(crate) use progressive::{register_loader as register_progressive_loader, LOA
 #[allow(unused_imports)]
 pub use registry::{empty_parameters, ToolPermission, ToolProgress, ToolRegistry, ToolSpec};
 pub(crate) use skills::load_installed_skill;
-pub use skills::{register_skills, skills_catalog_prompt, skills_prompt};
+pub use skills::{register_skills, skill_catalog, skills_catalog_prompt, skills_prompt};
+
+/// 内置工具目录条目，包含工具名与用途分组。
+pub struct ToolCatalogEntry {
+    /// 工具名称
+    pub name: String,
+    /// 用途分组名称
+    pub group: &'static str,
+}
+
+/// 枚举当前配置下的内置工具及其分组。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 按工具名排序的目录条目列表
+pub fn tool_catalog(config: &AppConfig, paths: &MiyuPaths) -> Vec<ToolCatalogEntry> {
+    // 1. 构建内置注册表以获取全部工具名
+    let registry = builtin_registry(config, paths);
+    // 2. 为每个工具附加用途分组
+    registry
+        .tool_infos()
+        .into_iter()
+        .map(|info| ToolCatalogEntry {
+            group: groups::group_for_tool(&info.name),
+            name: info.name,
+        })
+        .collect()
+}
 
 pub fn readable_tool_name(name: &str) -> &str {
     match name {

@@ -54,6 +54,12 @@ export function useWorkspaceLayout() {
   /** 关闭底部终端。 */
   const closeTerminal = () => setLayout((current) => ({ ...current, terminalOpen: false }));
 
+  /** 切换底部终端显隐。 */
+  const toggleTerminal = () => setLayout((current) => ({ ...current, terminalOpen: !current.terminalOpen }));
+
+  /** 左右调换聊天区与编辑工作区。 */
+  const toggleSwapped = () => setLayout((current) => ({ ...current, swapped: !current.swapped }));
+
   /**
    * 更新右侧工作区宽度。
    *
@@ -75,5 +81,5 @@ export function useWorkspaceLayout() {
     setLayout((current) => ({ ...current, terminalHeight: clampTerminalHeight(height, window.innerHeight) }));
   };
 
-  return { ...layout, openWorkspace, closeWorkspace, toggleChat, toggleWorkspaceMaximized, openTerminal, closeTerminal, resizeWorkspace, resizeTerminal };
+  return { ...layout, openWorkspace, closeWorkspace, toggleChat, toggleWorkspaceMaximized, openTerminal, closeTerminal, toggleTerminal, toggleSwapped, resizeWorkspace, resizeTerminal };
 }

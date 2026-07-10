@@ -7,6 +7,7 @@ export type WorkspaceLayoutState = {
   workspaceMaximized: boolean;
   terminalOpen: boolean;
   terminalHeight: number;
+  swapped: boolean;
 };
 
 const DEFAULT_WORKSPACE_WIDTH = 520;
@@ -57,7 +58,8 @@ export function parseWorkspaceLayout(serialized: string | null, viewportWidth: n
       workspaceWidth: clampWorkspaceWidth(Number(value.workspaceWidth) || DEFAULT_WORKSPACE_WIDTH, viewportWidth),
       workspaceMaximized: value.workspaceMaximized === true,
       terminalOpen: value.terminalOpen === true,
-      terminalHeight: clampTerminalHeight(Number(value.terminalHeight) || DEFAULT_TERMINAL_HEIGHT, viewportHeight)
+      terminalHeight: clampTerminalHeight(Number(value.terminalHeight) || DEFAULT_TERMINAL_HEIGHT, viewportHeight),
+      swapped: value.swapped === true
     };
   } catch {
     return createDefaultWorkspaceLayout(viewportWidth, viewportHeight);
@@ -77,6 +79,7 @@ export function createDefaultWorkspaceLayout(viewportWidth: number, viewportHeig
     workspaceWidth: clampWorkspaceWidth(DEFAULT_WORKSPACE_WIDTH, viewportWidth),
     workspaceMaximized: false,
     terminalOpen: false,
-    terminalHeight: clampTerminalHeight(DEFAULT_TERMINAL_HEIGHT, viewportHeight)
+    terminalHeight: clampTerminalHeight(DEFAULT_TERMINAL_HEIGHT, viewportHeight),
+    swapped: false
   };
 }

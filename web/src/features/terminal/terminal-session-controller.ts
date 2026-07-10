@@ -28,11 +28,43 @@ export function connectTerminalSession(options: TerminalSessionControllerOptions
   let reconnectAttempts = 0;
   let reconnectTimer: number | null = null;
   let lastSize = { cols: options.terminal.cols, rows: options.terminal.rows };
+  let suppressInput = false;
   const inputSubscriptions: IDisposable[] = [];
 
-  /** 向已连接 WebSocket 写入终端字节。 */
+  /** 向已连接 WebSocket 写入终端字节，回放阶段丢弃 xterm 对查询序列的自动响应。 */
   const sendBytes = (bytes: Uint8Array) => {
+    if (suppressInput) return;
     if (socket?.readyState === WebSocket.OPEN) socket.send(bytes);
+  };
+
+  /**
+   * 处理服务端文本消息，识别回放阶段控制标记。
+   *
+   * @param text 服务端发来的文本内容
+   */
+  const handleTextMessage = (text: string) => {
+    let control: unknown = null;
+    try {
+      control = JSON.parse(text);
+    } catch {
+      control = null;
+    }
+    if (control && typeof control === "object" && "type" in control) {
+      const type = (control as { type: unknown }).type;
+      if (type === "replay_start") {
+        // 1. 进入回放阶段，抑制 xterm 自动响应写回 PTY
+        suppressInput = true;
+        return;
+      }
+      if (type === "replay_end") {
+        // 2. 写入空串并在回调中恢复转发，确保回放数据已解析完毕
+        options.terminal.write("", () => {
+          suppressInput = false;
+        });
+        return;
+      }
+    }
+    options.terminal.write(text);
   };
 
   /** 发送最近一次终端尺寸。 */
@@ -67,6 +99,7 @@ export function connectTerminalSession(options: TerminalSessionControllerOptions
       if (disposed || socket !== nextSocket) return;
       if (reconnectAttempts > 0) options.terminal.reset();
       reconnectAttempts = 0;
+      suppressInput = false;
       options.onError(null);
       options.onStatusChange("connected");
       sendResize();
@@ -74,7 +107,7 @@ export function connectTerminalSession(options: TerminalSessionControllerOptions
     };
     nextSocket.onmessage = (event) => {
       if (event.data instanceof ArrayBuffer) options.terminal.write(new Uint8Array(event.data));
-      else options.terminal.write(String(event.data));
+      else handleTextMessage(String(event.data));
     };
     nextSocket.onerror = () => nextSocket.close();
     nextSocket.onclose = () => {

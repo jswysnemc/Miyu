@@ -56,6 +56,36 @@ pub(crate) fn browse(requested: Option<&str>) -> Result<DirectoryListing> {
     })
 }
 
+/// 在允许根目录内的父目录下创建子目录。
+///
+/// 参数:
+/// - `parent`: 父目录绝对路径，必须位于允许根目录内
+/// - `name`: 新目录名，不允许包含路径分隔符或 `..`
+///
+/// 返回:
+/// - 新目录对应的目录条目
+pub(crate) fn create_directory(parent: &str, name: &str) -> Result<DirectoryEntry> {
+    // 1. 校验目录名合法性
+    let name = name.trim();
+    if name.is_empty() {
+        bail!("directory name is empty");
+    }
+    if name == "." || name == ".." || name.contains('/') || name.contains('\\') {
+        bail!("directory name contains illegal characters");
+    }
+    // 2. 校验父目录位于允许根目录内
+    let roots = allowed_roots()?;
+    let parent = canonical_allowed_directory(Path::new(parent.trim()), &roots)?;
+    // 3. 创建子目录并返回条目
+    let target = parent.join(name);
+    if target.exists() {
+        bail!("directory already exists: {}", target.display());
+    }
+    std::fs::create_dir(&target)
+        .with_context(|| format!("failed to create directory: {}", target.display()))?;
+    directory_entry(target)
+}
+
 /// 返回配置后的服务端目录根集合。
 fn allowed_roots() -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();

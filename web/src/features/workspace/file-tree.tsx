@@ -1,9 +1,10 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, File, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, ChevronsLeft, ChevronsRight, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { FileNode } from "../../api/contracts";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
+import { FileTypeIcon } from "../../shared/ui/file-icon";
 
 type FileTreeProps = {
   selectedFile: string | null;
@@ -25,6 +26,7 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
   const tree = useQuery({ queryKey: ["file-tree"], queryFn: api.workspace.tree, refetchOnWindowFocus: true, refetchInterval: 15_000 });
   const [focusedPath, setFocusedPath] = useState<string | null>(selectedFile);
   const [action, setAction] = useState<FileAction>(null);
+  const [collapsed, setCollapsed] = useState(false);
   const [error, setError] = useState("");
   const focusedNode = findNode(tree.data ?? [], focusedPath);
 
@@ -84,6 +86,14 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
     }
   };
 
+  if (collapsed) {
+    return (
+      <aside className="file-tree collapsed">
+        <button type="button" className="file-tree-expand" onClick={() => setCollapsed(false)} aria-label="展开文件树"><ChevronsRight size={14} /></button>
+      </aside>
+    );
+  }
+
   return (
     <aside className="file-tree">
       <div className="file-tree-head">
@@ -94,6 +104,7 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
           <button type="button" onClick={beginRename} disabled={!focusedPath} aria-label="重命名"><Pencil size={12} /></button>
           <button type="button" onClick={() => void deleteFocused()} disabled={!focusedPath} aria-label="删除"><Trash2 size={12} /></button>
           <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件树"><RefreshCw size={12} /></button>
+          <button type="button" onClick={() => setCollapsed(true)} aria-label="折叠文件树"><ChevronsLeft size={12} /></button>
         </div>
       </div>
       <div className="file-tree-scroll">
@@ -130,7 +141,7 @@ function TreeNode({ node, selectedFile, focusedPath, onFocus, onSelectFile, dept
         }}
       >
         {directory ? <ChevronRight size={12} className={open ? "tree-chevron open" : "tree-chevron"} /> : <span className="tree-spacer" />}
-        {directory ? (open ? <FolderOpen size={14} /> : <Folder size={14} />) : <File size={13} />}
+        {directory ? (open ? <FolderOpen size={14} /> : <Folder size={14} />) : <FileTypeIcon name={node.name} size={13} />}
         <span>{node.name}</span>
       </button>
       {directory && open && node.children.map((child) => <TreeNode key={child.path} node={child} selectedFile={selectedFile} focusedPath={focusedPath} onFocus={onFocus} onSelectFile={onSelectFile} depth={depth + 1} />)}

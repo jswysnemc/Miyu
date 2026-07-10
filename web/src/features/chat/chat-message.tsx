@@ -1,7 +1,9 @@
 import type { HistoryEntry, SessionTimelineTurn, TimelineToolEntry } from "../../api/contracts";
 import type { LiveRunState } from "./run-event-reducer";
 import type { LiveMessagePart } from "./run-event-reducer";
+import { MessageActions } from "./message/message-actions";
 import { MessageParts } from "./message/message-parts";
+import { UserMessageBubble } from "./message/user-message-bubble";
 
 /**
  * 渲染一条历史消息。
@@ -10,10 +12,11 @@ import { MessageParts } from "./message/message-parts";
  * @returns 用户或助手消息
  */
 export function HistoryMessage({ message }: { message: HistoryEntry }) {
-  if (message.role === "user") return <article className="message user-message"><div className="message-content">{message.content}</div></article>;
+  if (message.role === "user") return <UserMessageBubble content={message.content} timestamp={message.timestamp} />;
   return (
     <article className="message assistant-message">
       <MessageParts parts={historyMessageParts(message)} />
+      {message.content && <MessageActions text={message.content} timestamp={message.timestamp} />}
     </article>
   );
 }
@@ -27,9 +30,10 @@ export function HistoryMessage({ message }: { message: HistoryEntry }) {
 export function HistoryTurn({ turn }: { turn: SessionTimelineTurn }) {
   return (
     <>
-      <article className="message user-message"><div className="message-content">{turn.user.content}</div></article>
+      <UserMessageBubble content={turn.user.content} timestamp={turn.user.timestamp} />
       <article className="message assistant-message">
         <MessageParts parts={historyTurnParts(turn)} />
+        {turn.assistant.content && <MessageActions text={turn.assistant.content} timestamp={turn.assistant.timestamp} />}
       </article>
     </>
   );
@@ -44,16 +48,12 @@ export function HistoryTurn({ turn }: { turn: SessionTimelineTurn }) {
 export function LiveRunMessage({ state, running }: { state: LiveRunState; running: boolean }) {
   return (
     <>
-      <article className="message user-message">
-        <div className="user-message-stack">
-          <div className="message-content">{state.userInput}</div>
-          {state.imageUrls.length > 0 && <div className="user-attachments">{state.imageUrls.map((url, index) => <img className="user-attachment" src={url} alt={`用户附件 ${index + 1}`} key={`${index}-${url.slice(-24)}`} />)}</div>}
-        </div>
-      </article>
+      <UserMessageBubble content={state.userInput} imageUrls={state.imageUrls} />
       <article className="message assistant-message live-message">
         <MessageParts parts={state.parts} live={running} />
         {running && !state.content && !state.reasoning && state.tools.length === 0 && <div className="response-pulse"><span /><span /><span /></div>}
         {state.error && <div className="run-error">{state.error}</div>}
+        {!running && state.content && <MessageActions text={state.content} />}
       </article>
     </>
   );

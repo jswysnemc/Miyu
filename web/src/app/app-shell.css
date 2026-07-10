@@ -30,9 +30,6 @@
   width: 30px;
   height: 30px;
   place-items: center;
-  border-radius: 8px;
-  background: var(--graphite);
-  color: var(--paper-raised);
 }
 
 .brand-name {

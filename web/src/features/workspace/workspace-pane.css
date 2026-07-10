@@ -11,6 +11,10 @@
 .pane-control + .pane-close { margin-left: 0; }
 .pane-body { min-height: 0; }
 .files-layout { display: grid; grid-template-columns: minmax(150px, 190px) minmax(0, 1fr); height: 100%; min-height: 0; }
+.files-layout:has(.file-tree.collapsed) { grid-template-columns: 28px minmax(0, 1fr); }
+.file-tree.collapsed { display: grid; align-content: start; padding: 6px 0; }
+.file-tree-expand { display: grid; width: 100%; height: 30px; place-items: center; border: 0; background: transparent; color: var(--ink-soft); }
+.file-tree-expand:hover { color: var(--ink); }
 .file-tree { display: grid; grid-template-rows: 37px minmax(0, 1fr); min-height: 0; border-right: 1px solid var(--line); background: var(--paper); }
 .file-tree-head { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 0 10px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font: 500 10px var(--font-code); text-transform: uppercase; }
 .file-tree-scroll { min-height: 0; overflow: auto; padding: 5px 0 12px; }
@@ -84,3 +88,19 @@
   .git-manager-body { grid-template-columns: 240px minmax(0, 1fr); }
 }
 .pane-error { margin: 10px; padding: 9px; border-left: 3px solid var(--danger); color: var(--danger); font-size: 12px; }
+
+.branch-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 150px;
+  overflow: hidden;
+  margin: 0 0 3px 4px;
+  padding: 3px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--ink-soft);
+  font: 500 10px var(--font-code);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

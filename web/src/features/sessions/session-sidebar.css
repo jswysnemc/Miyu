@@ -1,9 +1,41 @@
 .session-sidebar {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  display: flex;
+  flex-direction: column;
   height: 100%;
   min-height: 0;
   padding: 13px 10px 10px;
+}
+
+.session-list {
+  flex: 1;
+}
+
+.sidebar-footer {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+}
+
+.sidebar-settings-link {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 10px;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.sidebar-settings-link:hover {
+  background: var(--paper-raised);
+  color: var(--ink);
+}
+
+.sidebar-settings-link.active {
+  background: var(--signal-soft);
+  color: var(--signal);
 }
 
 .sidebar-heading {
@@ -37,45 +69,57 @@
 }
 
 .session-bulk-bar {
-  display: grid;
-  grid-template-columns: auto 1fr;
-  gap: 6px 8px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 34px;
   margin: 0 0 8px;
-  padding: 7px;
+  padding: 0 6px;
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--paper-raised);
 }
 
 .session-bulk-bar > span {
-  align-self: center;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
   color: var(--ink-soft);
   font-size: 10px;
   text-align: right;
+  white-space: nowrap;
 }
 
 .session-bulk-bar button {
   display: inline-flex;
+  flex: none;
   align-items: center;
-  justify-content: center;
-  gap: 5px;
-  min-height: 27px;
+  gap: 4px;
+  height: 24px;
   padding: 0 7px;
-  border: 1px solid var(--line);
-  border-radius: 6px;
-  background: var(--paper-deep);
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--ink-soft);
   font-size: 10px;
+  white-space: nowrap;
+}
+
+.session-bulk-bar button:hover:not(:disabled) {
+  background: var(--paper-deep);
+  color: var(--ink);
 }
 
 .session-bulk-bar button.danger {
-  grid-column: 1 / -1;
   color: var(--danger);
 }
 
+.session-bulk-bar button:disabled {
+  opacity: 0.4;
+}
+
 .session-bulk-bar button.confirming {
-  border-color: color-mix(in srgb, var(--danger) 48%, var(--line));
-  background: color-mix(in srgb, var(--danger) 10%, var(--paper-raised));
+  background: color-mix(in srgb, var(--danger) 12%, var(--paper-raised));
 }
 
 .sidebar-heading h2 {

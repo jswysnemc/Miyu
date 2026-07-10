@@ -4,4 +4,4 @@ mod model;
 
 pub(crate) use manager::WorkspaceManager;
 pub(crate) use model::WorkspaceInfo;
-pub(crate) use directory_browser::{browse as browse_directories, DirectoryListing};
+pub(crate) use directory_browser::{browse as browse_directories, create_directory, DirectoryEntry, DirectoryListing};
