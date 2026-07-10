@@ -1,14 +1,3 @@
-:root,
-:root[data-theme="graphite"],
-:root[data-theme="ocean"],
-:root[data-theme="system"] {
-  --technical-surface: var(--code-surface);
-  --technical-surface-muted: var(--code-head);
-  --technical-border: var(--terminal-line);
-  --technical-text: var(--code-text);
-  --technical-muted: var(--code-comment);
-}
-
 .markdown-code-block,
 .mermaid-wrapper,
 .tool-card,

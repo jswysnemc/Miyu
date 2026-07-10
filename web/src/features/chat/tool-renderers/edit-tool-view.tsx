@@ -23,7 +23,7 @@ type ChangedFile = {
 export function EditToolView({ argumentsText, output }: EditToolViewProps) {
   const args = parseJsonRecord(argumentsText);
   const result = parseJsonRecord(output);
-  const patch = stringField(args, "patch");
+  const patch = stringField(args, "patch") || legacyEditAsPatch(args);
   const path = stringField(args, "path");
   const changedFiles = Array.isArray(result?.changed_files) ? result.changed_files as ChangedFile[] : [];
   return (
@@ -44,4 +44,26 @@ export function EditToolView({ argumentsText, output }: EditToolViewProps) {
       {output && !result && <pre className="generic-tool-block result"><code>{output}</code></pre>}
     </div>
   );
+}
+
+/**
+ * 把旧编辑模式参数转换为可展示的 patch 文本。
+ *
+ * @param args 编辑工具参数
+ * @returns Codex 风格 patch 文本，无法转换时返回空串
+ */
+function legacyEditAsPatch(args: Record<string, unknown> | null): string {
+  const path = stringField(args, "path");
+  if (!path) return "";
+  const content = stringField(args, "content");
+  if (content) {
+    const body = content.replace(/\n$/, "").split("\n").map((line) => `+${line}`).join("\n");
+    return `*** Update File: ${path}\n${body}`;
+  }
+  const replacement = args && typeof args.replacement === "string" ? args.replacement : null;
+  const start = args && typeof args.start_line === "number" ? args.start_line : null;
+  const end = args && typeof args.end_line === "number" ? args.end_line : null;
+  if (replacement === null || start === null || end === null) return "";
+  const body = replacement.replace(/\n$/, "").split("\n").map((line) => `+${line}`).join("\n");
+  return `*** Update File: ${path}\n@@ 第 ${start}-${end} 行\n${replacement ? body : "-（删除该行范围）"}`;
 }

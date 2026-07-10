@@ -78,10 +78,7 @@ export function ChatPage() {
   return (
     <div className="chat-page">
       <header className="chat-header">
-        <div>
-          <span className="eyebrow">Agent workspace</span>
-          <h1>{activeSession?.title ?? "选择会话"}</h1>
-        </div>
+        <h1>{activeSession?.title ?? "选择会话"}</h1>
         <WorkStatus status={run.state.status} />
       </header>
       <div className="message-scroll" ref={scrollRef}>

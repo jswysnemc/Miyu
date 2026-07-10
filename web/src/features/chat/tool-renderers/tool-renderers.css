@@ -20,7 +20,7 @@
 }
 
 .shell-command-line > span {
-  color: #62cf91;
+  color: var(--signal);
   user-select: none;
 }
 
@@ -38,13 +38,13 @@
 }
 
 .shell-exit.success {
-  background: rgb(51 153 94 / 18%);
-  color: #8de0ad;
+  background: var(--diff-added-bg);
+  color: var(--diff-added-text);
 }
 
 .shell-exit.failed {
-  background: rgb(196 70 62 / 20%);
-  color: #ffaaa3;
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-text);
 }
 
 .shell-output,
@@ -62,7 +62,7 @@
 
 .shell-output.stderr {
   border-top: 1px solid var(--technical-border);
-  color: #ffaaa3;
+  color: var(--danger);
 }
 
 .structured-diff {
@@ -81,7 +81,7 @@
 
 .structured-diff-number {
   padding: 1px 9px 1px 5px;
-  border-right: 1px solid rgb(255 255 255 / 7%);
+  border-right: 1px solid var(--technical-border);
   color: var(--technical-muted);
   text-align: right;
   user-select: none;
@@ -93,13 +93,13 @@
 }
 
 .structured-diff-line.added {
-  background: rgb(31 119 74 / 24%);
-  color: #b7efce;
+  background: var(--diff-added-bg);
+  color: var(--diff-added-text);
 }
 
 .structured-diff-line.removed {
-  background: rgb(165 55 47 / 24%);
-  color: #ffc0ba;
+  background: var(--diff-removed-bg);
+  color: var(--diff-removed-text);
 }
 
 .structured-diff-line.file {
@@ -111,8 +111,8 @@
 }
 
 .structured-diff-line.hunk {
-  background: rgb(49 97 132 / 22%);
-  color: #9ed0ee;
+  background: var(--diff-hunk-bg);
+  color: var(--diff-hunk-text);
 }
 
 .structured-diff-line.meta {
@@ -135,7 +135,7 @@
 }
 
 .changed-file > svg {
-  color: #62cf91;
+  color: var(--signal);
 }
 
 .changed-file > span:nth-child(2) {
@@ -164,12 +164,12 @@
 }
 
 .changed-file-stats b {
-  color: #86dca7;
+  color: var(--diff-added-text);
   font-weight: 500;
 }
 
 .changed-file-stats i {
-  color: #f39a93;
+  color: var(--diff-removed-text);
   font-style: normal;
 }
 

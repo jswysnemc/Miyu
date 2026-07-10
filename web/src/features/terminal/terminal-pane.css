@@ -45,7 +45,7 @@
 
 .terminal-dock {
   display: grid;
-  grid-template-columns: 188px minmax(0, 1fr);
+  grid-template-columns: 156px minmax(0, 1fr);
   height: 100%;
   min-height: 0;
   border-top: 1px solid var(--line);
@@ -54,7 +54,7 @@
 
 .terminal-sidebar {
   display: grid;
-  grid-template-rows: 38px minmax(0, 1fr) 38px;
+  grid-template-rows: 36px minmax(0, 1fr) 34px;
   min-height: 0;
   border-right: 1px solid var(--terminal-line);
   color: var(--terminal-muted);
