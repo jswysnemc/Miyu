@@ -15,6 +15,7 @@ struct FetchModelsRequest {
 #[derive(Serialize)]
 struct FetchModelsResponse {
     models: Vec<String>,
+    metadata: std::collections::BTreeMap<String, provider_models::CatalogMetadata>,
 }
 
 /// 返回供应商辅助操作路由。
@@ -40,10 +41,15 @@ async fn fetch_models(
     let paths = state.paths.clone();
     let provider = provider_models::restore_provider_secret(&paths, request.provider)
         .map_err(WebError::from)?;
-    let models =
-        tokio::task::spawn_blocking(move || provider_models::fetch_models(&paths, &provider))
-            .await
-            .map_err(|error| WebError::from(anyhow::anyhow!(error)))?
-            .map_err(|error| WebError::bad_request(error.to_string()))?;
-    Ok(Json(FetchModelsResponse { models }))
+    let (models, metadata) = tokio::task::spawn_blocking(move || {
+        let models = provider_models::fetch_models(&paths, &provider)?;
+        let metadata = provider_models::fetch_catalog_metadata(&models)
+            .into_iter()
+            .collect();
+        anyhow::Ok((models, metadata))
+    })
+    .await
+    .map_err(|error| WebError::from(anyhow::anyhow!(error)))?
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(FetchModelsResponse { models, metadata }))
 }

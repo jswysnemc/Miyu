@@ -1,4 +1,4 @@
-use super::task_state::TaskSnapshot;
+use super::subagent_state::SubagentSnapshot;
 use crate::paths::MiyuPaths;
 use crate::runtime_recovery::{
     NewRuntimeProcessEventInput, NewRuntimeProcessRecord, OwnerKind, ProcessKind,
@@ -7,75 +7,81 @@ use crate::runtime_recovery::{
 use crate::state::StateStore;
 use anyhow::Result;
 
-/// 记录子代理任务启动到 Runtime Recovery。
+/// 记录子智能体启动到 Runtime Recovery。
 ///
 /// 参数:
 /// - `paths`: Miyu 路径
-/// - `task`: 子代理任务快照
+/// - `subagent`: 子智能体快照
 ///
 /// 返回:
 /// - 记录是否成功
-pub(crate) fn record_subagent_task_started(paths: &MiyuPaths, task: &TaskSnapshot) -> Result<()> {
+pub(crate) fn record_subagent_started(
+    paths: &MiyuPaths,
+    subagent: &SubagentSnapshot,
+) -> Result<()> {
     let state = StateStore::new(paths)?;
     state.record_runtime_process(runtime_process(
         state.session_id(),
-        task,
+        subagent,
         RuntimeProcessStatus::Running,
     ))?;
     state.append_runtime_process_event(NewRuntimeProcessEventInput {
-        process_id: runtime_process_id(&task.id),
+        process_id: runtime_process_id(&subagent.id),
         stream: "lifecycle".to_string(),
         event_kind: "started".to_string(),
         payload_ref: None,
-        payload_preview: format!("subagent task started: {}", task.description),
+        payload_preview: format!("subagent started: {}", subagent.description),
     })?;
     Ok(())
 }
 
-/// 记录子代理任务结束到 Runtime Recovery。
+/// 记录子智能体结束到 Runtime Recovery。
 ///
 /// 参数:
 /// - `paths`: Miyu 路径
-/// - `task`: 子代理任务快照
+/// - `subagent`: 子智能体快照
 ///
 /// 返回:
 /// - 记录是否成功
-pub(crate) fn record_subagent_task_finished(paths: &MiyuPaths, task: &TaskSnapshot) -> Result<()> {
+pub(crate) fn record_subagent_finished(
+    paths: &MiyuPaths,
+    subagent: &SubagentSnapshot,
+) -> Result<()> {
     let state = StateStore::new(paths)?;
-    let status = runtime_status_from_task(&task.status);
+    let status = runtime_status_from_subagent(&subagent.status);
     let seq = state.append_runtime_process_event(NewRuntimeProcessEventInput {
-        process_id: runtime_process_id(&task.id),
+        process_id: runtime_process_id(&subagent.id),
         stream: "lifecycle".to_string(),
-        event_kind: task.status.clone(),
+        event_kind: subagent.status.clone(),
         payload_ref: None,
-        payload_preview: lifecycle_preview(task),
+        payload_preview: lifecycle_preview(subagent),
     })?;
-    let mut process = runtime_process(state.session_id(), task, status);
+    let mut process = runtime_process(state.session_id(), subagent, status);
     process.last_seq = seq;
     state.record_runtime_process(process)?;
     Ok(())
 }
 
-/// 创建子代理任务运行时进程记录。
+/// 创建子智能体运行时进程记录。
 ///
 /// 参数:
-/// - `task`: 子代理任务快照
+/// - `subagent`: 子智能体快照
 /// - `status`: 运行时进程状态
 ///
 /// 返回:
 /// - 运行时进程记录
 fn runtime_process(
     session_id: &str,
-    task: &TaskSnapshot,
+    subagent: &SubagentSnapshot,
     status: RuntimeProcessStatus,
 ) -> NewRuntimeProcessRecord {
     NewRuntimeProcessRecord {
-        id: runtime_process_id(&task.id),
+        id: runtime_process_id(&subagent.id),
         session_id: session_id.to_string(),
         owner_kind: OwnerKind::Subagent,
-        owner_id: task.id.clone(),
-        process_kind: ProcessKind::SubagentTask,
-        command: task.description.clone(),
+        owner_id: subagent.id.clone(),
+        process_kind: ProcessKind::Subagent,
+        command: subagent.description.clone(),
         cwd: std::env::current_dir()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|_| ".".to_string()),
@@ -86,25 +92,25 @@ fn runtime_process(
     }
 }
 
-/// 生成子代理任务运行时进程标识。
+/// 生成子智能体运行时进程标识。
 ///
 /// 参数:
-/// - `task_id`: 子代理任务 ID
+/// - `subagent_id`: 子智能体 ID
 ///
 /// 返回:
 /// - 运行时进程标识
-fn runtime_process_id(task_id: &str) -> String {
-    format!("subagent_task_{task_id}")
+fn runtime_process_id(subagent_id: &str) -> String {
+    format!("subagent_{subagent_id}")
 }
 
-/// 将子代理任务状态映射为运行时进程状态。
+/// 将子智能体状态映射为运行时进程状态。
 ///
 /// 参数:
-/// - `status`: 子代理任务状态
+/// - `status`: 子智能体状态
 ///
 /// 返回:
 /// - 运行时进程状态
-fn runtime_status_from_task(status: &str) -> RuntimeProcessStatus {
+fn runtime_status_from_subagent(status: &str) -> RuntimeProcessStatus {
     match status {
         "completed" => RuntimeProcessStatus::Exited,
         "cancelled" => RuntimeProcessStatus::Stopped,
@@ -116,16 +122,16 @@ fn runtime_status_from_task(status: &str) -> RuntimeProcessStatus {
 /// 生成生命周期事件预览。
 ///
 /// 参数:
-/// - `task`: 子代理任务快照
+/// - `subagent`: 子智能体快照
 ///
 /// 返回:
 /// - 生命周期事件预览
-fn lifecycle_preview(task: &TaskSnapshot) -> String {
-    task.error.clone().unwrap_or_else(|| {
+fn lifecycle_preview(subagent: &SubagentSnapshot) -> String {
+    subagent.error.clone().unwrap_or_else(|| {
         format!(
-            "subagent task {}: {}",
-            task.status,
-            task.result.as_deref().unwrap_or(&task.description)
+            "subagent {}: {}",
+            subagent.status,
+            subagent.result.as_deref().unwrap_or(&subagent.description)
         )
     })
 }
@@ -134,7 +140,7 @@ fn lifecycle_preview(task: &TaskSnapshot) -> String {
 mod tests {
     use super::*;
     use crate::paths::MiyuPaths;
-    use crate::tools::task_state::TaskSnapshot;
+    use crate::tools::subagent_state::SubagentSnapshot;
     use std::path::PathBuf;
 
     fn test_paths(state_dir: PathBuf) -> MiyuPaths {
@@ -154,9 +160,9 @@ mod tests {
         }
     }
 
-    fn task(status: &str) -> TaskSnapshot {
-        TaskSnapshot {
-            id: "task_1".to_string(),
+    fn subagent(status: &str) -> SubagentSnapshot {
+        SubagentSnapshot {
+            id: "subagent_1".to_string(),
             description: "inspect runtime recovery".to_string(),
             subagent_type: "explore".to_string(),
             status: status.to_string(),
@@ -170,11 +176,11 @@ mod tests {
     }
 
     #[test]
-    fn records_subagent_task_started_runtime_process() {
+    fn records_subagent_started_runtime_process() {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path().to_path_buf());
 
-        record_subagent_task_started(&paths, &task("running")).unwrap();
+        record_subagent_started(&paths, &subagent("running")).unwrap();
 
         let db_path = crate::state::active_state_dir(&paths)
             .unwrap()
@@ -191,7 +197,7 @@ mod tests {
                 "SELECT owner_kind, owner_id, process_kind, status, last_seq
                  FROM runtime_processes
                  WHERE id = ?1",
-                ["subagent_task_task_1"],
+                ["subagent_subagent_1"],
                 |row| {
                     Ok((
                         row.get(0)?,
@@ -205,8 +211,8 @@ mod tests {
             .unwrap();
 
         assert_eq!(owner_kind, "subagent");
-        assert_eq!(owner_id, "task_1");
-        assert_eq!(process_kind, "subagent_task");
+        assert_eq!(owner_id, "subagent_1");
+        assert_eq!(process_kind, "subagent");
         assert_eq!(status, "running");
         assert_eq!(last_seq, 1);
     }

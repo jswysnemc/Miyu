@@ -339,6 +339,10 @@ impl Agent {
     {
         let mut tool_round = 0usize;
         let mut tool_event_seq = 0usize;
+        let mut todo_reminder = self
+            .tools
+            .contains("todo")
+            .then(|| tools::todo::TodoReminder::new(self.state.todo_file()));
         loop {
             if self.max_tool_rounds > 0 && tool_round >= self.max_tool_rounds {
                 let content = format!(
@@ -581,6 +585,14 @@ impl Agent {
                 )?;
                 perf.mark(&format!("tool {} result persisted", call.function.name));
                 messages.push(ChatMessage::tool(call.id, context_output));
+                if let Some(reminder) = todo_reminder.as_mut() {
+                    let todo_updated = call.function.name == "todo"
+                        && !output.starts_with("tool error:")
+                        && tools::todo::is_mutating_call(&call.function.arguments);
+                    if let Some(content) = reminder.after_tool_round(todo_updated)? {
+                        messages.push(ChatMessage::system(content));
+                    }
+                }
             }
         }
     }

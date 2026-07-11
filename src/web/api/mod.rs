@@ -1,14 +1,17 @@
 mod agent_options;
 mod background_tasks;
 mod config;
+mod cron_jobs;
 mod gateways;
 mod health;
 mod prompts;
 mod providers;
 mod runs;
 mod sessions;
+mod subagents;
 mod system;
 mod terminal;
+mod todos;
 mod workspace;
 mod workspaces;
 
@@ -31,6 +34,9 @@ pub(super) fn router(state: WebAppState) -> Router<WebAppState> {
         .merge(config::routes())
         .merge(agent_options::routes())
         .merge(background_tasks::routes())
+        .merge(todos::routes())
+        .merge(subagents::routes())
+        .merge(cron_jobs::routes())
         .merge(providers::routes())
         .merge(prompts::routes())
         .merge(gateways::routes())

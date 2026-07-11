@@ -29,7 +29,10 @@ export function ChatPage() {
     enabled: Boolean(activeSession)
   });
   const onSettled = useCallback(() => {
-    void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    void Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+      queryClient.invalidateQueries({ queryKey: ["todos"] })
+    ]);
   }, [queryClient]);
   const onWorkspaceChanged = useCallback(() => {
     void Promise.all([
@@ -153,6 +156,10 @@ export function ChatPage() {
         running={running}
         runStatus={run.state.status}
         sessionAvailable={Boolean(activeSession)}
+        agentChoices={chatAgent.choices}
+        agentSelection={chatAgent.selection}
+        agentLoading={chatAgent.isLoading}
+        sessionId={activeSession?.id}
         onChange={setInput}
         onModeChange={setMode}
         onThinkingLevelChange={thinking.setThinkingLevel}
@@ -161,6 +168,7 @@ export function ChatPage() {
         onModelSelect={chatModel.selectModel}
         onSubmit={() => void submit()}
         onStop={() => void run.stop()}
+        onAgentSelect={chatAgent.selectAgent}
       />
     </div>
   );

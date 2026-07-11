@@ -119,6 +119,30 @@ export type GatewayStatus = {
   pid?: number | null;
 };
 
+export type CronJob = {
+  id: string;
+  name: string;
+  prompt: string;
+  session_id: string;
+  interval_seconds?: number | null;
+  next_run_at: number;
+  enabled: boolean;
+  failure_count: number;
+  last_error?: string | null;
+};
+
+export type CreateCronJobRequest = {
+  name: string;
+  prompt: string;
+  session_id: string;
+  run_at: number;
+  interval_seconds?: number | null;
+};
+
+export type UpdateCronJobRequest = {
+  enabled: boolean;
+};
+
 export type ProviderConfig = {
   id: string;
   display_name: string;
@@ -199,6 +223,7 @@ export type ConfigResponse = {
 
 export type ProviderModelsResponse = {
   models: string[];
+  metadata: Record<string, { provider:string; context_chars?:number | null }>;
 };
 
 export type RunModelSelection = {
@@ -250,6 +275,14 @@ export type BackgroundTaskOutput = {
   stdout_truncated: boolean;
   stderr_truncated: boolean;
   tail_lines: number;
+};
+
+export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
+export type TodoItem = { id:string; text:string; status:TodoStatus; created_at:string; updated_at:string };
+
+export type Subagent = {
+  id:string; description:string; subagent_type:string; status:string; max_steps:number;
+  started_at:number; updated_at:number; result?:string; error?:string; stats?:Record<string, unknown>;
 };
 
 export type SystemUsage = {

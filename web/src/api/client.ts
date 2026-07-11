@@ -1,5 +1,7 @@
 import type {
   ConfigResponse,
+  CreateCronJobRequest,
+  CronJob,
   DirectoryEntry,
   DirectoryListing,
   FileContent,
@@ -20,8 +22,12 @@ import type {
   SystemUsage,
   Session,
   TerminalInfo,
+  UpdateCronJobRequest,
   BackgroundTask,
   BackgroundTaskOutput,
+  TodoItem,
+  TodoStatus,
+  Subagent,
   Workspace,
   WorkspaceList
 } from "./contracts";
@@ -188,6 +194,23 @@ export const api = {
     start: (id: string) => apiRequest<Record<string, unknown>>(`/api/gateways/${id}/start`, { method: "POST" }),
     stop: (id: string) => apiRequest<Record<string, unknown>>(`/api/gateways/${id}/stop`, { method: "POST" })
   },
+  cronJobs: {
+    list: () => apiRequest<CronJob[]>("/api/cron-jobs"),
+    create: (request: CreateCronJobRequest) =>
+      apiRequest<CronJob>("/api/cron-jobs", {
+        method: "POST",
+        body: JSON.stringify(request)
+      }),
+    update: (id: string, request: UpdateCronJobRequest) =>
+      apiRequest<CronJob>(`/api/cron-jobs/${encodeURIComponent(id)}`, {
+        method: "PATCH",
+        body: JSON.stringify(request)
+      }),
+    remove: (id: string) =>
+      apiRequest<{ removed: boolean }>(`/api/cron-jobs/${encodeURIComponent(id)}`, {
+        method: "DELETE"
+      })
+  },
   terminals: {
     list: () => apiRequest<{ terminals: TerminalInfo[] }>("/api/terminals"),
     create: (cols: number, rows: number) =>
@@ -201,6 +224,16 @@ export const api = {
     stop: (id: string) => apiRequest<{ task: BackgroundTask; was_running: boolean }>(`/api/background-tasks/${encodeURIComponent(id)}/stop`, { method: "POST" }),
     cleanup: (removeLogs = false) =>
       apiRequest<{ removed: string[]; remaining: number }>(`/api/background-tasks?remove_logs=${removeLogs}`, { method: "DELETE" })
+  },
+  todos: {
+    list: () => apiRequest<TodoItem[]>("/api/todos"),
+    create: (text: string) => apiRequest<TodoItem>("/api/todos", { method:"POST", body:JSON.stringify({ text }) }),
+    update: (id: string, input: { text?: string; status?: TodoStatus }) => apiRequest<TodoItem>(`/api/todos/${encodeURIComponent(id)}`, { method:"PATCH", body:JSON.stringify(input) }),
+    remove: (id: string) => apiRequest<TodoItem>(`/api/todos/${encodeURIComponent(id)}`, { method:"DELETE" })
+  },
+  subagents: {
+    list: () => apiRequest<Subagent[]>("/api/subagents"),
+    cancel: (id: string) => apiRequest<Subagent>(`/api/subagents/${encodeURIComponent(id)}/cancel`, { method:"POST" })
   },
   system: {
     usage: () => apiRequest<SystemUsage>("/api/system/usage")

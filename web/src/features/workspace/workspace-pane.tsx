@@ -1,13 +1,14 @@
-import { ArrowLeftRight, FileCode2, GitBranch, GitCompareArrows, Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, PanelLeftClose, PanelRightClose } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
+import { ArrowLeftRight, Bot, FileCode2, GitCompareArrows, Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, PanelLeftClose, PanelRightClose, SquareTerminal } from "lucide-react";
 import { useState } from "react";
-import { api } from "../../api/client";
 import { DiffPane } from "./diff-pane";
 import { EditorPane } from "./editor-pane";
 import { FileTree } from "./file-tree";
+import { TerminalDock } from "../terminal/terminal-dock";
+import { SubagentPanel } from "../subagents/subagent-panel";
+import type { TerminalManager } from "../terminal/use-terminal-manager";
 import "./workspace-pane.css";
 
-type PaneTab = "files" | "diff";
+type PaneTab = "files" | "diff" | "terminal" | "subagents";
 
 type WorkspacePaneProps = {
   selectedFile: string | null;
@@ -20,6 +21,7 @@ type WorkspacePaneProps = {
   onToggleSwapped: () => void;
   terminalOpen: boolean;
   maximized: boolean;
+  terminalManager: TerminalManager;
 };
 
 /**
@@ -28,24 +30,11 @@ type WorkspacePaneProps = {
  * @param props 文件选择状态和面板控制回调
  * @returns 右侧工作区面板
  */
-export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose, onToggleChat, onToggleMaximized, onToggleTerminal, onToggleSwapped, terminalOpen, maximized }: WorkspacePaneProps) {
+export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose, onToggleChat, onToggleMaximized, onToggleTerminal, onToggleSwapped, terminalOpen, maximized, terminalManager }: WorkspacePaneProps) {
   const [tab, setTab] = useState<PaneTab>("files");
-  const [fileTreeOpen, setFileTreeOpen] = useState(true);
-  const git = useQuery({ queryKey: ["workspace-diff"], queryFn: api.workspace.diff, staleTime: 20_000 });
+  const [fileTreeOpen, setFileTreeOpen] = useState(false);
   return (
     <div className="workspace-pane">
-      <div className="pane-tabs" role="tablist" aria-label="工作区面板">
-        <PaneButton active={tab === "files"} onClick={() => setTab("files")} icon={<FileCode2 size={15} />} label="文件" />
-        <PaneButton active={tab === "diff"} onClick={() => setTab("diff")} icon={<GitCompareArrows size={15} />} label="变更" />
-        {git.data?.repository && git.data.branch && (
-          <span className="branch-chip" title={`当前分支 ${git.data.branch}`}><GitBranch size={12} />{git.data.branch}</span>
-        )}
-        <button type="button" className="pane-control" onClick={onToggleSwapped} aria-label="左右调换聊天与编辑器"><ArrowLeftRight size={15} /></button>
-        <button type="button" className="pane-control" onClick={onToggleChat} aria-label="折叠或展开聊天区"><PanelLeftClose size={15} /></button>
-        <button type="button" className="pane-control" onClick={onToggleTerminal} aria-label={terminalOpen ? "关闭底部终端" : "打开底部终端"}>{terminalOpen ? <PanelBottomClose size={15} /> : <PanelBottomOpen size={15} />}</button>
-        <button type="button" className="pane-control" onClick={onToggleMaximized} aria-label={maximized ? "退出编辑器全屏" : "编辑器全屏"}>{maximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}</button>
-        <button type="button" className="pane-close" onClick={onClose} aria-label="关闭工作区"><PanelRightClose size={15} /></button>
-      </div>
       <div className="pane-body">
         {tab === "files" && (
           <div className={fileTreeOpen ? "files-layout file-tree-open" : "files-layout file-tree-closed"}>
@@ -54,7 +43,21 @@ export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose
           </div>
         )}
         {tab === "diff" && <DiffPane />}
+        {tab === "terminal" && <TerminalDock manager={terminalManager} onClose={() => setTab("files")} />}
+        {tab === "subagents" && <SubagentPanel />}
       </div>
+      <nav className="workspace-activity-rail" aria-label="侧边工作台">
+        <ActivityButton active={tab === "files"} onClick={() => setTab("files")} icon={<FileCode2 size={16}/>} label="文件" />
+        <ActivityButton active={tab === "diff"} onClick={() => setTab("diff")} icon={<GitCompareArrows size={16}/>} label="Git" />
+        <ActivityButton active={tab === "terminal"} onClick={() => setTab("terminal")} icon={<SquareTerminal size={16}/>} label="终端" />
+        <ActivityButton active={tab === "subagents"} onClick={() => setTab("subagents")} icon={<Bot size={16}/>} label="子智能体" />
+        <span className="activity-rail-spacer" />
+        <ActivityButton active={terminalOpen} onClick={onToggleTerminal} icon={terminalOpen ? <PanelBottomClose size={16}/> : <PanelBottomOpen size={16}/>} label="底部终端" />
+        <ActivityButton active={maximized} onClick={onToggleMaximized} icon={maximized ? <Minimize2 size={16}/> : <Maximize2 size={16}/>} label="编辑器全屏" />
+        <ActivityButton active={false} onClick={onToggleSwapped} icon={<ArrowLeftRight size={16}/>} label="交换布局" />
+        <ActivityButton active={false} onClick={onToggleChat} icon={<PanelLeftClose size={16}/>} label="聊天区" />
+        <ActivityButton active={false} onClick={onClose} icon={<PanelRightClose size={16}/>} label="关闭工作区" />
+      </nav>
     </div>
   );
 }
@@ -65,6 +68,6 @@ export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose
  * @param props 标签状态、图标和点击回调
  * @returns 工作区标签按钮
  */
-function PaneButton({ active, onClick, icon, label }: { active: boolean; onClick: () => void; icon: React.ReactNode; label: string }) {
-  return <button type="button" role="tab" aria-selected={active} className={active ? "pane-tab active" : "pane-tab"} onClick={onClick}>{icon}<span>{label}</span></button>;
+function ActivityButton({ active,onClick,icon,label }:{ active:boolean;onClick:()=>void;icon:React.ReactNode;label:string }) {
+  return <button type="button" className={active ? "active" : ""} onClick={onClick} title={label} aria-label={label}>{icon}</button>;
 }

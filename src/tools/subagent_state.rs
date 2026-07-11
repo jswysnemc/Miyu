@@ -5,10 +5,10 @@ use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 use tokio::sync::oneshot;
 
-static TASKS: OnceLock<Mutex<HashMap<String, TaskRecord>>> = OnceLock::new();
+static SUBAGENTS: OnceLock<Mutex<HashMap<String, SubagentRecord>>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize)]
-pub(crate) struct TaskSnapshot {
+pub(crate) struct SubagentSnapshot {
     pub(crate) id: String,
     pub(crate) description: String,
     pub(crate) subagent_type: String,
@@ -24,12 +24,12 @@ pub(crate) struct TaskSnapshot {
     pub(crate) stats: Option<Value>,
 }
 
-struct TaskRecord {
-    snapshot: TaskSnapshot,
+struct SubagentRecord {
+    snapshot: SubagentSnapshot,
     cancel: Option<oneshot::Sender<()>>,
 }
 
-/// 创建后台子代理任务记录。
+/// 创建后台子智能体记录。
 ///
 /// 参数:
 /// - `description`: 任务描述
@@ -37,16 +37,16 @@ struct TaskRecord {
 /// - `max_steps`: 最大工具调用次数
 ///
 /// 返回:
-/// - 任务快照和取消接收器
-pub(crate) fn create_task(
+/// - 子智能体快照和取消接收器
+pub(crate) fn create_subagent(
     description: String,
     subagent_type: String,
     max_steps: usize,
-) -> (TaskSnapshot, oneshot::Receiver<()>) {
+) -> (SubagentSnapshot, oneshot::Receiver<()>) {
     let now = unix_seconds();
-    let id = format!("task_{now}_{}", rand::random::<u16>());
+    let id = format!("subagent_{now}_{}", rand::random::<u16>());
     let (cancel_tx, cancel_rx) = oneshot::channel();
-    let snapshot = TaskSnapshot {
+    let snapshot = SubagentSnapshot {
         id: id.clone(),
         description,
         subagent_type,
@@ -58,9 +58,9 @@ pub(crate) fn create_task(
         error: None,
         stats: None,
     };
-    tasks().lock().expect("task state lock").insert(
+    subagents().lock().expect("subagent state lock").insert(
         id,
-        TaskRecord {
+        SubagentRecord {
             snapshot: snapshot.clone(),
             cancel: Some(cancel_tx),
         },
@@ -68,7 +68,7 @@ pub(crate) fn create_task(
     (snapshot, cancel_rx)
 }
 
-/// 完成后台子代理任务记录。
+/// 完成后台子智能体记录。
 ///
 /// 参数:
 /// - `id`: 任务 ID
@@ -79,15 +79,15 @@ pub(crate) fn create_task(
 ///
 /// 返回:
 /// - 无
-pub(crate) fn finish_task(
+pub(crate) fn finish_subagent(
     id: &str,
     status: &str,
     result: Option<String>,
     error: Option<String>,
     stats: Option<Value>,
 ) {
-    let mut tasks = tasks().lock().expect("task state lock");
-    let Some(record) = tasks.get_mut(id) else {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let Some(record) = subagents.get_mut(id) else {
         return;
     };
     record.snapshot.status = status.to_string();
@@ -98,59 +98,59 @@ pub(crate) fn finish_task(
     record.cancel = None;
 }
 
-/// 读取后台子代理任务快照。
+/// 读取后台子智能体快照。
 ///
 /// 参数:
 /// - `id`: 任务 ID
 ///
 /// 返回:
-/// - 任务快照
-pub(crate) fn task_snapshot(id: &str) -> Result<TaskSnapshot> {
-    tasks()
+/// - 子智能体快照
+pub(crate) fn subagent_snapshot(id: &str) -> Result<SubagentSnapshot> {
+    subagents()
         .lock()
-        .expect("task state lock")
+        .expect("subagent state lock")
         .get(id)
         .map(|record| record.snapshot.clone())
-        .ok_or_else(|| anyhow::anyhow!("subagent task not found: {id}"))
+        .ok_or_else(|| anyhow::anyhow!("subagent not found: {id}"))
 }
 
-/// 列出后台子代理任务快照。
+/// 列出后台子智能体快照。
 ///
 /// 参数:
 /// - 无
 ///
 /// 返回:
-/// - 任务快照列表
-pub(crate) fn list_tasks() -> Vec<TaskSnapshot> {
-    let mut tasks = tasks()
+/// - 子智能体快照列表
+pub(crate) fn list_subagents() -> Vec<SubagentSnapshot> {
+    let mut subagents = subagents()
         .lock()
-        .expect("task state lock")
+        .expect("subagent state lock")
         .values()
         .map(|record| record.snapshot.clone())
         .collect::<Vec<_>>();
-    tasks.sort_by(|left, right| right.started_at.cmp(&left.started_at));
-    tasks
+    subagents.sort_by(|left, right| right.started_at.cmp(&left.started_at));
+    subagents
 }
 
-/// 取消后台子代理任务。
+/// 取消后台子智能体。
 ///
 /// 参数:
 /// - `id`: 任务 ID
 ///
 /// 返回:
-/// - 取消后的任务快照
-pub(crate) fn cancel_task(id: &str) -> Result<TaskSnapshot> {
-    let mut tasks = tasks().lock().expect("task state lock");
-    let record = tasks
+/// - 取消后的子智能体快照
+pub(crate) fn cancel_subagent(id: &str) -> Result<SubagentSnapshot> {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let record = subagents
         .get_mut(id)
-        .ok_or_else(|| anyhow::anyhow!("subagent task not found: {id}"))?;
+        .ok_or_else(|| anyhow::anyhow!("subagent not found: {id}"))?;
     if record.snapshot.status != "running" {
         return Ok(record.snapshot.clone());
     }
     if let Some(cancel) = record.cancel.take() {
         let _ = cancel.send(());
     } else {
-        bail!("subagent task is not cancellable: {id}");
+        bail!("subagent is not cancellable: {id}");
     }
     record.snapshot.status = "cancelled".to_string();
     record.snapshot.updated_at = unix_seconds();
@@ -172,15 +172,15 @@ fn unix_seconds() -> u64 {
         .unwrap_or_default()
 }
 
-/// 获取后台子代理任务表。
+/// 获取后台子智能体表。
 ///
 /// 参数:
 /// - 无
 ///
 /// 返回:
-/// - 全局任务表
-fn tasks() -> &'static Mutex<HashMap<String, TaskRecord>> {
-    TASKS.get_or_init(|| Mutex::new(HashMap::new()))
+/// - 全局子智能体表
+fn subagents() -> &'static Mutex<HashMap<String, SubagentRecord>> {
+    SUBAGENTS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 #[cfg(test)]
@@ -188,9 +188,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn creates_and_reads_task_snapshot() {
-        let (task, _cancel) = create_task("demo".to_string(), "explore".to_string(), 3);
-        let loaded = task_snapshot(&task.id).unwrap();
+    fn creates_and_reads_subagent_snapshot() {
+        let (subagent, _cancel) = create_subagent("demo".to_string(), "explore".to_string(), 3);
+        let loaded = subagent_snapshot(&subagent.id).unwrap();
 
         assert_eq!(loaded.description, "demo");
         assert_eq!(loaded.status, "running");
@@ -198,9 +198,9 @@ mod tests {
     }
 
     #[test]
-    fn cancel_marks_running_task_cancelled() {
-        let (task, _cancel) = create_task("cancel".to_string(), "general".to_string(), 5);
-        let cancelled = cancel_task(&task.id).unwrap();
+    fn cancel_marks_running_subagent_cancelled() {
+        let (subagent, _cancel) = create_subagent("cancel".to_string(), "general".to_string(), 5);
+        let cancelled = cancel_subagent(&subagent.id).unwrap();
 
         assert_eq!(cancelled.status, "cancelled");
     }

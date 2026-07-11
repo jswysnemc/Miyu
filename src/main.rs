@@ -5,6 +5,7 @@ mod clipboard;
 mod config;
 mod config_tui;
 mod control_commands;
+mod cron;
 mod default_kb;
 mod default_models;
 mod gateways;

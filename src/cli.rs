@@ -245,7 +245,7 @@ pub(crate) fn build_repl_tool_registry(
 ) -> Result<tools::ToolRegistry> {
     let mut registry = build_tool_registry(config, paths, mode)?;
     if mode == AgentMode::Yolo && config.tools.enabled {
-        tools::register_repl_task_tool(&mut registry, config, paths);
+        tools::register_interactive_tools(&mut registry, config, paths);
     }
     Ok(registry)
 }

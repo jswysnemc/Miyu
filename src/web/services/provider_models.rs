@@ -2,7 +2,8 @@ use super::config_service::SECRET_SENTINEL;
 use crate::config::{AppConfig, ProviderConfig};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::time::Duration;
 
 /// 使用当前配置补齐脱敏凭据。
@@ -79,6 +80,59 @@ pub(crate) fn fetch_models(paths: &MiyuPaths, provider: &ProviderConfig) -> Resu
         }
     }
     bail!(last_error.unwrap_or_else(|| "模型接口未返回结果".to_string()))
+}
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct CatalogMetadata {
+    pub(crate) provider: String,
+    pub(crate) context_chars: Option<u64>,
+}
+
+/// 从 models.dev 目录补充模型元数据。
+pub(crate) fn fetch_catalog_metadata(models: &[String]) -> Vec<(String, CatalogMetadata)> {
+    let Ok(client) = reqwest::blocking::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()
+    else {
+        return Vec::new();
+    };
+    let Ok(response) = client
+        .get("https://models.dev/api.json")
+        .header("User-Agent", "miyu-web")
+        .send()
+    else {
+        return Vec::new();
+    };
+    let Ok(catalog) = response.json::<Value>() else {
+        return Vec::new();
+    };
+    models
+        .iter()
+        .filter_map(|model| {
+            find_catalog_model(&catalog, model).map(|metadata| (model.clone(), metadata))
+        })
+        .collect()
+}
+
+fn find_catalog_model(catalog: &Value, model: &str) -> Option<CatalogMetadata> {
+    for (provider_id, provider) in catalog.as_object()? {
+        let models = provider.get("models")?.as_object()?;
+        if let Some(value) = models.get(model).or_else(|| {
+            models
+                .values()
+                .find(|value| value.get("id").and_then(Value::as_str) == Some(model))
+        }) {
+            let context = value
+                .get("limit")
+                .and_then(|limit| limit.get("context"))
+                .and_then(Value::as_u64);
+            return Some(CatalogMetadata {
+                provider: provider_id.clone(),
+                context_chars: context.map(|tokens| tokens.saturating_mul(4)),
+            });
+        }
+    }
+    None
 }
 
 /// 解析供应商 API Key，缺失时允许无认证模型接口。

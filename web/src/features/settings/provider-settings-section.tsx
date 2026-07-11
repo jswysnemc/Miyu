@@ -29,6 +29,7 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
+  const [remoteMetadata, setRemoteMetadata] = useState<Record<string,{provider:string;context_chars?:number | null}>>({});
   const [importOpen, setImportOpen] = useState(false);
   const [tab, setTab] = useState<"connection" | "models" | "behavior" | "advanced">("connection");
   const selectedIndex = Math.max(0, config.providers.findIndex((provider) => provider.id === selectedId));
@@ -72,6 +73,7 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
     try {
       const response = await api.providers.models(provider);
       setRemoteModels(response.models);
+      setRemoteMetadata(response.metadata);
       setImportOpen(true);
     } catch (error) {
       setFetchError(error instanceof Error ? error.message : String(error));
@@ -84,7 +86,9 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
   const importModels = (models: string[]) => {
     const nextModels = [...(provider.models ?? [])];
     for (const model of models) if (!nextModels.includes(model)) nextModels.push(model);
-    onProviderChange(selectedIndex, { models: nextModels, default_model: provider.default_model || nextModels[0] || "" });
+    const modelMetadata={...(provider.model_metadata ?? {})};
+    for(const model of models){const metadata=remoteMetadata[model];if(metadata?.context_chars) modelMetadata[model]={...(modelMetadata[model] ?? {}),context_chars:metadata.context_chars};}
+    onProviderChange(selectedIndex, { models: nextModels,model_metadata:modelMetadata, default_model: provider.default_model || nextModels[0] || "" });
     setImportOpen(false);
     setTab("models");
   };

@@ -23,7 +23,9 @@ fn readable_tool_name_for_locale(name: &str, locale: Locale) -> &str {
     match name {
         "run_command" => localized(locale, "Run command", "运行命令"),
         "background_command" => localized(locale, "Background command", "后台命令"),
-        "task" => localized(locale, "Subagent task", "子代理任务"),
+        "subagent" => localized(locale, "Subagent", "子智能体"),
+        "todo" => localized(locale, "Todo list", "待办清单"),
+        "cron" => localized(locale, "Scheduled task", "定时任务"),
         "read_file" => localized(locale, "Read file", "读取文件"),
         "edit_file" => localized(locale, "Edit file", "编辑文件"),
         "list_directory" => localized(locale, "List directory", "列目录"),
@@ -174,8 +176,8 @@ mod tests {
             "添加表情包"
         );
         assert_eq!(
-            readable_tool_name_for_locale("task", Locale::Zh),
-            "子代理任务"
+            readable_tool_name_for_locale("subagent", Locale::Zh),
+            "子智能体"
         );
         assert_eq!(
             readable_tool_name_for_locale("upload_text_to_knowledge_base", Locale::Zh),

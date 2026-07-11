@@ -1,5 +1,5 @@
 use crate::llm::{FunctionDefinition, ToolDefinition};
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
 use std::collections::HashMap;
@@ -179,6 +179,23 @@ impl ToolRegistry {
             }
         }
         registry
+    }
+
+    /// 从另一个注册表复制指定工具。
+    ///
+    /// 参数:
+    /// - `source`: 来源工具注册表
+    /// - `name`: 工具名称
+    ///
+    /// 返回:
+    /// - 工具不存在时返回错误
+    pub(crate) fn register_from(&mut self, source: &ToolRegistry, name: &str) -> Result<()> {
+        let tool = source
+            .tools
+            .get(name)
+            .with_context(|| format!("unknown tool: {name}"))?;
+        self.register(tool.clone());
+        Ok(())
     }
 
     pub fn permission(&self, name: &str) -> Result<ToolPermission> {

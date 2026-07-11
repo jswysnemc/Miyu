@@ -27,10 +27,11 @@ pub(crate) mod progressive;
 mod protondb_query;
 mod registry;
 mod skills;
+mod subagent;
 mod subagent_runner;
-mod task;
-mod task_runtime;
-mod task_state;
+mod subagent_runtime;
+pub(crate) mod subagent_state;
+pub(crate) mod todo;
 mod trash_path;
 mod vision;
 mod weather;
@@ -68,21 +69,34 @@ pub fn tool_catalog(config: &AppConfig, paths: &MiyuPaths) -> Vec<ToolCatalogEnt
     // 1. 构建内置注册表以获取全部工具名
     let registry = builtin_registry(config, paths);
     // 2. 为每个工具附加用途分组
-    registry
+    let mut entries = registry
         .tool_infos()
         .into_iter()
         .map(|info| ToolCatalogEntry {
             group: groups::group_for_tool(&info.name),
             name: info.name,
         })
-        .collect()
+        .collect::<Vec<_>>();
+    entries.extend(
+        ["subagent", "todo"]
+            .into_iter()
+            .map(|name| ToolCatalogEntry {
+                name: name.to_string(),
+                group: groups::group_for_tool(name),
+            }),
+    );
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    entries.dedup_by(|left, right| left.name == right.name);
+    entries
 }
 
 pub fn readable_tool_name(name: &str) -> &str {
     match name {
         "run_command" => "运行命令",
         "background_command" => "后台命令",
-        "task" => "子代理任务",
+        "subagent" => "子智能体",
+        "todo" => "任务清单",
+        "cron" => "定时任务",
         "read_file" => "读取文件",
         "edit_file" => "编辑文件",
         "list_directory" => "列目录",
@@ -249,22 +263,25 @@ pub(crate) fn register_command_mode_background(
     command::register_command_mode_background(registry, config, paths, session_id);
 }
 
-/// 注册仅限 REPL 使用的子代理任务工具。
+/// 注册仅限交互式会话使用的工具。
 ///
 /// 参数:
-/// - `registry`: 当前 REPL 工具注册表
+/// - `registry`: 当前交互式会话工具注册表
 /// - `config`: 应用配置
 /// - `paths`: Miyu 路径
 ///
 /// 返回:
 /// - 无
-pub(crate) fn register_repl_task_tool(
+pub(crate) fn register_interactive_tools(
     registry: &mut ToolRegistry,
     config: &AppConfig,
     paths: &MiyuPaths,
 ) {
-    let task_tools = registry.clone();
-    task::register(registry, config.clone(), paths.clone(), task_tools);
+    let subagent_tools = registry.clone();
+    subagent::register(registry, config.clone(), paths.clone(), subagent_tools);
+    if let Ok(state_dir) = crate::state::active_state_dir(paths) {
+        todo::register(registry, state_dir.join("todos.json"));
+    }
 }
 
 pub fn readonly_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {

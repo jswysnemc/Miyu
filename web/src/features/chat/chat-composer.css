@@ -26,6 +26,19 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ink) 4%, transparent);
 }
 
+.composer-context-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 30px;
+  padding-bottom: 5px;
+  border-bottom: 1px solid var(--line);
+}
+
+.composer-context-bar .agent-selector { margin-right: auto; }
+.composer-context-chip { display: inline-flex; min-width: 0; align-items: center; gap: 5px; max-width: 160px; color: var(--ink-soft); font-size: 11px; }
+.composer-context-chip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 .composer-text-wrap {
   position: relative;
   min-height: 32px;

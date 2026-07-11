@@ -1,6 +1,7 @@
 import { Navigate, Route, Routes } from "react-router-dom";
 import { AppShell } from "./app-shell";
 import { GatewaysPage } from "../features/gateways/gateways-page";
+import { CronJobsPage } from "../features/cron-jobs/cron-jobs-page";
 import { SettingsPage } from "../features/settings/settings-page";
 import { CodingPage } from "../features/workspace/coding-page";
 import { ChatAgentProvider } from "../features/agents/chat-agent-context";
@@ -20,6 +21,7 @@ export function App() {
             <Route index element={<CodingPage />} />
             <Route path="settings" element={<SettingsPage />} />
             <Route path="gateways" element={<GatewaysPage />} />
+            <Route path="cron-jobs" element={<CronJobsPage />} />
             <Route path="*" element={<Navigate to="/" replace />} />
           </Route>
         </Routes>

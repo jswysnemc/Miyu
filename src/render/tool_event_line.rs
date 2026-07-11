@@ -64,7 +64,9 @@ fn tool_action(name: &str) -> &'static str {
         "trash_path" => "Trash",
         "glob" | "find_files" => "Find",
         "grep" | "search_text" => "Search",
-        "task" => "Task",
+        "subagent" => "Subagent",
+        "todo" => "Todo",
+        "cron" => "Schedule",
         "check_os_info" => "Check",
         "load" => "Load",
         "create_directory" => "Create",
@@ -113,7 +115,8 @@ fn tool_suffix(name: &str, arguments: &Value) -> Option<String> {
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field(arguments, &["include", "pattern"]).map(compact_text)
         }
-        "task" => task_suffix(arguments),
+        "subagent" => subagent_suffix(arguments),
+        "todo" | "cron" => action_suffix(arguments),
         "load" => load_suffix(arguments),
         _ => None,
     }
@@ -136,10 +139,31 @@ fn tool_suffix_from_partial_text(name: &str, arguments: &str) -> Option<String> 
         "glob" | "find_files" | "grep" | "search_text" => {
             string_field_from_partial(arguments, &["include", "pattern"]).map(compact_text)
         }
-        "task" => task_suffix_from_partial(arguments),
+        "subagent" => subagent_suffix_from_partial(arguments),
+        "todo" | "cron" => action_suffix_from_partial(arguments),
         "load" => load_suffix_from_partial(arguments),
         _ => None,
     }
+}
+
+/// 提取待办或定时任务动作与对象。
+fn action_suffix(arguments: &Value) -> Option<String> {
+    let action = string_field(arguments, &["action"])?;
+    let object = string_field(arguments, &["text", "name", "id"]);
+    Some(compact_text(match object {
+        Some(object) => format!("{action} {object}"),
+        None => action,
+    }))
+}
+
+/// 从未闭合参数中提取待办或定时任务动作。
+fn action_suffix_from_partial(arguments: &str) -> Option<String> {
+    let action = string_field_from_partial(arguments, &["action"])?;
+    let object = string_field_from_partial(arguments, &["text", "name", "id"]);
+    Some(compact_text(match object {
+        Some(object) => format!("{action} {object}"),
+        None => action,
+    }))
 }
 
 /// 提取读取文件的展示对象。
@@ -185,38 +209,38 @@ fn read_file_suffix_from_partial(arguments: &str) -> Option<String> {
     string_field_from_partial(arguments, &["path"]).map(file_basename)
 }
 
-/// 提取子代理任务展示对象。
+/// 提取子智能体展示对象。
 ///
 /// 参数:
 /// - `arguments`: 工具参数
 ///
 /// 返回:
-/// - 子代理任务展示文本
-fn task_suffix(arguments: &Value) -> Option<String> {
+/// - 子智能体展示文本
+fn subagent_suffix(arguments: &Value) -> Option<String> {
     let action = string_field(arguments, &["action"]).unwrap_or_else(|| "start".to_string());
     if action == "start" {
         return string_field(arguments, &["description"]).map(compact_text);
     }
-    let target = string_field(arguments, &["task_id"])
+    let target = string_field(arguments, &["subagent_id"])
         .map(compact_text)
         .unwrap_or_else(|| action.clone());
     Some(format!("{action} {target}"))
 }
 
-/// 从不完整参数文本中提取子代理任务展示对象。
+/// 从不完整参数文本中提取子智能体展示对象。
 ///
 /// 参数:
 /// - `arguments`: 可能尚未闭合的 JSON 参数文本
 ///
 /// 返回:
-/// - 子代理任务展示文本
-fn task_suffix_from_partial(arguments: &str) -> Option<String> {
+/// - 子智能体展示文本
+fn subagent_suffix_from_partial(arguments: &str) -> Option<String> {
     let action =
         string_field_from_partial(arguments, &["action"]).unwrap_or_else(|| "start".to_string());
     if action == "start" {
         return string_field_from_partial(arguments, &["description"]).map(compact_text);
     }
-    let target = string_field_from_partial(arguments, &["task_id"])
+    let target = string_field_from_partial(arguments, &["subagent_id"])
         .map(compact_text)
         .unwrap_or_else(|| action.clone());
     Some(format!("{action} {target}"))
@@ -441,14 +465,29 @@ mod tests {
     }
 
     #[test]
-    fn task_uses_description_label() {
+    fn subagent_uses_description_label() {
         assert_eq!(
-            tool_event_label("task", Some(r#"{"description":"scan code"}"#)),
-            "Task scan code"
+            tool_event_label("subagent", Some(r#"{"description":"scan code"}"#)),
+            "Subagent scan code"
         );
         assert_eq!(
-            tool_event_label("task", Some(r#"{"action":"status","task_id":"task_1"}"#)),
-            "Task status task_1"
+            tool_event_label(
+                "subagent",
+                Some(r#"{"action":"status","subagent_id":"subagent_1"}"#)
+            ),
+            "Subagent status subagent_1"
+        );
+    }
+
+    #[test]
+    fn management_tools_include_action_and_target() {
+        assert_eq!(
+            tool_event_label("todo", Some(r#"{"action":"add","text":"检查测试"}"#)),
+            "Todo add 检查测试"
+        );
+        assert_eq!(
+            tool_event_label("cron", Some(r#"{"action":"remove","id":"cron_1"}"#)),
+            "Schedule remove cron_1"
         );
     }
 

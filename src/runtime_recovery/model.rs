@@ -46,7 +46,7 @@ impl OwnerKind {
 pub(crate) enum ProcessKind {
     BackgroundCommand,
     Gateway,
-    SubagentTask,
+    Subagent,
     FutureProcessSpawn,
 }
 
@@ -59,7 +59,7 @@ impl ProcessKind {
         match self {
             Self::BackgroundCommand => "background_command",
             Self::Gateway => "gateway",
-            Self::SubagentTask => "subagent_task",
+            Self::Subagent => "subagent",
             Self::FutureProcessSpawn => "future_process_spawn",
         }
     }
@@ -74,7 +74,7 @@ impl ProcessKind {
     pub(crate) fn from_str(value: &str) -> Self {
         match value {
             "gateway" => Self::Gateway,
-            "subagent_task" => Self::SubagentTask,
+            "subagent" | "subagent_task" => Self::Subagent,
             "future_process_spawn" => Self::FutureProcessSpawn,
             _ => Self::BackgroundCommand,
         }
@@ -326,8 +326,8 @@ mod tests {
             OwnerKind::Gateway
         );
         assert_eq!(
-            ProcessKind::from_str(ProcessKind::SubagentTask.as_str()),
-            ProcessKind::SubagentTask
+            ProcessKind::from_str(ProcessKind::Subagent.as_str()),
+            ProcessKind::Subagent
         );
         assert_eq!(
             RuntimeProcessStatus::from_str(RuntimeProcessStatus::Detached.as_str()),

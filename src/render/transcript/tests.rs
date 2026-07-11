@@ -205,7 +205,7 @@ fn summary_mode_keeps_compact_tool_call_block_visible() {
 fn summary_mode_keeps_tool_progress_message_visible() {
     let mut store = TranscriptStore::new(100);
     store.push_tool_progress(
-        "task".to_string(),
+        "subagent".to_string(),
         "subagent is checking the implementation".to_string(),
     );
 

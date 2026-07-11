@@ -612,11 +612,11 @@ fn session_snapshot_audits_stale_subagent_owner() {
     let old_pid = std::process::id().saturating_add(1);
     store
         .record_runtime_process(crate::runtime_recovery::NewRuntimeProcessRecord {
-            id: "subagent_task_1".to_string(),
+            id: "subagent_1".to_string(),
             session_id: store.session_id().to_string(),
             owner_kind: crate::runtime_recovery::OwnerKind::Subagent,
-            owner_id: "task_1".to_string(),
-            process_kind: crate::runtime_recovery::ProcessKind::SubagentTask,
+            owner_id: "subagent_1".to_string(),
+            process_kind: crate::runtime_recovery::ProcessKind::Subagent,
             command: "explore".to_string(),
             cwd: "/tmp".to_string(),
             pid: Some(i64::from(old_pid)),

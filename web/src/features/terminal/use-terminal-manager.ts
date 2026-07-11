@@ -49,3 +49,5 @@ export function useTerminalManager() {
     closeTerminal
   };
 }
+
+export type TerminalManager = ReturnType<typeof useTerminalManager>;

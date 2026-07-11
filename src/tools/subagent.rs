@@ -1,5 +1,5 @@
 use super::subagent_runner::{ProgressMode, SubagentProgress, SubagentRunner, SubagentStats};
-use super::{task_runtime, task_state, ToolProgress, ToolRegistry, ToolSpec};
+use super::{subagent_runtime, subagent_state, ToolProgress, ToolRegistry, ToolSpec};
 use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::llm::OpenAiCompatibleClient;
@@ -13,7 +13,7 @@ const GENERAL_PROMPT: &str = include_str!("../prompts/subagent-general.md");
 const DEFAULT_SUBAGENT_TYPE: &str = "general";
 const DEFAULT_MAX_STEPS: usize = 20;
 const MAX_MAX_STEPS: usize = 80;
-const TASK_TIMEOUT_SECONDS: u64 = 1800;
+const SUBAGENT_TIMEOUT_SECONDS: u64 = 1800;
 const TOOL_TIMEOUT_SECONDS: u64 = 120;
 const DESCRIPTION_MAX_CHARS: usize = 160;
 
@@ -27,7 +27,7 @@ const EXPLORE_ALLOWED: &[&str] = &[
 ];
 
 const GENERAL_EXCLUDED: &[&str] = &[
-    "task",
+    "subagent",
     "background_command",
     "deep_research",
     "deep_diagnose",
@@ -53,13 +53,13 @@ const GENERAL_EXCLUDED: &[&str] = &[
 ];
 
 #[derive(Clone)]
-struct TaskContext {
+struct SubagentContext {
     config: AppConfig,
     paths: MiyuPaths,
     tools: ToolRegistry,
 }
 
-/// 注册 REPL 子代理任务工具。
+/// 注册交互式会话子智能体工具。
 ///
 /// 参数:
 /// - `registry`: 工具注册表
@@ -75,16 +75,16 @@ pub(crate) fn register(
     paths: MiyuPaths,
     tools: ToolRegistry,
 ) {
-    let context = TaskContext {
+    let context = SubagentContext {
         config,
         paths,
         tools,
     };
     registry.register(ToolSpec::new_with_progress(
-        "task",
+        "subagent",
         t(
-            "Start and manage an in-process background subagent task. Only available in interactive REPL sessions. Use action=start to run without blocking the main conversation; then poll status or result by task_id.",
-            "启动并管理进程内后台子代理任务。此工具只在交互式 REPL 会话中可用。使用 action=start 后不会阻塞主对话；随后用 task_id 查询状态或结果。",
+            "Start and manage an in-process subagent. Only available in interactive REPL and Web sessions. Use action=start to run without blocking the main conversation; then poll status or result by subagent_id.",
+            "启动并管理进程内子智能体。此工具只在交互式 REPL 和 Web 会话中可用。使用 action=start 后不会阻塞主对话；随后用 subagent_id 查询状态或结果。",
         ),
         json!({
             "type": "object",
@@ -96,11 +96,11 @@ pub(crate) fn register(
                 },
                 "description": {
                     "type": "string",
-                    "description": t("Short task label for display when starting a task.", "启动任务时展示用的短描述。")
+                    "description": t("Short label for display when starting a subagent.", "启动子智能体时展示用的短描述。")
                 },
                 "prompt": {
                     "type": "string",
-                    "description": t("Full instruction for the subagent when starting a task.", "启动任务时交给子代理的完整指令。")
+                    "description": t("Full instruction for the subagent.", "交给子智能体的完整指令。")
                 },
                 "subagent_type": {
                     "type": "string",
@@ -111,49 +111,49 @@ pub(crate) fn register(
                     "type": "integer",
                     "description": t("Maximum tool calls for the subagent. Defaults to 20.", "子代理最大工具调用次数，默认 20。")
                 },
-                "task_id": {
+                "subagent_id": {
                     "type": "string",
-                    "description": t("Task id for status, result, or cancel.", "status、result 或 cancel 使用的任务 ID。")
+                    "description": t("Subagent id for status, result, or cancel.", "status、result 或 cancel 使用的子智能体 ID。")
                 }
             },
             "additionalProperties": false
         }),
         move |args, _progress| {
             let context = context.clone();
-            async move { run_task(args, context).await }
+            async move { run_subagent_action(args, context).await }
         },
     ));
 }
 
-/// 分发后台子代理任务操作。
+/// 分发子智能体操作。
 ///
 /// 参数:
 /// - `args`: 工具参数
-/// - `context`: 任务上下文
+/// - `context`: 子智能体上下文
 ///
 /// 返回:
 /// - JSON 字符串形式的操作结果
-async fn run_task(args: Value, context: TaskContext) -> Result<String> {
+async fn run_subagent_action(args: Value, context: SubagentContext) -> Result<String> {
     let action = optional_string_arg(&args, "action")?.unwrap_or_else(|| "start".to_string());
     match action.as_str() {
-        "start" => start_task(args, context).await,
-        "status" => task_status(args),
-        "result" => task_result(args),
-        "list" => task_list(),
-        "cancel" => task_cancel(args),
-        _ => bail!("unsupported task action: {action}"),
+        "start" => start_subagent(args, context).await,
+        "status" => subagent_status(args),
+        "result" => subagent_result(args),
+        "list" => subagent_list(),
+        "cancel" => subagent_cancel(args),
+        _ => bail!("unsupported subagent action: {action}"),
     }
 }
 
-/// 启动后台子代理任务。
+/// 启动后台子智能体。
 ///
 /// 参数:
 /// - `args`: 启动参数
-/// - `context`: 任务上下文
+/// - `context`: 子智能体上下文
 ///
 /// 返回:
-/// - 已创建任务的快照
-async fn start_task(args: Value, context: TaskContext) -> Result<String> {
+/// - 已创建子智能体的快照
+async fn start_subagent(args: Value, context: SubagentContext) -> Result<String> {
     let prompt = string_arg(&args, "prompt")?;
     let description = optional_string_arg(&args, "description")?
         .filter(|value| !value.trim().is_empty())
@@ -169,84 +169,103 @@ async fn start_task(args: Value, context: TaskContext) -> Result<String> {
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_MAX_STEPS)
         .clamp(1, MAX_MAX_STEPS);
-    let (task, cancel_rx) = task_state::create_task(description, subagent_type, max_steps);
-    let _ = task_runtime::record_subagent_task_started(&context.paths, &task);
-    let task_id = task.id.clone();
+    let (subagent, cancel_rx) =
+        subagent_state::create_subagent(description, subagent_type, max_steps);
+    let _ = subagent_runtime::record_subagent_started(&context.paths, &subagent);
+    let subagent_id = subagent.id.clone();
     tokio::spawn(async move {
-        execute_subagent_task(task_id, prompt, context, cancel_rx).await;
+        execute_subagent(subagent_id, prompt, context, cancel_rx).await;
     });
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
-        "task": task,
+        "subagent": subagent,
         "message": t(
-            "subagent task started; use action=status or action=result with task_id",
-            "子代理任务已启动；使用 action=status 或 action=result 配合 task_id 查询"
+            "subagent started; use action=status or action=result with subagent_id",
+            "子智能体已启动；使用 action=status 或 action=result 配合 subagent_id 查询"
         )
     }))?)
 }
 
-/// 执行后台子代理任务并写回任务状态。
+/// 执行后台子智能体并写回状态。
 ///
 /// 参数:
-/// - `task_id`: 任务 ID
-/// - `prompt`: 子代理任务提示
-/// - `context`: 任务上下文
+/// - `subagent_id`: 子智能体 ID
+/// - `prompt`: 子智能体提示
+/// - `context`: 子智能体上下文
 /// - `cancel_rx`: 取消信号接收器
 ///
 /// 返回:
 /// - 无
-async fn execute_subagent_task(
-    task_id: String,
+async fn execute_subagent(
+    subagent_id: String,
     prompt: String,
-    context: TaskContext,
+    context: SubagentContext,
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     let paths = context.paths.clone();
-    let task = match task_state::task_snapshot(&task_id) {
-        Ok(task) => task,
+    let subagent = match subagent_state::subagent_snapshot(&subagent_id) {
+        Ok(subagent) => subagent,
         Err(err) => {
-            task_state::finish_task(&task_id, "failed", None, Some(err.to_string()), None);
-            record_finished_runtime_task(&paths, &task_id);
+            subagent_state::finish_subagent(
+                &subagent_id,
+                "failed",
+                None,
+                Some(err.to_string()),
+                None,
+            );
+            record_finished_runtime_subagent(&paths, &subagent_id);
             return;
         }
     };
     let result = tokio::select! {
         _ = &mut cancel_rx => Err(anyhow::anyhow!("cancelled")),
-        result = run_subagent(&task.subagent_type, task.max_steps, &prompt, context) => result,
+        result = run_subagent(&subagent.subagent_type, subagent.max_steps, &prompt, context) => result,
     };
     match result {
         Ok((content, stats)) => {
-            task_state::finish_task(&task_id, "completed", Some(content), None, Some(stats));
-            record_finished_runtime_task(&paths, &task_id);
+            subagent_state::finish_subagent(
+                &subagent_id,
+                "completed",
+                Some(content),
+                None,
+                Some(stats),
+            );
+            record_finished_runtime_subagent(&paths, &subagent_id);
         }
         Err(err) if err.to_string() == "cancelled" => {
-            task_state::finish_task(
-                &task_id,
+            subagent_state::finish_subagent(
+                &subagent_id,
                 "cancelled",
                 None,
                 Some("cancelled".to_string()),
                 None,
             );
-            record_finished_runtime_task(&paths, &task_id);
+            record_finished_runtime_subagent(&paths, &subagent_id);
         }
         Err(err) => {
-            task_state::finish_task(&task_id, "failed", None, Some(err.to_string()), None);
-            record_finished_runtime_task(&paths, &task_id);
+            subagent_state::finish_subagent(
+                &subagent_id,
+                "failed",
+                None,
+                Some(err.to_string()),
+                None,
+            );
+            record_finished_runtime_subagent(&paths, &subagent_id);
         }
     }
 }
 
-/// 记录已结束子代理任务的运行时状态。
+/// 记录已结束子智能体的运行时状态。
 ///
 /// 参数:
 /// - `paths`: Miyu 路径
-/// - `task_id`: 子代理任务 ID
+/// - `subagent_id`: 子智能体 ID
 ///
 /// 返回:
 /// - 无
-fn record_finished_runtime_task(paths: &MiyuPaths, task_id: &str) {
-    if let Ok(task) = task_state::task_snapshot(task_id) {
-        let _ = task_runtime::record_subagent_task_finished(paths, &task);
+fn record_finished_runtime_subagent(paths: &MiyuPaths, subagent_id: &str) {
+    if let Ok(subagent) = subagent_state::subagent_snapshot(subagent_id) {
+        let _ = subagent_runtime::record_subagent_finished(paths, &subagent);
     }
 }
 
@@ -255,8 +274,8 @@ fn record_finished_runtime_task(paths: &MiyuPaths, task_id: &str) {
 /// 参数:
 /// - `subagent_type`: 子代理类型
 /// - `max_steps`: 最大工具调用次数
-/// - `prompt`: 子代理任务提示
-/// - `context`: 任务上下文
+/// - `prompt`: 子智能体提示
+/// - `context`: 子智能体上下文
 ///
 /// 返回:
 /// - 子代理输出内容和公开统计信息
@@ -264,7 +283,7 @@ async fn run_subagent(
     subagent_type: &str,
     max_steps: usize,
     prompt: &str,
-    context: TaskContext,
+    context: SubagentContext,
 ) -> Result<(String, Value)> {
     let client = OpenAiCompatibleClient::from_config(&context.config, &context.paths)?;
     let (system_prompt, tools, excluded) = match subagent_type {
@@ -286,16 +305,16 @@ async fn run_subagent(
         .timeout_seconds(TOOL_TIMEOUT_SECONDS)
         .excluded_tools(&excluded);
     let result = tokio::time::timeout(
-        Duration::from_secs(TASK_TIMEOUT_SECONDS),
+        Duration::from_secs(SUBAGENT_TIMEOUT_SECONDS),
         runner.run(prompt),
     )
     .await
-    .map_err(|_| anyhow::anyhow!("subagent task timed out after {TASK_TIMEOUT_SECONDS}s"))??;
+    .map_err(|_| anyhow::anyhow!("subagent timed out after {SUBAGENT_TIMEOUT_SECONDS}s"))??;
     let (chat_result, stats) = result;
     Ok((chat_result.content, stats_json(&stats)))
 }
 
-/// 生成子代理任务统计 JSON。
+/// 生成子智能体统计 JSON。
 ///
 /// 参数:
 /// - `stats`: 子代理统计
@@ -310,65 +329,65 @@ fn stats_json(stats: &SubagentStats) -> Value {
     value
 }
 
-/// 查询单个后台子代理任务状态。
+/// 查询单个后台子智能体状态。
 ///
 /// 参数:
 /// - `args`: 查询参数
 ///
 /// 返回:
-/// - 任务快照
-fn task_status(args: Value) -> Result<String> {
-    let task_id = string_arg(&args, "task_id")?;
-    let task = task_state::task_snapshot(&task_id)?;
+/// - 子智能体快照
+fn subagent_status(args: Value) -> Result<String> {
+    let subagent_id = string_arg(&args, "subagent_id")?;
+    let subagent = subagent_state::subagent_snapshot(&subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
-        "task": task
+        "subagent": subagent
     }))?)
 }
 
-/// 查询后台子代理任务结果。
+/// 查询后台子智能体结果。
 ///
 /// 参数:
 /// - `args`: 查询参数
 ///
 /// 返回:
-/// - 任务结果或当前状态
-fn task_result(args: Value) -> Result<String> {
-    let task_id = string_arg(&args, "task_id")?;
-    let task = task_state::task_snapshot(&task_id)?;
+/// - 子智能体结果或当前状态
+fn subagent_result(args: Value) -> Result<String> {
+    let subagent_id = string_arg(&args, "subagent_id")?;
+    let subagent = subagent_state::subagent_snapshot(&subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
-        "ok": task.status == "completed",
-        "task": task
+        "ok": subagent.status == "completed",
+        "subagent": subagent
     }))?)
 }
 
-/// 列出后台子代理任务。
+/// 列出后台子智能体。
 ///
 /// 参数:
 /// - 无
 ///
 /// 返回:
-/// - 任务列表
-fn task_list() -> Result<String> {
+/// - 子智能体列表
+fn subagent_list() -> Result<String> {
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
-        "tasks": task_state::list_tasks()
+        "subagents": subagent_state::list_subagents()
     }))?)
 }
 
-/// 取消后台子代理任务。
+/// 取消后台子智能体。
 ///
 /// 参数:
 /// - `args`: 取消参数
 ///
 /// 返回:
-/// - 取消后的任务快照
-fn task_cancel(args: Value) -> Result<String> {
-    let task_id = string_arg(&args, "task_id")?;
-    let task = task_state::cancel_task(&task_id)?;
+/// - 取消后的子智能体快照
+fn subagent_cancel(args: Value) -> Result<String> {
+    let subagent_id = string_arg(&args, "subagent_id")?;
+    let subagent = subagent_state::cancel_subagent(&subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
-        "task": task
+        "subagent": subagent
     }))?)
 }
 
@@ -409,10 +428,10 @@ fn string_arg(args: &Value, name: &str) -> Result<String> {
     Ok(value)
 }
 
-/// 从任务提示中生成短描述。
+/// 从子智能体提示中生成短描述。
 ///
 /// 参数:
-/// - `prompt`: 子代理任务提示
+/// - `prompt`: 子智能体提示
 ///
 /// 返回:
 /// - 短描述文本
@@ -425,7 +444,7 @@ fn summarize_prompt(prompt: &str) -> String {
         .take(DESCRIPTION_MAX_CHARS)
         .collect::<String>();
     if description.is_empty() {
-        description = "subagent task".to_string();
+        description = "subagent".to_string();
     }
     description
 }

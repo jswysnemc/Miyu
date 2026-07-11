@@ -1,4 +1,4 @@
-import { ArrowRight, AtSign, BriefcaseBusiness, Eraser, ListTree, Paperclip, Square } from "lucide-react";
+import { ArrowRight, AtSign, BriefcaseBusiness, GitBranch, ListTree, Paperclip, Square, SquareTerminal } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { RunModelSelection, ThinkingLevel } from "../../api/contracts";
@@ -10,6 +10,13 @@ import type { ComposerAttachment } from "./composer/use-composer-attachments";
 import { resolveComposerAvailability } from "./composer-availability";
 import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { LiveRunState } from "./run-event-reducer";
+import type { AgentChoice } from "../agents/agent-types";
+import { AgentSelector } from "./agent-selector";
+import { WorkspaceSwitcher } from "../workspaces/workspace-switcher";
+import { SystemUsage } from "../usage/system-usage";
+import { useQuery } from "@tanstack/react-query";
+import { api } from "../../api/client";
+import { TodoMarkdownView } from "../todo/todo-markdown-view";
 import "./chat-composer.css";
 
 type ChatComposerProps = {
@@ -24,6 +31,10 @@ type ChatComposerProps = {
   running: boolean;
   runStatus: LiveRunState["status"];
   sessionAvailable: boolean;
+  agentChoices: AgentChoice[];
+  agentSelection: AgentChoice | null;
+  agentLoading: boolean;
+  sessionId?: string;
   onChange: (value: string) => void;
   onModeChange: (mode: "plan" | "yolo") => void;
   onThinkingLevelChange: (level: ThinkingLevel) => void;
@@ -32,6 +43,7 @@ type ChatComposerProps = {
   onModelSelect: (selection: RunModelSelection) => void;
   onSubmit: () => void;
   onStop: () => void;
+  onAgentSelect: (id: string) => void;
 };
 
 /**
@@ -41,6 +53,7 @@ type ChatComposerProps = {
  * @returns 聊天输入区
  */
 export function ChatComposer(props: ChatComposerProps) {
+  const git = useQuery({ queryKey:["workspace-diff"], queryFn:api.workspace.diff, staleTime:20_000 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<ComposerTextareaHandle>(null);
 
@@ -76,6 +89,18 @@ export function ChatComposer(props: ChatComposerProps) {
   return (
     <div className="composer-shell">
       <form className="composer" onSubmit={handleSubmit}>
+        <div className="composer-context-bar">
+          <WorkspaceSwitcher />
+          {git.data?.repository && <span className="composer-context-chip" title={git.data.branch}><GitBranch size={13}/><span>{git.data.branch || "Git"}</span></span>}
+          <SystemUsage />
+          <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
+          <TodoMarkdownView sessionId={props.sessionId} compact />
+          <div className="composer-mode" aria-label="运行模式">
+            <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
+            <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
+          </div>
+          <button type="button" className="composer-rail-button" onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title="打开终端和后台管理" aria-label="打开终端和后台管理"><SquareTerminal size={14} /></button>
+        </div>
         <AttachmentStrip attachments={props.attachments} onRemove={props.onRemoveAttachment} />
         <ComposerTextarea
           ref={textareaRef}
@@ -102,12 +127,7 @@ export function ChatComposer(props: ChatComposerProps) {
                 onThinkingLevelChange={props.onThinkingLevelChange}
               />
             </div>
-            <div className="composer-mode" aria-label="运行模式">
-              <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
-              <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
-            </div>
             <button type="button" className="composer-rail-button" onClick={() => textareaRef.current?.openMentionPicker()} disabled={availability.inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
-            <button type="button" className="composer-rail-button" onClick={() => { props.onChange(""); for (const attachment of props.attachments) props.onRemoveAttachment(attachment.id); }} disabled={availability.inputDisabled || (!props.value && props.attachments.length === 0)} title="清空输入" aria-label="清空输入"><Eraser size={14} /></button>
           </div>
           <div className="composer-actions">
             <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileChange} hidden />

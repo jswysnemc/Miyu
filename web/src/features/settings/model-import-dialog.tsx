@@ -1,6 +1,7 @@
 import { Check, Search } from "lucide-react";
 import { useDeferredValue, useEffect, useState } from "react";
 import { Modal } from "../../shared/ui/dialog/modal";
+import { ModelIcon } from "../../shared/ui/model-icon";
 
 type ModelImportDialogProps = {
   open: boolean;
@@ -50,7 +51,7 @@ export function ModelImportDialog({ open, models, existingModels, onClose, onImp
           {filtered.map((model) => {
             const existing = existingModels.includes(model);
             const active = selected.includes(model);
-            return <button type="button" className={active ? "active" : ""} disabled={existing} key={model} onClick={() => toggle(model)}><span><strong>{model}</strong><small>{existing ? "已经添加" : "可导入"}</small></span>{(active || existing) && <Check size={14} />}</button>;
+            return <button type="button" className={active ? "active" : ""} disabled={existing} key={model} onClick={() => toggle(model)}><ModelIcon model={model} size={16}/><span><strong>{model}</strong><small>{existing ? "已经添加" : "可导入"}</small></span>{(active || existing) && <Check size={14} />}</button>;
           })}
           {filtered.length === 0 && <div className="model-import-empty">没有匹配的模型</div>}
         </div>

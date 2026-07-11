@@ -8,7 +8,7 @@ use super::weixin_bot::login::{default_base_url as default_weixin_base_url, load
 use super::weixin_bot::server::{run_weixin_bot_server, WeixinBotServerConfig};
 use crate::config::{AppConfig, QqGatewayConfig, WeixinGatewayConfig};
 use crate::paths::MiyuPaths;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result};
 use std::net::SocketAddr;
 use tokio::task::JoinSet;
 
@@ -47,14 +47,12 @@ pub(crate) async fn run_configured_gateways(paths: &MiyuPaths, verbose: bool) ->
     AppConfig::init_files(paths)?;
     let config = AppConfig::load_or_default(paths)?;
     let gateways = configured_gateways(paths, &config, verbose)?;
-    if gateways.is_empty() {
-        bail!("no enabled gateways; enable channels in miyu config");
-    }
     let names = gateways
         .iter()
         .map(ConfiguredGateway::name)
         .collect::<Vec<_>>();
     let mut tasks = JoinSet::<Result<()>>::new();
+    tasks.spawn(crate::cron::run_scheduler(paths.clone()));
     for gateway in gateways {
         spawn_gateway(&mut tasks, paths.clone(), gateway);
     }

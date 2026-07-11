@@ -39,6 +39,7 @@ flowchart TB
         PROG["progressive 渐进分组"]
         SUB["subagent_runner 子代理循环"]
         TASK["task 后台子代理工具"]
+        TODO["todo 会话级计划清单"]
         GRP["groups 工具分组"]
     end
 
@@ -126,8 +127,16 @@ flowchart TB
     REG --> BUILT & RO
     BUILT --> T_FILE & T_WEB & T_IMG & T_MEME & T_KB & T_MEM & T_DIV & T_SYS & T_HEAVY
     REG --> TASK
+    REG --> TODO
     TASK --> SUB
     SUB --> RO
+
+    subgraph Cron["定时任务 cron/"]
+        CRONDB["jobs.db 持久任务"]
+        CRONS["Gateway scheduler 到期调度"]
+        CRONRUN["Gateway 来源 Agent turn"]
+    end
+    CRONDB --> CRONS --> CRONRUN
 
     SS --> TURNS
     SS --> PEND

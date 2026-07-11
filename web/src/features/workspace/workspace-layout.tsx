@@ -13,6 +13,7 @@ import { useWorkspaceLayout } from "./use-workspace-layout";
 import { workspaceRelativePath } from "./workspace-path-utils";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { TerminalResizeHandle } from "../terminal/terminal-resize-handle";
+import { useTerminalManager } from "../terminal/use-terminal-manager";
 import {
   initialMobileWorkbenchState,
   MOBILE_SIDEBAR_TOGGLE_EVENT,
@@ -35,6 +36,7 @@ type WorkspaceLayoutProps = {
  */
 export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: WorkspaceLayoutProps) {
   const layout = useWorkspaceLayout();
+  const terminalManager = useTerminalManager();
   const sessionSidebar = useSessionSidebarLayout();
   const [mobileLayout, dispatchMobileLayout] = useReducer(reduceMobileWorkbenchState, initialMobileWorkbenchState);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches);
@@ -96,6 +98,12 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     window.addEventListener("miyu:open-file", handleOpenFile);
     return () => window.removeEventListener("miyu:open-file", handleOpenFile);
   }, [activeWorkspace?.path, onSelectFile, layout.openWorkspace]);
+
+  useEffect(() => {
+    const handleToggleTerminal = () => layout.toggleTerminal();
+    window.addEventListener("miyu:toggle-terminal", handleToggleTerminal);
+    return () => window.removeEventListener("miyu:toggle-terminal", handleToggleTerminal);
+  }, [layout.toggleTerminal]);
 
   /**
    * 显示指定移动端工作台面板，并确保对应桌面布局区域已经打开。
@@ -162,6 +170,7 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
               onToggleSwapped={layout.toggleSwapped}
               terminalOpen={layout.terminalOpen}
               maximized={layout.workspaceMaximized}
+              terminalManager={terminalManager}
             />
           </aside>
         )}
@@ -176,7 +185,7 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
       {layout.terminalOpen && (
         <div className="coding-terminal">
           <TerminalResizeHandle onResize={layout.resizeTerminal} />
-          <TerminalDock onClose={closeTerminal} />
+          <TerminalDock manager={terminalManager} onClose={closeTerminal} />
         </div>
       )}
     </div>

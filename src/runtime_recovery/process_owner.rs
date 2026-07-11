@@ -131,7 +131,7 @@ fn load_stale_subagent_processes_locked(
          FROM runtime_processes
          WHERE session_id = ?1
          AND owner_kind = 'subagent'
-         AND process_kind = 'subagent_task'
+         AND process_kind IN ('subagent', 'subagent_task')
          AND status = 'running'
          AND (pid IS NULL OR pid != ?2)
          ORDER BY updated_at ASC, id ASC",
@@ -324,11 +324,11 @@ mod tests {
         record_process(
             &db,
             NewRuntimeProcessRecord {
-                id: "subagent_task_1".to_string(),
+                id: "subagent_1".to_string(),
                 session_id: "default".to_string(),
                 owner_kind: OwnerKind::Subagent,
-                owner_id: "task_1".to_string(),
-                process_kind: ProcessKind::SubagentTask,
+                owner_id: "subagent_1".to_string(),
+                process_kind: ProcessKind::Subagent,
                 command: "explore".to_string(),
                 cwd: "/tmp".to_string(),
                 pid: Some(100),
@@ -347,7 +347,7 @@ mod tests {
         assert_eq!(summary.active_process_count, 0);
         assert_eq!(summary.stale_process_count, 1);
         assert_eq!(failure.kind, RuntimeRecoveryKind::StaleOwner);
-        assert_eq!(failure.process_id.as_deref(), Some("subagent_task_1"));
+        assert_eq!(failure.process_id.as_deref(), Some("subagent_1"));
     }
 
     #[test]

@@ -1,16 +1,13 @@
-import { Cable, Code2 } from "lucide-react";
+import { Cable, CalendarClock, Code2 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
-import { WorkspaceSwitcher } from "../features/workspaces/workspace-switcher";
-import { SystemUsage } from "../features/usage/system-usage";
-import { useChatAgentContext } from "../features/agents/chat-agent-context";
-import { AgentSelector } from "../features/chat/agent-selector";
 import { MOBILE_SIDEBAR_TOGGLE_EVENT } from "../features/workspace/mobile-workbench-state";
 import { MiyuLogo } from "../shared/ui/miyu-logo";
 import "./app-shell.css";
 
 const navigation = [
   { to: "/", label: "编程", icon: Code2 },
-  { to: "/gateways", label: "网关", icon: Cable }
+  { to: "/gateways", label: "网关", icon: Cable },
+  { to: "/cron-jobs", label: "定时任务", icon: CalendarClock }
 ];
 
 /**
@@ -19,8 +16,6 @@ const navigation = [
  * @returns 应用外壳布局
  */
 export function AppShell() {
-  const chatAgent = useChatAgentContext();
-
   /** 在移动端请求切换会话侧栏。 */
   const toggleSessionSidebar = () => window.dispatchEvent(new Event(MOBILE_SIDEBAR_TOGGLE_EVENT));
 
@@ -32,17 +27,7 @@ export function AppShell() {
           <span className="brand-name">Miyu</span>
           <span className="brand-surface">Web</span>
         </button>
-        <div className="topbar-primary">
-          <WorkspaceSwitcher />
-          <SystemUsage />
-          <AgentSelector
-            choices={chatAgent.choices}
-            selection={chatAgent.selection}
-            loading={chatAgent.isLoading}
-            disabled={false}
-            onSelect={chatAgent.selectAgent}
-          />
-        </div>
+        <div className="topbar-primary" />
         <div className="topbar-actions">
           <nav className="topnav" aria-label="主导航">
             {navigation.map(({ to, label, icon: Icon }) => (

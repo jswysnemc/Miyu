@@ -283,10 +283,13 @@ impl<'paths> SessionRunner<'paths> {
         mode: AgentMode,
         session_id: &str,
     ) -> Result<ToolRegistry> {
-        let registry = match &self.tool_registry_override {
+        let mut registry = match &self.tool_registry_override {
             Some(registry) => Ok(registry.clone()),
             None => build_submission_tool_registry(config, self.paths, source, mode, session_id),
         }?;
+        if mode == AgentMode::Yolo && source == SubmissionSource::Gateway {
+            crate::cron::register_tool(&mut registry, self.paths.clone(), session_id.to_string());
+        }
         let Some(runtime) = config.agent_runtime.as_ref() else {
             return Ok(registry);
         };
@@ -295,7 +298,18 @@ impl<'paths> SessionRunner<'paths> {
             .iter()
             .map(String::as_str)
             .collect::<Vec<_>>();
-        Ok(registry.clone_filtered(&allowed))
+        let mut filtered = registry.clone_filtered(&allowed);
+        let required = match source {
+            SubmissionSource::Repl | SubmissionSource::Web => &["subagent", "todo"][..],
+            SubmissionSource::Gateway => &["cron"][..],
+            SubmissionSource::Command | SubmissionSource::ShellIntercept => &[][..],
+        };
+        for name in required {
+            if registry.contains(name) {
+                filtered.register_from(&registry, name)?;
+            }
+        }
+        Ok(filtered)
     }
 }
 
@@ -512,6 +526,117 @@ mod tests {
             merged,
             vec!["read_file", "send_channel_message", "write_file"]
         );
+    }
+
+    /// 验证子智能体工具只在交互式 REPL 和 Web 来源中启用。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn subagent_tool_is_limited_to_interactive_sources() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let config = AppConfig::default();
+        let interactive_sources = [SubmissionSource::Repl, SubmissionSource::Web];
+        let non_interactive_sources = [
+            SubmissionSource::Command,
+            SubmissionSource::Gateway,
+            SubmissionSource::ShellIntercept,
+        ];
+
+        // 1. 交互式来源必须提供子智能体工具
+        for source in interactive_sources {
+            let registry = build_submission_tool_registry(
+                &config,
+                &paths,
+                source,
+                AgentMode::Yolo,
+                "interactive-session",
+            )
+            .unwrap();
+            assert!(registry.contains("subagent"), "source: {source:?}");
+            assert!(registry.contains("todo"), "source: {source:?}");
+        }
+
+        // 2. 非交互式来源不得提供子智能体工具
+        for source in non_interactive_sources {
+            let registry = build_submission_tool_registry(
+                &config,
+                &paths,
+                source,
+                AgentMode::Yolo,
+                "non-interactive-session",
+            )
+            .unwrap();
+            assert!(!registry.contains("subagent"), "source: {source:?}");
+            assert!(!registry.contains("todo"), "source: {source:?}");
+        }
+    }
+
+    /// 验证定时任务管理工具只对 Gateway 来源开放。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn cron_tool_is_limited_to_gateway_source() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let config = AppConfig::default();
+        let runner = SessionRunner::new(&paths);
+        let sources = [
+            SubmissionSource::Command,
+            SubmissionSource::Repl,
+            SubmissionSource::Web,
+            SubmissionSource::Gateway,
+            SubmissionSource::ShellIntercept,
+        ];
+
+        for source in sources {
+            let registry = runner
+                .load_tool_registry(&config, source, AgentMode::Yolo, "cron-session")
+                .unwrap();
+            assert_eq!(
+                registry.contains("cron"),
+                source == SubmissionSource::Gateway,
+                "source: {source:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn surface_tools_survive_agent_runtime_whitelist() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path().to_path_buf());
+        let mut config = AppConfig::default();
+        config.agent_runtime = Some(crate::config::AgentRuntimeOverride {
+            enabled_tools: vec!["read_file".to_string()],
+            skills_full: Vec::new(),
+            skills_named: Vec::new(),
+        });
+        let runner = SessionRunner::new(&paths);
+
+        for source in [SubmissionSource::Repl, SubmissionSource::Web] {
+            let registry = runner
+                .load_tool_registry(&config, source, AgentMode::Yolo, "interactive")
+                .unwrap();
+            assert!(registry.contains("subagent"));
+            assert!(registry.contains("todo"));
+        }
+        let gateway = runner
+            .load_tool_registry(
+                &config,
+                SubmissionSource::Gateway,
+                AgentMode::Yolo,
+                "gateway",
+            )
+            .unwrap();
+        assert!(gateway.contains("cron"));
     }
 
     /// 验证命令模式后台命令会绑定 command-mode owner。
