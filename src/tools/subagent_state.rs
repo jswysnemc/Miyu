@@ -240,6 +240,47 @@ mod tests {
         assert_eq!(loaded.description, "demo");
         assert_eq!(loaded.status, "running");
         assert_eq!(loaded.max_steps, 3);
+        assert_eq!(loaded.step, 0);
+        assert_eq!(loaded.phase, None);
+    }
+
+    #[test]
+    fn progress_update_writes_back_to_running_snapshot() {
+        let (subagent, _cancel) =
+            create_subagent("progress".to_string(), "explore".to_string(), 5);
+        update_subagent_progress(
+            &subagent.id,
+            SubagentProgressUpdate {
+                step: Some(2),
+                phase: Some("工具 #2：Search 运行中".to_string()),
+                last_tool: Some("Search".to_string()),
+            },
+        );
+        let loaded = subagent_snapshot(&subagent.id).unwrap();
+
+        assert_eq!(loaded.step, 2);
+        assert_eq!(loaded.phase.as_deref(), Some("工具 #2：Search 运行中"));
+        assert_eq!(loaded.last_tool.as_deref(), Some("Search"));
+    }
+
+    #[test]
+    fn progress_update_ignored_after_finish() {
+        let (subagent, _cancel) =
+            create_subagent("done".to_string(), "general".to_string(), 4);
+        finish_subagent(&subagent.id, "completed", Some("ok".to_string()), None, None);
+        update_subagent_progress(
+            &subagent.id,
+            SubagentProgressUpdate {
+                step: Some(9),
+                phase: Some("不应写入".to_string()),
+                last_tool: None,
+            },
+        );
+        let loaded = subagent_snapshot(&subagent.id).unwrap();
+
+        assert_eq!(loaded.status, "completed");
+        assert_eq!(loaded.step, 0);
+        assert_eq!(loaded.phase, None);
     }
 
     #[test]
