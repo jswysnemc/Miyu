@@ -66,6 +66,7 @@ impl StreamSummary {
     ///
     /// 返回:
     /// - 是否 live
+    #[cfg(test)]
     pub(crate) fn reasoning_live_active(&self) -> bool {
         self.reasoning_live
     }

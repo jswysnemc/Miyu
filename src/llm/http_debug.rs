@@ -272,6 +272,7 @@ impl HttpDebugRecorder {
     }
 
     /// 返回落盘目录（测试用）。
+    #[cfg(test)]
     pub fn dir(&self) -> &Path {
         &self.dir
     }

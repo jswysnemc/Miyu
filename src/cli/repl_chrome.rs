@@ -230,6 +230,7 @@ pub(super) fn chrome_rule(cols: usize) -> String {
 ///
 /// 返回:
 /// - 带 dim 样式的状态行
+#[cfg(test)]
 pub(super) fn chrome_status_line(left: &str, right: &str, cols: usize) -> String {
     let cols = cols.max(1);
     let left_w = visible_width(left);
