@@ -1,92 +1,67 @@
-import { FileTypeIcon } from "../../../shared/ui/file-icon";
 import { SyntaxHighlighter } from "../syntax-highlighter";
-import { parseJsonRecord, prettyJson, stringField } from "./tool-data";
+import { parseReadTextPages, type ReadTextPage } from "./read-result-parser";
+import { prettyJson } from "./tool-data";
+import { ToolFileReference } from "./tool-file-reference";
 
 type ReadToolViewProps = {
   argumentsText: string;
   output: string;
-};
-
-type ParsedLine = {
-  number: number | null;
-  text: string;
+  headerPath?: string;
 };
 
 /**
- * read_file 工具专用视图，带语法着色、行号和可点击路径。
+ * 渲染 read_file 单文件或批量文件结果。
  *
- * @param props 读取参数与结果 JSON
- * @returns 文件读取详情
+ * @param props argumentsText 为读取参数，output 为结果，headerPath 为卡片头部已展示路径
+ * @returns 带行号和语法着色的文件读取详情
  */
-export function ReadToolView({ argumentsText, output }: ReadToolViewProps) {
-  const args = parseJsonRecord(argumentsText);
-  const result = parseJsonRecord(output);
-  const path = stringField(args, "path") || stringField(result, "path");
-  const content = stringField(result, "content");
-  const isTextPage = stringField(result, "type") === "text-page" && content.length > 0;
+export function ReadToolView({ output, headerPath }: ReadToolViewProps) {
+  const pages = parseReadTextPages(output);
+  if (pages.length === 0) {
+    return output ? <pre className="generic-tool-block result"><code>{prettyJson(output)}</code></pre> : null;
+  }
   return (
     <div className="read-tool-view">
-      {path && (
-        <div className="read-file-head">
-          <FileTypeIcon name={path} size={13} />
-          <OpenFileLink path={path} />
-          {result?.offset != null && result?.limit != null && <small>{`第 ${String(result.offset)} 行起`}</small>}
+      {pages.map((page, index) => (
+        <ReadTextPageView page={page} hidePath={pages.length === 1 && page.path === headerPath} key={`${page.path}-${page.offset}-${index}`} />
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 渲染一个文本分页。
+ *
+ * @param props page 为文本分页，hidePath 表示路径已经在工具卡头部展示
+ * @returns 单文件内容块
+ */
+function ReadTextPageView({ page, hidePath }: { page: ReadTextPage; hidePath: boolean }) {
+  const source = page.lines.map((line) => line.text).join("\n");
+  return (
+    <section className="read-file-page">
+      {(!hidePath || page.offset !== null) && (
+        <div className={`read-file-head${hidePath ? " path-hidden" : ""}`}>
+          {!hidePath && <ToolFileReference path={page.path} />}
+          {page.offset !== null && <small>{`第 ${page.offset} 行起`}</small>}
         </div>
       )}
-      {isTextPage
-        ? <FileContentBlock path={path} content={content} />
-        : output && <pre className="generic-tool-block result"><code>{prettyJson(output)}</code></pre>}
-    </div>
-  );
-}
-
-/**
- * 可点击文件路径，点击时派发全局打开文件事件。
- *
- * @param props path 为原样保留的文件路径
- * @returns 可交互路径元素
- */
-export function OpenFileLink({ path }: { path: string }) {
-  // 1. 点击时派发 miyu:open-file 事件由工作区监听打开
-  const onOpen = () => {
-    window.dispatchEvent(new CustomEvent("miyu:open-file", { detail: { path } }));
-  };
-  return (
-    <button type="button" className="open-file-link" onClick={onOpen} title="在编辑器中打开">
-      {path}
-    </button>
-  );
-}
-
-/**
- * 按扩展名着色渲染文件内容，带行号列和高度上限。
- *
- * @param props path 用于推断语言，content 为带行号前缀的文本
- * @returns 着色后的文件内容块
- */
-function FileContentBlock({ path, content }: { path: string; content: string }) {
-  // 1. 拆出后端 "行号: 内容" 前缀
-  const lines = content.split("\n").map(parseNumberedLine);
-  const source = lines.map((line) => line.text).join("\n");
-  const language = path.includes(".") ? path.split(".").pop() : undefined;
-  return (
-    <div className="read-file-content">
-      <div className="read-file-gutter" aria-hidden>
-        {lines.map((line, index) => <span key={index}>{line.number ?? ""}</span>)}
+      <div className="read-file-content">
+        <div className="read-file-gutter" aria-hidden>
+          {page.lines.map((line, index) => <span key={index}>{line.number ?? ""}</span>)}
+        </div>
+        <pre className="read-file-code"><SyntaxHighlighter language={languageOfPath(page.path)} source={source} /></pre>
       </div>
-      <pre className="read-file-code"><SyntaxHighlighter language={language} source={source} /></pre>
-    </div>
+    </section>
   );
 }
 
 /**
- * 解析单行的行号前缀。
+ * 从文件路径推断语法着色语言。
  *
- * @param line 形如 "12: 内容" 的文本
- * @returns 行号与正文，无前缀时行号为空
+ * @param path 文件路径
+ * @returns 文件扩展名，无扩展名时返回 undefined
  */
-function parseNumberedLine(line: string): ParsedLine {
-  const match = /^(\d+): (.*)$/s.exec(line);
-  if (!match) return { number: null, text: line };
-  return { number: Number(match[1]), text: match[2] };
+function languageOfPath(path: string): string | undefined {
+  const name = path.split("/").pop() ?? "";
+  return name.includes(".") ? name.split(".").pop() : undefined;
 }

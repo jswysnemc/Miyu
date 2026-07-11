@@ -1,12 +1,4 @@
-/** Agent 配置档案，对应后端 AppConfig.agents 数组元素。 */
-export type AgentProfile = {
-  id: string;
-  name: string;
-  system_prompt: string;
-  enabled_tools: string[];
-  skills_full: string[];
-  skills_named: string[];
-};
+export type { AgentProfile } from "../../agents/agent-types";
 
 /** 内置工具选项，含用途分组。 */
 export type AgentToolOption = {

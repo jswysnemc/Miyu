@@ -62,3 +62,23 @@ export function toolSummary(name: string, argumentsText: string): string {
   if (name === "glob") return stringField(args, "pattern");
   return "";
 }
+
+/**
+ * 提取适合在工具卡头部展示的唯一文件路径。
+ *
+ * @param name 工具名称
+ * @param argumentsText 工具参数 JSON
+ * @returns 唯一文件路径，多文件或无路径时返回空字符串
+ */
+export function toolFilePath(name: string, argumentsText: string): string {
+  const args = parseJsonRecord(argumentsText);
+  if (name === "read_file" || name === "edit_file") return stringField(args, "path");
+  if (name !== "apply_patch") return "";
+  const paths = stringField(args, "patch")
+    .split("\n")
+    .flatMap((line) => {
+      const match = /^\*\*\* (?:Add|Delete|Update) File: (.+)$/.exec(line);
+      return match ? [match[1].trim()] : [];
+    });
+  return new Set(paths).size === 1 ? paths[0] : "";
+}

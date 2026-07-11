@@ -6,6 +6,38 @@
   background: var(--paper);
 }
 
+.settings-page.agent-section {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  overflow: hidden;
+}
+
+.settings-page.agent-section .settings-workspace,
+.settings-page.agent-section .settings-main {
+  min-height: 0;
+}
+
+.settings-page.agent-section .settings-workspace {
+  height: auto;
+  min-height: 0;
+}
+
+.settings-page.agent-section .settings-main {
+  overflow: hidden;
+  padding-bottom: 20px;
+}
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-decoration: none;
+}
+
+.settings-back:hover { color: var(--ink); }
+
 /* ---------- 吸顶紧凑标题条 ---------- */
 
 .settings-topbar {

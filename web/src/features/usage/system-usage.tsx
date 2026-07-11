@@ -1,7 +1,8 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Cpu, Gauge, HardDrive, TerminalSquare } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../../api/client";
+import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import "./system-usage.css";
 
 /**
@@ -18,15 +19,7 @@ export function SystemUsage() {
     refetchInterval: 5_000
   });
   const contextPercent = Math.round(Math.min(1, Math.max(0, usage.data?.session.context_token_ratio ?? 0)) * 100);
-
-  useEffect(() => {
-    /** 在用量浮层外点击时关闭浮层。 */
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handlePointerDown);
-    return () => document.removeEventListener("pointerdown", handlePointerDown);
-  }, []);
+  useOutsidePointerDown(rootRef, () => setOpen(false), open);
 
   return (
     <div className="system-usage" ref={rootRef}>

@@ -17,14 +17,63 @@ pub(crate) fn register(registry: &mut ToolRegistry) {
         ToolSpec::new(
             "edit_file",
             t(
-                "Create, overwrite, or edit UTF-8 text files. Prefer the patch parameter with Codex-style syntax: {\"patch\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}. Use *** Add File and *** Delete File for creates/deletes. Include enough unchanged context lines so the hunk matches exactly. Legacy modes remain supported: path+content for full-file writes, or path+start_line+end_line+replacement after read_file identifies exact line numbers.",
-                "创建、覆盖或编辑 UTF-8 文本文件。优先使用 patch 参数和 Codex 风格语法，例如 {\"patch\":\"*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch\"}。新建和删除分别使用 *** Add File 与 *** Delete File。hunk 中要包含足够的未变上下文行，保证精确匹配。仍兼容 path+content 整文件写入，以及 read_file 确认行号后的 path+start_line+end_line+replacement 行级编辑。",
+                "Edit UTF-8 text files using exactly one mode. Patch mode uses only patch. Add File requires every content line, including blank lines, to begin with +. Update File requires an @@ hunk whose lines begin with space, +, or -. Full-file mode uses only path+content. Line-range mode uses only path+start_line+end_line+replacement after read_file confirms exact 1-based line numbers. Never mix fields from different modes.",
+                "使用且仅使用一种模式编辑 UTF-8 文本文件。patch 模式只传 patch。Add File 的每一行内容（包括空行）都必须以 + 开头。Update File 必须包含 @@ hunk，hunk 每行以空格、+ 或 - 开头。整文件模式只传 path+content。行范围模式在 read_file 确认精确的 1 起始行号后，只传 path+start_line+end_line+replacement。禁止混用不同模式的字段。",
             ),
-            json!({"type":"object","properties":{"patch":{"type":"string","description": t("Preferred edit mode. Codex-style patch beginning with *** Begin Patch. Example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch. Also supports *** Add File and *** Delete File.", "推荐编辑模式。以 *** Begin Patch 开头的 Codex 风格 patch。例如 *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch。也支持 *** Add File 和 *** Delete File。")},"path":{"type":"string","description": t("Workspace-relative or absolute file path for legacy edit modes.", "旧编辑模式使用的工作区相对路径或绝对文件路径。")},"content":{"type":"string","description": t("Legacy full UTF-8 file content for create or overwrite. Prefer patch for multi-line edits.", "旧整文件写入模式，用于新建或覆盖完整 UTF-8 文件。多行编辑优先使用 patch。")},"start_line":{"type":"integer","description": t("Legacy 1-based first line to replace.", "旧行级编辑模式：要替换的第一行，1 起始。")},"end_line":{"type":"integer","description": t("Legacy 1-based last line to replace, inclusive.", "旧行级编辑模式：要替换的最后一行，闭区间。")},"replacement":{"type":"string","description": t("Legacy replacement text. May contain multiple lines. Empty text deletes the line range. Prefer patch when possible.", "旧行级编辑模式：替换文本，可包含多行；空文本会删除指定行范围。可行时优先使用 patch。")}},"additionalProperties":false}),
+            edit_file_parameters(),
             |args| async move { edit_file(args) },
         )
         .writes(),
     );
+}
+
+/**
+ * 返回互斥的文件编辑参数模式。
+ *
+ * 返回:
+ * - patch、整文件或行范围三选一的 JSON Schema
+ */
+fn edit_file_parameters() -> Value {
+    json!({
+        "type": "object",
+        "properties": {
+            "patch": {"type":"string","description": t("Preferred mode; pass no other fields. Add File example: *** Begin Patch\\n*** Add File: notes.md\\n+# Title\\n+\\n+Body\\n*** End Patch. Update File example: *** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch.", "推荐模式，不要同时传其他字段。Add File 示例：*** Begin Patch\\n*** Add File: notes.md\\n+# Title\\n+\\n+Body\\n*** End Patch。Update File 示例：*** Begin Patch\\n*** Update File: src/main.rs\\n@@\\n-old\\n+new\\n*** End Patch。")},
+            "path": {"type":"string","description": t("File path used only by full-file or line-range mode.", "仅供整文件模式或行范围模式使用的文件路径。")},
+            "content": {"type":"string","description": t("Complete UTF-8 file content. Use only with path.", "完整 UTF-8 文件内容，只与 path 一起使用。")},
+            "start_line": {"type":"integer","minimum":1,"description": t("First 1-based line to replace. Line-range mode only.", "要替换的第一行，1 起始。仅用于行范围模式。")},
+            "end_line": {"type":"integer","minimum":1,"description": t("Last 1-based line to replace, inclusive. Line-range mode only.", "要替换的最后一行，1 起始且包含该行。仅用于行范围模式。")},
+            "replacement": {"type":"string","description": t("Replacement text for line-range mode. Empty text deletes the selected range.", "行范围模式的替换文本。空文本删除所选行范围。")}
+        },
+        "oneOf": [
+            {
+                "required": ["patch"],
+                "not": {"anyOf": [
+                    {"required": ["path"]},
+                    {"required": ["content"]},
+                    {"required": ["start_line"]},
+                    {"required": ["end_line"]},
+                    {"required": ["replacement"]}
+                ]}
+            },
+            {
+                "required": ["path", "content"],
+                "not": {"anyOf": [
+                    {"required": ["patch"]},
+                    {"required": ["start_line"]},
+                    {"required": ["end_line"]},
+                    {"required": ["replacement"]}
+                ]}
+            },
+            {
+                "required": ["path", "start_line", "end_line", "replacement"],
+                "not": {"anyOf": [
+                    {"required": ["patch"]},
+                    {"required": ["content"]}
+                ]}
+            }
+        ],
+        "additionalProperties": false
+    })
 }
 
 /// 创建、覆盖或编辑 UTF-8 文本文件。
@@ -241,6 +290,15 @@ fn required(args: &Value, key: &str) -> Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_file_schema_exposes_three_exclusive_modes() {
+        let schema = edit_file_parameters();
+        assert_eq!(schema["oneOf"].as_array().map(Vec::len), Some(3));
+        assert!(schema["properties"]["patch"]["description"]
+            .as_str()
+            .is_some_and(|value| value.contains("Add File") && value.contains("+# Title")));
+    }
 
     #[test]
     fn write_file_creates_and_overwrites_text_file() {

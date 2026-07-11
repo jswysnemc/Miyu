@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   clampWorkspaceWidth,
+  clampWorkspaceWidthForWorkbench,
   clampTerminalHeight,
   parseWorkspaceLayout,
   WORKSPACE_LAYOUT_STORAGE_KEY,
@@ -64,11 +65,14 @@ export function useWorkspaceLayout() {
    * 更新右侧工作区宽度。
    *
    * @param width 请求设置的宽度
+   * @param workbenchWidth 工作台实际宽度
    */
-  const resizeWorkspace = (width: number) => {
+  const resizeWorkspace = (width: number, workbenchWidth?: number) => {
     setLayout((current) => ({
       ...current,
-      workspaceWidth: clampWorkspaceWidth(width, window.innerWidth)
+      workspaceWidth: workbenchWidth === undefined
+        ? clampWorkspaceWidth(width, window.innerWidth)
+        : clampWorkspaceWidthForWorkbench(width, workbenchWidth)
     }));
   };
 

@@ -1,10 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, ChevronsLeft, ChevronsRight, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { FileNode } from "../../api/contracts";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 import { FileTypeIcon } from "../../shared/ui/file-icon";
+import { filterFileNodes, findFileNode, parentFilePath } from "./file-tree-utils";
+import { WorkspaceFileSearch } from "./workspace-file-search";
 
 type FileTreeProps = {
   selectedFile: string | null;
@@ -26,13 +28,14 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
   const tree = useQuery({ queryKey: ["file-tree"], queryFn: api.workspace.tree, refetchOnWindowFocus: true, refetchInterval: 15_000 });
   const [focusedPath, setFocusedPath] = useState<string | null>(selectedFile);
   const [action, setAction] = useState<FileAction>(null);
-  const [collapsed, setCollapsed] = useState(false);
+  const [search, setSearch] = useState("");
   const [error, setError] = useState("");
-  const focusedNode = findNode(tree.data ?? [], focusedPath);
+  const focusedNode = findFileNode(tree.data ?? [], focusedPath);
+  const visibleNodes = filterFileNodes(tree.data ?? [], search);
 
   /** 打开新建文件或目录输入栏。 */
   const beginCreate = (kind: "file" | "directory") => {
-    const parent = focusedNode?.kind === "directory" ? focusedNode.path : parentPath(focusedPath ?? "");
+    const parent = focusedNode?.kind === "directory" ? focusedNode.path : parentFilePath(focusedPath ?? "");
     setAction({ kind, value: parent ? `${parent}/` : "" });
     setError("");
   };
@@ -86,14 +89,6 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
     }
   };
 
-  if (collapsed) {
-    return (
-      <aside className="file-tree collapsed">
-        <button type="button" className="file-tree-expand" onClick={() => setCollapsed(false)} aria-label="展开文件树"><ChevronsRight size={14} /></button>
-      </aside>
-    );
-  }
-
   return (
     <aside className="file-tree">
       <div className="file-tree-head">
@@ -104,9 +99,9 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
           <button type="button" onClick={beginRename} disabled={!focusedPath} aria-label="重命名"><Pencil size={12} /></button>
           <button type="button" onClick={() => void deleteFocused()} disabled={!focusedPath} aria-label="删除"><Trash2 size={12} /></button>
           <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件树"><RefreshCw size={12} /></button>
-          <button type="button" onClick={() => setCollapsed(true)} aria-label="折叠文件树"><ChevronsLeft size={12} /></button>
         </div>
       </div>
+      <WorkspaceFileSearch value={search} onChange={setSearch} />
       <div className="file-tree-scroll">
         {action && (
           <div className="file-action-bar">
@@ -116,7 +111,8 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
             <button type="button" onClick={() => setAction(null)} aria-label="取消"><X size={12} /></button>
           </div>
         )}
-        {tree.data?.map((node) => <TreeNode key={node.path} node={node} selectedFile={selectedFile} focusedPath={focusedPath} onFocus={setFocusedPath} onSelectFile={onSelectFile} depth={0} />)}
+        {visibleNodes.map((node) => <TreeNode key={node.path} node={node} selectedFile={selectedFile} focusedPath={focusedPath} onFocus={setFocusedPath} onSelectFile={onSelectFile} depth={0} forceOpen={Boolean(search.trim())} />)}
+        {tree.data && visibleNodes.length === 0 && <p className="file-tree-empty">没有匹配的文件</p>}
         {(tree.error || error) && <p className="pane-error">{error || tree.error?.message}</p>}
       </div>
     </aside>
@@ -124,7 +120,7 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
 }
 
 /** 渲染单个递归文件树节点。 */
-function TreeNode({ node, selectedFile, focusedPath, onFocus, onSelectFile, depth }: { node: FileNode; selectedFile: string | null; focusedPath: string | null; onFocus: (path: string) => void; onSelectFile: (path: string) => void; depth: number }) {
+function TreeNode({ node, selectedFile, focusedPath, onFocus, onSelectFile, depth, forceOpen }: { node: FileNode; selectedFile: string | null; focusedPath: string | null; onFocus: (path: string) => void; onSelectFile: (path: string) => void; depth: number; forceOpen: boolean }) {
   const [open, setOpen] = useState(depth < 1);
   const directory = node.kind === "directory";
   const active = selectedFile === node.path || focusedPath === node.path;
@@ -144,26 +140,9 @@ function TreeNode({ node, selectedFile, focusedPath, onFocus, onSelectFile, dept
         {directory ? (open ? <FolderOpen size={14} /> : <Folder size={14} />) : <FileTypeIcon name={node.name} size={13} />}
         <span>{node.name}</span>
       </button>
-      {directory && open && node.children.map((child) => <TreeNode key={child.path} node={child} selectedFile={selectedFile} focusedPath={focusedPath} onFocus={onFocus} onSelectFile={onSelectFile} depth={depth + 1} />)}
+      {directory && (open || forceOpen) && node.children.map((child) => <TreeNode key={child.path} node={child} selectedFile={selectedFile} focusedPath={focusedPath} onFocus={onFocus} onSelectFile={onSelectFile} depth={depth + 1} forceOpen={forceOpen} />)}
     </div>
   );
-}
-
-/** 返回树中指定路径的节点。 */
-function findNode(nodes: FileNode[], path: string | null): FileNode | null {
-  if (!path) return null;
-  for (const node of nodes) {
-    if (node.path === path) return node;
-    const child = findNode(node.children, path);
-    if (child) return child;
-  }
-  return null;
-}
-
-/** 返回相对路径的父目录。 */
-function parentPath(path: string): string {
-  const index = path.lastIndexOf("/");
-  return index < 0 ? "" : path.slice(0, index);
 }
 
 /** 刷新文件树、文件内容和 Git 状态。 */

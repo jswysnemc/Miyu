@@ -4,6 +4,7 @@ mod background_runtime;
 mod background_schema;
 mod background_tasks;
 pub(crate) mod background_timeout;
+mod command_guard;
 mod process;
 mod run;
 mod store;

@@ -228,6 +228,16 @@
   display: inline-flex;
   align-items: center;
   gap: 2px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper-deep);
+}
+
+.mermaid-toolbar .mermaid-view-switcher button {
+  min-height: 22px;
+  padding: 0 6px;
+  border-radius: 5px;
 }
 
 .mermaid-copy {

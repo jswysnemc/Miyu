@@ -30,6 +30,7 @@ type WorkspacePaneProps = {
  */
 export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose, onToggleChat, onToggleMaximized, onToggleTerminal, onToggleSwapped, terminalOpen, maximized }: WorkspacePaneProps) {
   const [tab, setTab] = useState<PaneTab>("files");
+  const [fileTreeOpen, setFileTreeOpen] = useState(true);
   const git = useQuery({ queryKey: ["workspace-diff"], queryFn: api.workspace.diff, staleTime: 20_000 });
   return (
     <div className="workspace-pane">
@@ -46,7 +47,12 @@ export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose
         <button type="button" className="pane-close" onClick={onClose} aria-label="关闭工作区"><PanelRightClose size={15} /></button>
       </div>
       <div className="pane-body">
-        {tab === "files" && <div className="files-layout"><FileTree selectedFile={selectedFile} onSelectFile={onSelectFile} onClearFile={onClearFile} /><EditorPane path={selectedFile} /></div>}
+        {tab === "files" && (
+          <div className={fileTreeOpen ? "files-layout file-tree-open" : "files-layout file-tree-closed"}>
+            <EditorPane path={selectedFile} onSelectFile={onSelectFile} fileTreeOpen={fileTreeOpen} onToggleFileTree={() => setFileTreeOpen((value) => !value)} />
+            {fileTreeOpen && <FileTree selectedFile={selectedFile} onSelectFile={onSelectFile} onClearFile={onClearFile} />}
+          </div>
+        )}
         {tab === "diff" && <DiffPane />}
       </div>
     </div>

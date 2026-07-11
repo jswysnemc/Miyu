@@ -45,9 +45,9 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
   useEffect(() => {
     const textarea = textareaRef.current;
     if (!textarea) return;
-    textarea.style.height = "24px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 150)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 150 ? "auto" : "hidden";
+    textarea.style.height = "0px";
+    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
+    textarea.style.overflowY = textarea.scrollHeight > 144 ? "auto" : "hidden";
   }, [props.value]);
 
   /**

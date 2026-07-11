@@ -1,5 +1,18 @@
 use serde::{Deserialize, Serialize};
 
+pub const DEFAULT_AGENT_ID: &str = "default";
+
+/// 仅在单轮运行期间生效的 Agent 能力覆盖。
+#[derive(Debug, Clone, PartialEq)]
+pub struct AgentRuntimeOverride {
+    /// 允许使用的工具名称
+    pub enabled_tools: Vec<String>,
+    /// 完整暴露的 skills
+    pub skills_full: Vec<String>,
+    /// 仅暴露名称的 skills
+    pub skills_named: Vec<String>,
+}
+
 /// Agent 配置档案。
 ///
 /// 描述一个可复用的 agent 预设：系统提示词、启用的工具集合以及暴露的 skills。

@@ -30,8 +30,9 @@ export function GenericToolView({ argumentsText, output }: GenericToolViewProps)
 export function JsonBlock({ source, className = "" }: { source: string; className?: string }) {
   const pretty = prettyJson(source);
   const isJson = pretty !== source || source.trimStart().startsWith("{") || source.trimStart().startsWith("[");
+  const errorClass = /^tool error:/i.test(source.trimStart()) ? "tool-error-output" : "";
   return (
-    <pre className={`generic-tool-block ${className}`.trim()}>
+    <pre className={`generic-tool-block ${className} ${errorClass}`.trim()}>
       {isJson ? <SyntaxHighlighter language="json" source={pretty} /> : <code>{pretty}</code>}
     </pre>
   );

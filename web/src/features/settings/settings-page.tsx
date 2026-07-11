@@ -1,5 +1,6 @@
-import { Save } from "lucide-react";
+import { ArrowLeft, Save } from "lucide-react";
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import { AdvancedSettingsSection } from "./advanced-settings-section";
 import { AgentSettingsSection } from "./agents/agent-settings-section";
 import { AppearanceSettingsSection } from "./appearance-settings-section";
@@ -27,9 +28,10 @@ export function SettingsPage() {
   const [section, setSection] = useState<SettingsSectionId>("providers");
 
   return (
-    <div className="settings-page">
+    <div className={`settings-page${section === "agents" ? " agent-section" : ""}`}>
       <header className="settings-topbar">
         <div className="settings-topbar-inner">
+          <Link to="/" className="settings-back" aria-label="返回主界面"><ArrowLeft size={15} /><span>返回主界面</span></Link>
           <h1>设置</h1>
           <p>管理模型、插件、提示词、工具、网关和界面偏好。</p>
           <div className="settings-topbar-actions">

@@ -452,4 +452,3 @@ mod tests {
         assert!(events.iter().any(|event| event.kind == "workspace.changed"));
     }
 }
-

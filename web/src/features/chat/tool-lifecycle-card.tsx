@@ -1,7 +1,9 @@
 import { Check, ChevronDown, CircleEllipsis, FilePenLine, FileSearch, Search, TerminalSquare, Wrench, X } from "lucide-react";
-import { useState } from "react";
+import { useState, type KeyboardEvent } from "react";
 import type { ToolLifecycle } from "./run-event-reducer";
-import { toolSummary } from "./tool-renderers/tool-data";
+import { toolCardSummary } from "./tool-renderers/tool-card-summary";
+import { toolFilePath } from "./tool-renderers/tool-data";
+import { ToolFileReference } from "./tool-renderers/tool-file-reference";
 import { ToolResultView } from "./tool-renderers/tool-result-view";
 import "./tool-renderers/tool-renderers.css";
 
@@ -19,17 +21,57 @@ export function ToolLifecycleCard({ tool }: { tool: ToolLifecycle }) {
       ? <X size={14} />
       : <CircleEllipsis size={14} className="pulse" />;
   const argumentsText = tool.arguments || tool.argumentsPreview;
-  const summary = tool.progress || toolSummary(tool.name, argumentsText) || statusLabel(tool.status);
+  const headerPath = toolFilePath(tool.name, argumentsText);
+  const displayName = readableToolName(tool.name);
+  const summary = uniqueSummary(
+    toolCardSummary(tool.name, argumentsText) || tool.progress || statusLabel(tool.status),
+    displayName
+  );
+  /**
+   * 切换当前工具详情的展开状态。
+   *
+   * @returns 无返回值
+   */
+  const toggleExpanded = () => setExpanded((value) => !value);
+
+  /**
+   * 使用键盘操作头部空白区域时切换详情。
+   *
+   * @param event 工具卡头部键盘事件
+   * @returns 无返回值
+   */
+  const handleHeaderKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
+    event.preventDefault();
+    toggleExpanded();
+  };
   return (
     <section className={`tool-card tool-inline-row ${tool.status}`}>
-      <button type="button" className="tool-card-head" onClick={() => setExpanded((value) => !value)} aria-expanded={expanded}>
+      <div className="tool-card-head" role="button" tabIndex={0} onClick={toggleExpanded} onKeyDown={handleHeaderKeyDown} aria-expanded={expanded}>
         <span className="tool-icon"><ToolIcon name={tool.name} /></span>
-        <span className="tool-copy"><strong>{readableToolName(tool.name)}</strong><small>{summary}</small></span>
-        <span className="tool-status">{statusIcon}<ChevronDown size={14} className={expanded ? "rotate" : ""} /></span>
-      </button>
-      {expanded && <div className="tool-detail"><ToolResultView name={tool.name} argumentsText={argumentsText} output={tool.output} /></div>}
+        <span className="tool-card-copy">
+          <strong className="tool-card-name">{displayName}</strong>
+          <span className="tool-card-summary" title={headerPath || summary}>
+            {headerPath ? <ToolFileReference path={headerPath} className="tool-card-file" icon={false} /> : summary}
+          </span>
+        </span>
+        <span className="tool-card-status" aria-hidden>{statusIcon}</span>
+        <ChevronDown size={14} className={`tool-card-expand${expanded ? " rotate" : ""}`} aria-hidden />
+      </div>
+      {expanded && <div className="tool-detail"><ToolResultView name={tool.name} argumentsText={argumentsText} output={tool.output} headerPath={headerPath} /></div>}
     </section>
   );
+}
+
+/**
+ * 移除与工具标题相同的摘要，避免折叠态重复展示同一文本。
+ *
+ * @param summary 候选摘要
+ * @param displayName 工具展示名称
+ * @returns 去重后的摘要
+ */
+function uniqueSummary(summary: string, displayName: string): string {
+  return summary.trim().toLocaleLowerCase() === displayName.trim().toLocaleLowerCase() ? "" : summary;
 }
 
 /**
@@ -59,7 +101,8 @@ function readableToolName(name: string): string {
     apply_patch: "Patch",
     read_file: "Read",
     grep: "Search",
-    glob: "Files"
+    glob: "Files",
+    load: "Load"
   };
   return labels[name] ?? name.replaceAll("_", " ");
 }

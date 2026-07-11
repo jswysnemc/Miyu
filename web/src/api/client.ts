@@ -101,12 +101,14 @@ export const api = {
       mode: "plan" | "yolo",
       selection?: RunModelSelection,
       imageUrls?: string[],
-      thinkingLevel?: ThinkingLevel
+      thinkingLevel?: ThinkingLevel,
+      agentId?: string
     ) =>
       apiRequest<RunInfo>("/api/runs", {
         method: "POST",
         body: JSON.stringify({
           session_id: sessionId,
+          agent_id: agentId,
           input,
           mode,
           provider_id: selection?.providerId,

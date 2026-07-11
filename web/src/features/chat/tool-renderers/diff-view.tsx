@@ -1,10 +1,11 @@
-import { FileTypeIcon } from "../../../shared/ui/file-icon";
 import { SyntaxHighlighter } from "../syntax-highlighter";
 import { parseDiff } from "./diff-parser";
 import type { DiffFile, DiffLine } from "./diff-parser";
+import { ToolFileReference } from "./tool-file-reference";
 
 type DiffViewProps = {
   source: string;
+  headerPath?: string;
 };
 
 /**
@@ -13,12 +14,14 @@ type DiffViewProps = {
  * @param props Diff 源文本
  * @returns 按文件分块、带双行号列的 Diff 视图
  */
-export function DiffView({ source }: DiffViewProps) {
+export function DiffView({ source, headerPath }: DiffViewProps) {
   const files = parseDiff(source);
   if (files.length === 0) return null;
   return (
     <div className="structured-diff" role="region" aria-label="文件差异">
-      {files.map((file, index) => <DiffFileBlock file={file} key={`${file.path}-${index}`} />)}
+      {files.map((file, index) => (
+        <DiffFileBlock file={file} hidePath={files.length === 1 && file.path === headerPath} key={`${file.path}-${index}`} />
+      ))}
     </div>
   );
 }
@@ -29,20 +32,25 @@ export function DiffView({ source }: DiffViewProps) {
  * @param props 解析后的文件差异
  * @returns 文件差异块
  */
-function DiffFileBlock({ file }: { file: DiffFile }) {
+function DiffFileBlock({ file, hidePath }: { file: DiffFile; hidePath: boolean }) {
+  const showOldLine = file.lines.some((line) => line.oldLine !== undefined);
+  const showNewLine = file.lines.some((line) => line.newLine !== undefined);
+  const gutterClass = showOldLine && showNewLine ? "double-gutter" : showOldLine || showNewLine ? "single-gutter" : "no-gutter";
   return (
     <section className="diff-file">
       <header className="diff-file-head">
-        <FileTypeIcon name={file.path || "diff"} size={13} />
-        <strong>{file.path || "变更片段"}</strong>
+        {!hidePath && file.path && <ToolFileReference path={file.path} />}
+        {!file.path && <strong>变更片段</strong>}
         <small>{file.action}</small>
         <span className="diff-file-stats">
           {file.added > 0 && <b>+{file.added}</b>}
           {file.removed > 0 && <i>-{file.removed}</i>}
         </span>
       </header>
-      <div className="diff-file-lines">
-        {file.lines.map((line, index) => <DiffLineRow line={line} language={languageOfPath(file.path)} key={index} />)}
+      <div className={`diff-file-lines ${gutterClass}`}>
+        {file.lines.map((line, index) => (
+          <DiffLineRow line={line} language={languageOfPath(file.path)} showOldLine={showOldLine} showNewLine={showNewLine} key={index} />
+        ))}
       </div>
     </section>
   );
@@ -54,23 +62,13 @@ function DiffFileBlock({ file }: { file: DiffFile }) {
  * @param props 解析后的差异行
  * @returns 差异行元素
  */
-function DiffLineRow({ line, language }: { line: DiffLine; language?: string }) {
-  // 1. hunk 头渲染为弱化分隔条
-  if (line.kind === "hunk") {
-    return (
-      <div className="diff-row hunk">
-        <span className="diff-gutter" />
-        <span className="diff-gutter" />
-        <code>{line.text}</code>
-      </div>
-    );
-  }
-  // 2. 内容行渲染双行号列与带标记的代码
+function DiffLineRow({ line, language, showOldLine, showNewLine }: { line: DiffLine; language?: string; showOldLine: boolean; showNewLine: boolean }) {
+  // 1. 内容行渲染按需行号列与带标记的代码
   const marker = line.kind === "added" ? "+" : line.kind === "removed" ? "-" : " ";
   return (
     <div className={`diff-row ${line.kind}`}>
-      <span className="diff-gutter">{line.oldLine ?? ""}</span>
-      <span className="diff-gutter">{line.newLine ?? ""}</span>
+      {showOldLine && <span className="diff-gutter">{line.oldLine ?? ""}</span>}
+      {showNewLine && <span className="diff-gutter">{line.newLine ?? ""}</span>}
       <code>
         <span className="diff-marker">{marker}</span>
         {line.text && language ? <SyntaxHighlighter language={language} source={line.text} /> : line.text || " "}

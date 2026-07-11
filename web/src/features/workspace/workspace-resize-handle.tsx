@@ -2,7 +2,7 @@ import type { PointerEvent as ReactPointerEvent } from "react";
 
 type WorkspaceResizeHandleProps = {
   swapped?: boolean;
-  onResize: (width: number) => void;
+  onResize: (width: number, workbenchWidth: number) => void;
 };
 
 /**
@@ -26,7 +26,7 @@ export function WorkspaceResizeHandle({ swapped = false, onResize }: WorkspaceRe
     const handlePointerMove = (moveEvent: PointerEvent) => {
       const right = workbench?.right ?? window.innerWidth;
       const left = workbench?.left ?? 0;
-      onResize(swapped ? moveEvent.clientX - left : right - moveEvent.clientX);
+      onResize(swapped ? moveEvent.clientX - left : right - moveEvent.clientX, right - left);
     };
 
     // 2. 释放指针后统一清理全局监听器

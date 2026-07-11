@@ -10,9 +10,12 @@ use std::process::Stdio;
 use tokio::process::Command;
 
 pub fn skills_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
-    let entries = skill_entries(config, paths)?
+    let entries = visible_skill_entries(config, paths)?
         .into_iter()
-        .map(|entry| {
+        .map(|(entry, full)| {
+            if !full {
+                return format!("- {}", entry.name);
+            }
             format!(
                 "- {}: {}\n  {}",
                 entry.name,
@@ -31,9 +34,15 @@ pub fn skills_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
 }
 
 pub fn skills_catalog_prompt(config: &AppConfig, paths: &MiyuPaths) -> Result<String> {
-    let entries = skill_entries(config, paths)?
+    let entries = visible_skill_entries(config, paths)?
         .into_iter()
-        .map(|entry| format!("- {} [{}]: {}", entry.name, entry.source, entry.description))
+        .map(|(entry, full)| {
+            if full {
+                format!("- {} [{}]: {}", entry.name, entry.source, entry.description)
+            } else {
+                format!("- {}", entry.name)
+            }
+        })
         .collect::<Vec<_>>();
     if entries.is_empty() {
         return Ok(String::new());
@@ -151,6 +160,33 @@ fn skill_entries(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<SkillEntry
     Ok(entries)
 }
 
+/// 按当前 Agent 策略筛选 skills，并标记是否完整暴露。
+///
+/// 参数:
+/// - `config`: 当前运行配置
+/// - `paths`: 应用目录路径集合
+///
+/// 返回:
+/// - 可见 skill 及完整暴露标记；未选择 Agent 时全部完整暴露
+fn visible_skill_entries(config: &AppConfig, paths: &MiyuPaths) -> Result<Vec<(SkillEntry, bool)>> {
+    let entries = skill_entries(config, paths)?;
+    let Some(runtime) = config.agent_runtime.as_ref() else {
+        return Ok(entries.into_iter().map(|entry| (entry, true)).collect());
+    };
+    Ok(entries
+        .into_iter()
+        .filter_map(|entry| {
+            if runtime.skills_full.contains(&entry.name) {
+                Some((entry, true))
+            } else if runtime.skills_named.contains(&entry.name) {
+                Some((entry, false))
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
 /// Skill 目录条目，仅包含名称与描述。
 pub struct SkillCatalogEntry {
     /// Skill 名称
@@ -202,7 +238,7 @@ pub(crate) fn load_installed_skill(
     if name.is_empty() {
         bail!("load requires a non-empty skill_name");
     }
-    for entry in skill_entries(config, paths)? {
+    for (entry, _) in visible_skill_entries(config, paths)? {
         if entry.name == name {
             return Ok(format!(
                 "<loaded-skill name=\"{}\" source=\"{}\" dir=\"{}\" file=\"{}\">\n<skill-location>\nSkill directory: {}\nSkill file: {}\nResolve relative paths in this skill against the skill directory.\n</skill-location>\n{}\n</loaded-skill>",
@@ -466,6 +502,29 @@ mod tests {
         );
         assert!(output.contains(&skill_dir.display().to_string()));
         assert!(output.contains("gpustoggle --status"));
+    }
+
+    #[test]
+    fn load_installed_skill_rejects_hidden_agent_skill() {
+        let temp = tempfile::tempdir().unwrap();
+        let paths = test_paths(temp.path());
+        let skill_dir = paths.skills_dir.join("gpu-passthrough");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\nname: gpu-passthrough\ndescription: GPU switching\n---\n\nUse `gpustoggle --status`.",
+        )
+        .unwrap();
+        let mut config = AppConfig::default();
+        config.agent_runtime = Some(crate::config::AgentRuntimeOverride {
+            enabled_tools: Vec::new(),
+            skills_full: Vec::new(),
+            skills_named: Vec::new(),
+        });
+
+        let error = load_installed_skill("gpu-passthrough", &config, &paths).unwrap_err();
+
+        assert!(error.to_string().contains("skill not found"));
     }
 
     #[test]

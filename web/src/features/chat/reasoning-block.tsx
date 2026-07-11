@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
 import { useEffect, useState } from "react";
+import "./reasoning-block.css";
 
 /**
  * 渲染可折叠的思考过程及耗时。
@@ -26,7 +27,7 @@ export function ReasoningBlock({ source, live, startedAt, endedAt }: { source: s
   if (!source) return null;
   const duration = reasoningDuration(startedAt, endedAt, clock);
   return (
-    <section className="reasoning-block">
+    <section className={`reasoning-block${open ? " open" : ""}`}>
       <button type="button" onClick={() => setOpen((value) => !value)}>
         <span>{live ? "正在思考" : "思考过程"}{duration ? `（用时 ${duration}）` : ""}</span>
         <ChevronDown size={14} className={open ? "rotate" : ""} />

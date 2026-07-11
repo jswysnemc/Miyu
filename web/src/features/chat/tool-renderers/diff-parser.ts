@@ -17,6 +17,7 @@ export type DiffFile = {
 
 const CODEX_FILE = /^\*\*\* (Add|Delete|Update) File: (.+)$/;
 const UNIFIED_HUNK = /^@@ -(\d+)(?:,\d+)? \+(\d+)(?:,\d+)? @@/;
+const CODEX_RANGE_HUNK = /^@@ 第 (\d+)(?:-\d+)? 行/;
 
 /**
  * 把 Codex patch 或 unified diff 文本解析为文件块结构。
@@ -44,7 +45,7 @@ export function parseDiff(source: string): DiffFile[] {
     const codexHead = CODEX_FILE.exec(line);
     if (codexHead) {
       const action = { Add: "新增", Delete: "删除", Update: "修改" }[codexHead[1]] ?? codexHead[1];
-      openFile(codexHead[2].trim(), action, codexHead[1] !== "Update");
+      openFile(codexHead[2].trim(), action, true);
       continue;
     }
     // 3. 识别 unified diff 文件头
@@ -79,8 +80,16 @@ export function parseDiff(source: string): DiffFile[] {
       if (hunk) {
         oldNumber = Number(hunk[1]);
         newNumber = Number(hunk[2]);
+      } else {
+        const range = CODEX_RANGE_HUNK.exec(line);
+        if (range) {
+          oldNumber = Number(range[1]);
+          newNumber = Number(range[1]);
+        } else {
+          oldNumber ??= 1;
+          newNumber ??= 1;
+        }
       }
-      file.lines.push({ kind: "hunk", text: line });
       continue;
     }
     // 7. 按前缀分类内容行并分配新旧行号

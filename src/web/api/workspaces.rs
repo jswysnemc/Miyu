@@ -50,7 +50,10 @@ pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspaces", get(list).post(add))
         .route("/api/workspaces/browse", get(browse))
-        .route("/api/workspaces/browse/directory", post(create_browse_directory))
+        .route(
+            "/api/workspaces/browse/directory",
+            post(create_browse_directory),
+        )
         .route("/api/workspaces/:id", patch(rename).delete(remove))
         .route("/api/workspaces/:id/switch", post(switch))
 }
@@ -178,7 +181,10 @@ fn close_all_terminals(state: &WebAppState) -> WebResult<()> {
     let terminals = state.terminals.list().map_err(WebError::from)?;
     // 2. 逐个终止并移除
     for terminal in terminals {
-        state.terminals.remove(&terminal.id).map_err(WebError::from)?;
+        state
+            .terminals
+            .remove(&terminal.id)
+            .map_err(WebError::from)?;
     }
     Ok(())
 }

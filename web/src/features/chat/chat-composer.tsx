@@ -7,7 +7,9 @@ import { AttachmentStrip } from "./composer/attachment-strip";
 import { ComposerTextarea } from "./composer/composer-textarea";
 import type { ComposerTextareaHandle } from "./composer/composer-textarea";
 import type { ComposerAttachment } from "./composer/use-composer-attachments";
+import { resolveComposerAvailability } from "./composer-availability";
 import { ModelSelector } from "./model-selector";
+import type { LiveRunState } from "./run-event-reducer";
 import { ThinkingSelector } from "./thinking-selector";
 import "./chat-composer.css";
 
@@ -21,6 +23,7 @@ type ChatComposerProps = {
   selection: ChatModelChoice | null;
   modelLoading: boolean;
   running: boolean;
+  runStatus: LiveRunState["status"];
   sessionAvailable: boolean;
   onChange: (value: string) => void;
   onModeChange: (mode: "plan" | "yolo") => void;
@@ -49,6 +52,7 @@ export function ChatComposer(props: ChatComposerProps) {
    */
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault();
+    if (availability.sendDisabled) return;
     props.onSubmit();
   };
 
@@ -64,8 +68,12 @@ export function ChatComposer(props: ChatComposerProps) {
     void props.onAddImages(files, props.value.length, props.value.length);
   };
 
-  const sendDisabled = !props.sessionAvailable || props.running || (!props.value.trim() && props.attachments.length === 0);
-  const inputDisabled = !props.sessionAvailable || props.running;
+  const availability = resolveComposerAvailability({
+    sessionAvailable: props.sessionAvailable,
+    runActive: props.running,
+    runStatus: props.runStatus,
+    hasDraft: Boolean(props.value.trim()) || props.attachments.length > 0
+  });
   return (
     <div className="composer-shell">
       <form className="composer" onSubmit={handleSubmit}>
@@ -74,11 +82,13 @@ export function ChatComposer(props: ChatComposerProps) {
           ref={textareaRef}
           value={props.value}
           historyEntries={props.historyEntries}
-          disabled={inputDisabled}
+          disabled={availability.inputDisabled}
           placeholder={props.sessionAvailable ? "输入消息，Enter 发送" : "请先选择会话"}
           onChange={props.onChange}
           onPasteImages={props.onAddImages}
-          onSubmit={props.onSubmit}
+          onSubmit={() => {
+            if (!availability.sendDisabled) props.onSubmit();
+          }}
         />
         <div className="composer-footer">
           <div className="composer-toolrail">
@@ -100,16 +110,16 @@ export function ChatComposer(props: ChatComposerProps) {
               <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
               <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
             </div>
-            <button type="button" className="composer-rail-button" onClick={() => textareaRef.current?.openMentionPicker()} disabled={inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
-            <button type="button" className="composer-rail-button" onClick={() => { props.onChange(""); for (const attachment of props.attachments) props.onRemoveAttachment(attachment.id); }} disabled={inputDisabled || (!props.value && props.attachments.length === 0)} title="清空输入" aria-label="清空输入"><Eraser size={14} /></button>
+            <button type="button" className="composer-rail-button" onClick={() => textareaRef.current?.openMentionPicker()} disabled={availability.inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
+            <button type="button" className="composer-rail-button" onClick={() => { props.onChange(""); for (const attachment of props.attachments) props.onRemoveAttachment(attachment.id); }} disabled={availability.inputDisabled || (!props.value && props.attachments.length === 0)} title="清空输入" aria-label="清空输入"><Eraser size={14} /></button>
           </div>
           <div className="composer-actions">
             <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileChange} hidden />
-            <button type="button" className="composer-icon-button" onClick={() => fileInputRef.current?.click()} disabled={inputDisabled} aria-label="添加图片"><Paperclip size={18} /></button>
-            {props.running ? (
+            <button type="button" className="composer-icon-button" onClick={() => fileInputRef.current?.click()} disabled={availability.inputDisabled} aria-label="添加图片"><Paperclip size={18} /></button>
+            {availability.showStop ? (
               <button type="button" className="composer-send stop" onClick={props.onStop} aria-label="停止运行"><Square size={13} fill="currentColor" /></button>
             ) : (
-              <button type="submit" className="composer-send" disabled={sendDisabled} aria-label="发送消息"><ArrowRight size={18} /></button>
+              <button type="submit" className="composer-send" disabled={availability.sendDisabled} aria-label="发送消息"><ArrowRight size={18} /></button>
             )}
           </div>
         </div>

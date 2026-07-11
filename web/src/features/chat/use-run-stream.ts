@@ -62,9 +62,10 @@ export function useRunStream(onSettled: () => void, onWorkspaceChanged?: () => v
     mode: "plan" | "yolo",
     selection?: RunModelSelection,
     imageUrls?: string[],
-    thinkingLevel?: ThinkingLevel
+    thinkingLevel?: ThinkingLevel,
+    agentId?: string
   ) => {
-    const run = await api.runs.start(sessionId, input, mode, selection, imageUrls, thinkingLevel);
+    const run = await api.runs.start(sessionId, input, mode, selection, imageUrls, thinkingLevel, agentId);
     dispatch({ type: "start", runId: run.run_id, userInput: input, imageUrls });
   };
 

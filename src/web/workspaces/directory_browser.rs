@@ -33,7 +33,10 @@ pub(crate) fn browse(requested: Option<&str>) -> Result<DirectoryListing> {
     let requested = requested.map(str::trim).filter(|value| !value.is_empty());
     let current = match requested {
         Some(value) => canonical_allowed_directory(Path::new(value), &roots)?,
-        None => roots.first().cloned().context("no workspace roots are available")?,
+        None => roots
+            .first()
+            .cloned()
+            .context("no workspace roots are available")?,
     };
     let mut entries = std::fs::read_dir(&current)?
         .filter_map(Result::ok)
@@ -89,7 +92,9 @@ pub(crate) fn create_directory(parent: &str, name: &str) -> Result<DirectoryEntr
 /// 返回配置后的服务端目录根集合。
 fn allowed_roots() -> Result<Vec<PathBuf>> {
     let mut roots = Vec::new();
-    if let Some(home) = directories::BaseDirs::new().map(|directories| directories.home_dir().to_path_buf()) {
+    if let Some(home) =
+        directories::BaseDirs::new().map(|directories| directories.home_dir().to_path_buf())
+    {
         push_root(&mut roots, home);
     }
     push_root(&mut roots, std::env::current_dir()?);

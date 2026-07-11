@@ -1,4 +1,4 @@
-use super::agents::AgentProfile;
+use super::agents::{AgentProfile, AgentRuntimeOverride};
 use super::defaults::*;
 use super::model_metadata::ModelMetadata;
 use serde::{Deserialize, Deserializer, Serialize};
@@ -20,9 +20,12 @@ pub struct AppConfig {
     pub prompt: PromptConfig,
     #[serde(default)]
     pub gateways: GatewayConfig,
-    /// Agent 配置档案列表；本期只做配置存取与 Web 编辑，运行时暂不消费
+    /// Agent 配置档案列表，Web 运行可按档案覆盖提示词、工具和 skills
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<AgentProfile>,
+    /// 单轮运行时 Agent 覆盖，不参与配置序列化
+    #[serde(skip)]
+    pub agent_runtime: Option<AgentRuntimeOverride>,
     #[serde(default)]
     pub plugins: PluginsConfig,
     #[serde(default, skip_serializing)]

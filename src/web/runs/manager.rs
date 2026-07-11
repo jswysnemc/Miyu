@@ -21,6 +21,8 @@ pub(crate) struct StartRunRequest {
     pub session_id: String,
     pub input: String,
     #[serde(default)]
+    pub agent_id: Option<String>,
+    #[serde(default)]
     pub image_url: Option<String>,
     #[serde(default)]
     pub image_urls: Vec<String>,
@@ -232,6 +234,7 @@ async fn run_agent(
     };
     let run_config = match resolve_run_config(
         &paths,
+        request.agent_id.as_deref(),
         request.provider_id.as_deref(),
         request.model.as_deref(),
         request.thinking_level.as_deref(),

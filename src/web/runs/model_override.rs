@@ -1,3 +1,4 @@
+use super::agent_override::apply_agent_override;
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
@@ -14,14 +15,16 @@ use anyhow::{bail, Result};
 /// - 未指定覆盖时返回 `None`，否则返回临时配置
 pub(crate) fn resolve_run_config(
     paths: &MiyuPaths,
+    agent_id: Option<&str>,
     provider_id: Option<&str>,
     model: Option<&str>,
     thinking_level: Option<&str>,
 ) -> Result<Option<AppConfig>> {
-    if provider_id.is_none() && model.is_none() && thinking_level.is_none() {
+    if agent_id.is_none() && provider_id.is_none() && model.is_none() && thinking_level.is_none() {
         return Ok(None);
     }
     let mut config = AppConfig::load_or_default(paths)?;
+    config = apply_agent_override(config, agent_id)?;
     match (provider_id, model) {
         (Some(provider_id), Some(model)) => {
             config = apply_model_override(config, provider_id, model)?;

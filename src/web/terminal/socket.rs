@@ -22,7 +22,11 @@ pub(crate) async fn serve_socket(socket: WebSocket, session: Arc<TerminalSession
     let replay = session.replay();
     if !replay.is_empty() {
         // 1. 先发送 replay_start 标记，提示前端进入回放阶段并抑制自动响应
-        if sender.send(Message::Text(r#"{"type":"replay_start"}"#.into())).await.is_err() {
+        if sender
+            .send(Message::Text(r#"{"type":"replay_start"}"#.into()))
+            .await
+            .is_err()
+        {
             return;
         }
         // 2. 发送回放缓冲的历史输出
@@ -30,7 +34,11 @@ pub(crate) async fn serve_socket(socket: WebSocket, session: Arc<TerminalSession
             return;
         }
         // 3. 发送 replay_end 标记，前端在解析完回放数据后恢复输入转发
-        if sender.send(Message::Text(r#"{"type":"replay_end"}"#.into())).await.is_err() {
+        if sender
+            .send(Message::Text(r#"{"type":"replay_end"}"#.into()))
+            .await
+            .is_err()
+        {
             return;
         }
     }

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppConfig } from "../../../api/contracts";
 import { useConfirm } from "../../../shared/ui/dialog/dialog-provider";
+import { buildDefaultAgent, DEFAULT_AGENT_ID, readAgentProfiles } from "../../agents/agent-options";
 import { fetchAgentOptions } from "./agents-api";
 import type { AgentOptions, AgentProfile, AgentToolOption } from "./agents-types";
 import { SkillAssignmentBoard } from "./skill-assignment-board";
@@ -13,12 +14,6 @@ type AgentSettingsSectionProps = {
   onConfigChange: (config: AppConfig) => void;
 };
 
-/** 从配置中读取 agents 数组，缺失时返回空数组。 */
-function readAgents(config: AppConfig): AgentProfile[] {
-  const value = (config as { agents?: AgentProfile[] }).agents;
-  return Array.isArray(value) ? value : [];
-}
-
 /**
  * 渲染 Agent 配置区域：左侧档案列表，右侧编辑器。
  *
@@ -27,11 +22,16 @@ function readAgents(config: AppConfig): AgentProfile[] {
  */
 export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSectionProps) {
   const confirm = useConfirm();
-  const agents = readAgents(config);
-  const [selectedId, setSelectedId] = useState(agents[0]?.id ?? "");
   const [options, setOptions] = useState<AgentOptions>({ tools: [], skills: [] });
+  const agents = readAgentProfiles(config);
+  const visibleAgents = useMemo(() => (
+    agents.some((agent) => agent.id === DEFAULT_AGENT_ID)
+      ? agents
+      : [buildDefaultAgent(options), ...agents]
+  ), [agents, options]);
+  const [selectedId, setSelectedId] = useState(DEFAULT_AGENT_ID);
   const [optionsError, setOptionsError] = useState("");
-  const selected = agents.find((agent) => agent.id === selectedId) ?? agents[0] ?? null;
+  const selected = visibleAgents.find((agent) => agent.id === selectedId) ?? visibleAgents[0] ?? null;
 
   useEffect(() => {
     let cancelled = false;
@@ -55,10 +55,13 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
   /** 更新当前选中 agent 的部分字段。 */
   const updateSelected = (patch: Partial<AgentProfile>) => {
     if (!selected) return;
-    setAgents(agents.map((agent) => (agent.id === selected.id ? { ...agent, ...patch } : agent)));
+    const exists = agents.some((agent) => agent.id === selected.id);
+    setAgents(exists
+      ? agents.map((agent) => (agent.id === selected.id ? { ...agent, ...patch } : agent))
+      : [{ ...selected, ...patch }, ...agents]);
   };
 
-  /** 新增一个空白 agent 档案并选中。 */
+  /** 新增默认启用全部工具和 skills 的 Agent 档案并选中。 */
   const addAgent = () => {
     let suffix = agents.length + 1;
     let id = `agent-${suffix}`;
@@ -70,8 +73,8 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
       id,
       name: `新 Agent ${suffix}`,
       system_prompt: "",
-      enabled_tools: [],
-      skills_full: [],
+      enabled_tools: options.tools.map((tool) => tool.name),
+      skills_full: options.skills.map((skill) => skill.name),
       skills_named: []
     };
     setAgents([...agents, next]);
@@ -100,8 +103,7 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
           <span>Agent 档案</span>
           <button type="button" className="agent-list-add" onClick={addAgent}>新增</button>
         </div>
-        {agents.length === 0 && <p className="agent-list-empty">尚未创建任何 Agent。</p>}
-        {agents.map((agent) => (
+        {visibleAgents.map((agent) => (
           <button
             key={agent.id}
             type="button"
@@ -126,7 +128,7 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
                 onChange={(event) => updateSelected({ name: event.target.value })}
               />
             </label>
-            <button type="button" className="agent-delete" onClick={removeSelected}>删除</button>
+            <button type="button" className="agent-delete" onClick={removeSelected} disabled={selected.id === DEFAULT_AGENT_ID}>删除</button>
           </div>
           <label className="agent-field">
             <span className="agent-field-label">系统提示词</span>

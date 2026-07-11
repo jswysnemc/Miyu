@@ -2,6 +2,8 @@ import { Cable, Code2 } from "lucide-react";
 import { NavLink, Outlet } from "react-router-dom";
 import { WorkspaceSwitcher } from "../features/workspaces/workspace-switcher";
 import { SystemUsage } from "../features/usage/system-usage";
+import { useChatAgentContext } from "../features/agents/chat-agent-context";
+import { AgentSelector } from "../features/chat/agent-selector";
 import { MiyuLogo } from "../shared/ui/miyu-logo";
 import "./app-shell.css";
 
@@ -16,6 +18,7 @@ const navigation = [
  * @returns 应用外壳布局
  */
 export function AppShell() {
+  const chatAgent = useChatAgentContext();
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -24,9 +27,18 @@ export function AppShell() {
           <span className="brand-name">Miyu</span>
           <span className="brand-surface">Web</span>
         </div>
-        <WorkspaceSwitcher />
-        <div className="topbar-actions">
+        <div className="topbar-primary">
+          <WorkspaceSwitcher />
           <SystemUsage />
+          <AgentSelector
+            choices={chatAgent.choices}
+            selection={chatAgent.selection}
+            loading={chatAgent.isLoading}
+            disabled={false}
+            onSelect={chatAgent.selectAgent}
+          />
+        </div>
+        <div className="topbar-actions">
           <nav className="topnav" aria-label="主导航">
             {navigation.map(({ to, label, icon: Icon }) => (
               <NavLink key={to} to={to} end={to === "/"} className={({ isActive }) => isActive ? "nav-link active" : "nav-link"}>

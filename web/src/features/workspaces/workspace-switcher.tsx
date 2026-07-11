@@ -1,7 +1,8 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FolderGit2, FolderOpen, X } from "lucide-react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { api } from "../../api/client";
+import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 import { ServerDirectoryDialog } from "./server-directory-dialog";
 import "./workspace-switcher.css";
@@ -14,6 +15,7 @@ import "./workspace-switcher.css";
 export function WorkspaceSwitcher() {
   const [open, setOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
+  const rootRef = useRef<HTMLDivElement>(null);
   const confirm = useConfirm();
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
   const active = workspaces.data?.workspaces.find((workspace) => workspace.id === workspaces.data.active_id);
@@ -21,6 +23,7 @@ export function WorkspaceSwitcher() {
     mutationFn: (id: string) => switchWithTerminalConfirm(id, confirm),
     onSuccess: (switched) => { if (switched) window.location.reload(); }
   });
+  useOutsidePointerDown(rootRef, () => setOpen(false), open);
 
   /** 登记服务端目录并切换工作区。 */
   const openDirectory = async (path: string) => {
@@ -30,7 +33,7 @@ export function WorkspaceSwitcher() {
   };
 
   return (
-    <div className="workspace-switcher">
+    <div className="workspace-switcher" ref={rootRef}>
       <button className="workspace-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <FolderGit2 size={15} /><strong>{active?.name ?? "工作区"}</strong><ChevronDown size={13} className={open ? "open" : ""} />
       </button>

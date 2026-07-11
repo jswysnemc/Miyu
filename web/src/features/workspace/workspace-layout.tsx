@@ -3,6 +3,8 @@ import type { CSSProperties } from "react";
 import { useEffect } from "react";
 import { ChatPage } from "../chat/chat-page";
 import { SessionSidebar } from "../sessions/session-sidebar";
+import { SessionSidebarResizeHandle } from "../sessions/session-sidebar-resize-handle";
+import { useSessionSidebarLayout } from "../sessions/use-session-sidebar-layout";
 import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
@@ -23,7 +25,9 @@ type WorkspaceLayoutProps = {
  */
 export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: WorkspaceLayoutProps) {
   const layout = useWorkspaceLayout();
+  const sessionSidebar = useSessionSidebarLayout();
   const style = {
+    "--session-sidebar-width": `${sessionSidebar.width}px`,
     "--workspace-panel-width": `${layout.workspaceWidth}px`,
     "--terminal-panel-height": `${layout.terminalHeight}px`
   } as CSSProperties;
@@ -33,7 +37,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     layout.chatOpen ? "chat-open" : "chat-closed",
     layout.workspaceMaximized ? "workspace-maximized" : "",
     layout.terminalOpen ? "terminal-open" : "terminal-closed",
-    layout.swapped ? "layout-swapped" : ""
+    layout.swapped ? "layout-swapped" : "",
+    sessionSidebar.collapsed ? "sidebar-collapsed" : "sidebar-expanded"
   ].filter(Boolean).join(" ");
 
   useEffect(() => {
@@ -52,7 +57,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   return (
     <div className={classes} style={style}>
       <aside className="coding-sidebar">
-        <SessionSidebar />
+        <SessionSidebar collapsed={sessionSidebar.collapsed} onToggleCollapsed={sessionSidebar.toggleCollapsed} />
+        {!sessionSidebar.collapsed && <SessionSidebarResizeHandle width={sessionSidebar.width} onResize={sessionSidebar.resize} />}
       </aside>
       <div className="workbench-main">
         {layout.chatOpen && !layout.workspaceMaximized && <section className="coding-chat"><ChatPage /></section>}

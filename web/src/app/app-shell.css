@@ -50,6 +50,13 @@
   gap: 4px;
 }
 
+.topbar-primary {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
 .topbar-actions {
   display: flex;
   align-items: center;
@@ -80,7 +87,7 @@
 
 @media (max-width: 760px) {
   .topbar {
-    grid-template-columns: auto 1fr;
+    grid-template-columns: auto minmax(0, 1fr) auto;
     gap: 10px;
   }
 
@@ -104,6 +111,14 @@
   }
 
   .brand-surface {
+    display: none;
+  }
+
+  .brand {
+    min-width: auto;
+  }
+
+  .brand-name {
     display: none;
   }
 }

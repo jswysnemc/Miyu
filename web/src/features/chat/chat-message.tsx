@@ -2,6 +2,7 @@ import { RotateCcw } from "lucide-react";
 import type { HistoryEntry, SessionTimelineTurn, TimelineToolEntry } from "../../api/contracts";
 import type { LiveRunState } from "./run-event-reducer";
 import type { LiveMessagePart } from "./run-event-reducer";
+import { LiveRunIndicator } from "./live-run-indicator";
 import { MessageActions } from "./message/message-actions";
 import { MessageParts } from "./message/message-parts";
 import { UserMessageBubble } from "./message/user-message-bubble";
@@ -52,7 +53,7 @@ export function LiveRunMessage({ state, running, onRetry }: { state: LiveRunStat
       <UserMessageBubble content={state.userInput} imageUrls={state.imageUrls} onRetry={running ? undefined : onRetry} />
       <article className="message assistant-message live-message">
         <MessageParts parts={state.parts} live={running} />
-        {running && !state.content && !state.reasoning && state.tools.length === 0 && <div className="response-pulse"><span /><span /><span /></div>}
+        {running && <LiveRunIndicator status={state.status} />}
         {state.error && (
           <div className="run-error">
             <span className="run-error-text">{state.error}</span>

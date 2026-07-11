@@ -1,3 +1,4 @@
+mod agent_override;
 mod assembler;
 mod event;
 mod journal;

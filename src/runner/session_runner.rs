@@ -283,10 +283,19 @@ impl<'paths> SessionRunner<'paths> {
         mode: AgentMode,
         session_id: &str,
     ) -> Result<ToolRegistry> {
-        match &self.tool_registry_override {
+        let registry = match &self.tool_registry_override {
             Some(registry) => Ok(registry.clone()),
             None => build_submission_tool_registry(config, self.paths, source, mode, session_id),
-        }
+        }?;
+        let Some(runtime) = config.agent_runtime.as_ref() else {
+            return Ok(registry);
+        };
+        let allowed = runtime
+            .enabled_tools
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        Ok(registry.clone_filtered(&allowed))
     }
 }
 

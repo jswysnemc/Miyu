@@ -1,19 +1,38 @@
-import Editor, { loader } from "@monaco-editor/react";
+import Editor, { loader, type OnMount } from "@monaco-editor/react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Save } from "lucide-react";
-import { useEffect, useState } from "react";
+import { FolderTree, Save } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { useTheme } from "../theme/theme";
+import { EditorBreadcrumbs } from "./editor-breadcrumbs";
+import { configureMonacoEnvironment } from "./monaco-environment";
 
-export function EditorPane({ path }: { path: string | null }) {
+type EditorPaneProps = {
+  path: string | null;
+  onSelectFile: (path: string) => void;
+  fileTreeOpen: boolean;
+  onToggleFileTree: () => void;
+};
+
+/**
+ * 渲染文件编辑器、路径导航和保存操作。
+ *
+ * @param props 当前文件、打开文件回调和文件树控制状态
+ * @returns 编辑器面板
+ */
+export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree }: EditorPaneProps) {
   const { theme } = useTheme();
   const queryClient = useQueryClient();
   const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) });
   const [content, setContent] = useState("");
   const [externalChange, setExternalChange] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
+  const editorAreaRef = useRef<HTMLDivElement>(null);
+  const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   useEffect(() => {
     let active = true;
+    // 1. 先注册语言 Worker，再加载 Monaco 主模块
+    configureMonacoEnvironment();
     import("monaco-editor").then((monaco) => {
       loader.config({ monaco });
       if (active) setEditorReady(true);
@@ -23,6 +42,9 @@ export function EditorPane({ path }: { path: string | null }) {
   useEffect(() => {
     setContent("");
     setExternalChange(false);
+    return () => {
+      editorRef.current = null;
+    };
   }, [path]);
   useEffect(() => {
     if (!file.data) return;
@@ -36,6 +58,34 @@ export function EditorPane({ path }: { path: string | null }) {
       return file.data.content;
     });
   }, [file.data]);
+
+  useEffect(() => {
+    const container = editorAreaRef.current;
+    if (!container) return;
+    let frame = 0;
+    // 1. 使用实际编辑区域尺寸通知 Monaco，避免拖动网格时沿用旧宽度
+    const observer = new ResizeObserver(([entry]) => {
+      window.cancelAnimationFrame(frame);
+      frame = window.requestAnimationFrame(() => {
+        const width = Math.max(0, Math.floor(entry.contentRect.width));
+        const height = Math.max(0, Math.floor(entry.contentRect.height));
+        if (width > 0 && height > 0) editorRef.current?.layout({ width, height });
+      });
+    });
+    observer.observe(container);
+    return () => {
+      window.cancelAnimationFrame(frame);
+      observer.disconnect();
+    };
+  }, [editorReady, path]);
+
+  /** 保存 Monaco 实例并立即按容器尺寸布局。 */
+  const handleEditorMount: OnMount = (editor) => {
+    editorRef.current = editor;
+    const area = editorAreaRef.current;
+    if (area) editor.layout({ width: area.clientWidth, height: area.clientHeight });
+  };
+
   const save = useMutation({
     mutationFn: () => api.workspace.save(path!, content, file.data?.modified_at),
     onSuccess: async () => {
@@ -44,25 +94,44 @@ export function EditorPane({ path }: { path: string | null }) {
       setExternalChange(false);
     }
   });
-  if (!path) return <div className="editor-empty"><FileCodePlaceholder /><p>从文件树选择文本文件</p></div>;
+  if (!path) {
+    return (
+      <section className="editor-pane">
+        <header className="editor-head editor-head-empty">
+          <span>未打开文件</span>
+          <button type="button" className={fileTreeOpen ? "editor-tree-toggle active" : "editor-tree-toggle"} onClick={onToggleFileTree} aria-label={fileTreeOpen ? "关闭文件树" : "打开文件树"} aria-pressed={fileTreeOpen}>
+            <FolderTree size={15} />
+          </button>
+        </header>
+        <div className="editor-empty"><FileCodePlaceholder /><p>从文件树选择文本文件</p></div>
+      </section>
+    );
+  }
   return (
     <section className="editor-pane">
       <header className="editor-head">
-        <span title={path}>{path}</span>
+        <EditorBreadcrumbs path={path} onSelectFile={onSelectFile} />
         {externalChange && <span className="editor-external-change">磁盘内容已变化</span>}
         <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
           <Save size={14} /> 保存
         </button>
+        <button type="button" className={fileTreeOpen ? "editor-tree-toggle active" : "editor-tree-toggle"} onClick={onToggleFileTree} aria-label={fileTreeOpen ? "关闭文件树" : "打开文件树"} aria-pressed={fileTreeOpen}>
+          <FolderTree size={15} />
+        </button>
       </header>
-      <div className="editor-area">
+      <div className="editor-area" ref={editorAreaRef}>
         {file.data && editorReady && (
           <Editor
+            key={path}
             path={path}
             language={languageForPath(path)}
             value={content}
+            width="100%"
+            height="100%"
+            onMount={handleEditorMount}
             onChange={(value) => setContent(value ?? "")}
             theme={theme === "graphite" || theme === "ocean" || (theme === "system" && window.matchMedia("(prefers-color-scheme: dark)").matches) ? "vs-dark" : "light"}
-            options={{ minimap: { enabled: false }, fontFamily: "Fira Code", fontSize: 13, lineHeight: 21, padding: { top: 12 }, automaticLayout: true, scrollBeyondLastLine: false }}
+            options={{ minimap: { enabled: false }, fontFamily: "Fira Code", fontSize: 13, lineHeight: 21, padding: { top: 12 }, automaticLayout: false, scrollBeyondLastLine: false }}
           />
         )}
         {(file.isLoading || !editorReady) && <div className="editor-state">加载编辑器</div>}

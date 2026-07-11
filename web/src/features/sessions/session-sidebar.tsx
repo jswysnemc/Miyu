@@ -1,16 +1,22 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
+import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
 import "./session-sidebar.css";
 
+type SessionSidebarProps = {
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+};
+
 /**
  * 渲染会话列表、新建入口和批量管理模式。
  *
+ * @param props 折叠状态和切换回调
  * @returns 会话侧栏
  */
-export function SessionSidebar() {
+export function SessionSidebar({ collapsed, onToggleCollapsed }: SessionSidebarProps) {
   const queryClient = useQueryClient();
   const [menu, setMenu] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
@@ -129,11 +135,31 @@ export function SessionSidebar() {
 
   const manageableCount = sessions.data?.filter((session) => session.id !== "default").length ?? 0;
   const error = sessions.error ?? switchSession.error ?? remove.error ?? removeMany.error ?? rename.error;
+
+  if (collapsed) {
+    return (
+      <div className="session-sidebar collapsed">
+        <button type="button" className="sidebar-rail-button" onClick={onToggleCollapsed} aria-label="展开会话侧栏" title="展开会话侧栏">
+          <PanelLeftOpen size={17} />
+        </button>
+        <button type="button" className="sidebar-rail-button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话">
+          <Plus size={17} />
+        </button>
+        <NavLink to="/settings" className={({ isActive }) => isActive ? "sidebar-rail-button active" : "sidebar-rail-button"} aria-label="打开配置" title="配置">
+          <Settings size={17} strokeWidth={1.8} />
+        </NavLink>
+      </div>
+    );
+  }
+
   return (
     <div className="session-sidebar">
       <div className="sidebar-heading">
         <div><span className="eyebrow">Sessions</span><h2>会话</h2></div>
         <div className="sidebar-heading-actions">
+          <button type="button" className="icon-button" aria-label="折叠会话侧栏" title="折叠会话侧栏" onClick={onToggleCollapsed}>
+            <PanelLeftClose size={16} />
+          </button>
           <button type="button" className={selecting ? "icon-button active" : "icon-button"} aria-label={selecting ? "退出选择" : "批量管理"} onClick={() => selecting ? closeSelection() : setSelecting(true)} disabled={manageableCount === 0}>
             {selecting ? <X size={16} /> : <ListChecks size={16} />}
           </button>
