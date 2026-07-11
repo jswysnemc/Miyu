@@ -1,6 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
-import { useState } from "react";
+import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
 import "./session-sidebar.css";
@@ -16,7 +16,26 @@ export function SessionSidebar() {
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
+  const [renaming, setRenaming] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState("");
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions.list });
+
+  // 1. 监听整页 pointerdown，点击菜单外任意位置时关闭管理菜单
+  useEffect(() => {
+    if (!menu) return;
+    /**
+     * 处理菜单外部点击并关闭菜单。
+     *
+     * @param event 指针事件
+     */
+    const onPointerDown = (event: PointerEvent) => {
+      if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
+      setMenu(null);
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [menu]);
 
   /** 刷新会话列表和全部消息缓存。 */
   const refresh = async () => {
@@ -28,6 +47,13 @@ export function SessionSidebar() {
   const create = useMutation({ mutationFn: () => api.sessions.create(), onSuccess: refresh });
   const switchSession = useMutation({ mutationFn: api.sessions.switch, onSuccess: refresh });
   const remove = useMutation({ mutationFn: api.sessions.remove, onSuccess: refresh });
+  const rename = useMutation({
+    mutationFn: ({ id, title }: { id: string; title: string }) => api.sessions.rename(id, title),
+    onSuccess: async () => {
+      setRenaming(null);
+      await refresh();
+    }
+  });
   const removeMany = useMutation({
     mutationFn: api.sessions.removeMany,
     onSuccess: async () => {
@@ -77,8 +103,32 @@ export function SessionSidebar() {
     setConfirming(false);
   };
 
+  /**
+   * 进入指定会话的重命名编辑态。
+   *
+   * @param id 会话 ID
+   * @param title 当前标题
+   */
+  const startRename = (id: string, title: string) => {
+    setRenaming(id);
+    setRenameDraft(title);
+    setMenu(null);
+  };
+
+  /** 提交重命名，标题为空或未变化时直接退出编辑态。 */
+  const submitRename = () => {
+    if (!renaming) return;
+    const title = renameDraft.trim();
+    const current = sessions.data?.find((session) => session.id === renaming);
+    if (!title || title === current?.title) {
+      setRenaming(null);
+      return;
+    }
+    rename.mutate({ id: renaming, title });
+  };
+
   const manageableCount = sessions.data?.filter((session) => session.id !== "default").length ?? 0;
-  const error = sessions.error ?? switchSession.error ?? remove.error ?? removeMany.error;
+  const error = sessions.error ?? switchSession.error ?? remove.error ?? removeMany.error ?? rename.error;
   return (
     <div className="session-sidebar">
       <div className="sidebar-heading">
@@ -112,13 +162,36 @@ export function SessionSidebar() {
                   {checked ? <CheckSquare2 size={15} /> : <Square size={15} />}
                 </button>
               )}
-              <button type="button" className="session-main" onClick={() => selecting ? session.id !== "default" && toggleSelected(session.id) : !session.active && switchSession.mutate(session.id)}>
-                <MessageSquare size={14} />
-                <span><strong>{session.title}</strong><small>{new Date(session.updated_at).toLocaleString()}</small></span>
-              </button>
-              {!selecting && <button type="button" className="session-more" aria-label={`管理 ${session.title}`} onClick={() => setMenu((value) => value === session.id ? null : session.id)}><MoreHorizontal size={15} /></button>}
+              {!selecting && renaming === session.id ? (
+                <div className="session-rename">
+                  <MessageSquare size={14} />
+                  <input
+                    autoFocus
+                    value={renameDraft}
+                    disabled={rename.isPending}
+                    onChange={(event) => setRenameDraft(event.target.value)}
+                    onKeyDown={(event) => {
+                      // 1. 回车提交重命名
+                      if (event.key === "Enter") submitRename();
+                      // 2. Esc 取消编辑
+                      if (event.key === "Escape") setRenaming(null);
+                    }}
+                    onBlur={() => setRenaming(null)}
+                    aria-label={`重命名 ${session.title}`}
+                  />
+                </div>
+              ) : (
+                <button type="button" className="session-main" onClick={() => selecting ? session.id !== "default" && toggleSelected(session.id) : !session.active && switchSession.mutate(session.id)}>
+                  <MessageSquare size={14} />
+                  <span><strong>{session.title}</strong><small>{new Date(session.updated_at).toLocaleString()}</small></span>
+                </button>
+              )}
+              {!selecting && renaming !== session.id && <button type="button" className="session-more" aria-label={`管理 ${session.title}`} onClick={() => setMenu((value) => value === session.id ? null : session.id)}><MoreHorizontal size={15} /></button>}
               {!selecting && menu === session.id && (
-                <div className="session-menu"><button type="button" disabled={session.id === "default"} onClick={() => { remove.mutate(session.id); setMenu(null); }}><Trash2 size={14} /> 删除</button></div>
+                <div className="session-menu" ref={menuRef}>
+                  <button type="button" onClick={() => startRename(session.id, session.title)}><Pencil size={14} /> 重命名</button>
+                  <button type="button" className="danger" disabled={session.id === "default"} onClick={() => { remove.mutate(session.id); setMenu(null); }}><Trash2 size={14} /> 删除</button>
+                </div>
               )}
             </div>
           );

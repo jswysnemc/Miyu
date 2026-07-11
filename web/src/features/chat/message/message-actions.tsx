@@ -1,18 +1,19 @@
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, RotateCcw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 
 type MessageActionsProps = {
   text: string;
   timestamp?: string;
+  onRetry?: () => void;
 };
 
 /**
- * 消息操作行，包含可选时间戳和复制原文按钮。
+ * 消息操作行，包含可选时间戳、复制原文按钮和可选的重试按钮。
  *
- * @param props text 为待复制原文，timestamp 为可选消息时间
+ * @param props text 为待复制原文，timestamp 为可选消息时间，onRetry 为可选的重试回调
  * @returns 悬停显示的操作行
  */
-export function MessageActions({ text, timestamp }: MessageActionsProps) {
+export function MessageActions({ text, timestamp, onRetry }: MessageActionsProps) {
   const [copied, setCopied] = useState(false);
   const timerRef = useRef<number | null>(null);
 
@@ -36,6 +37,11 @@ export function MessageActions({ text, timestamp }: MessageActionsProps) {
   return (
     <div className="message-actions">
       {timestamp && <time className="message-timestamp">{formatTimestamp(timestamp)}</time>}
+      {onRetry && (
+        <button type="button" className="message-copy" onClick={onRetry} aria-label="重试本轮" title="重试本轮">
+          <RotateCcw size={13} />
+        </button>
+      )}
       <button type="button" className="message-copy" onClick={onCopy} aria-label="复制消息原文" title="复制原文">
         {copied ? <Check size={13} /> : <Copy size={13} />}
       </button>

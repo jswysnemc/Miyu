@@ -1,3 +1,4 @@
+import { RotateCcw } from "lucide-react";
 import type { HistoryEntry, SessionTimelineTurn, TimelineToolEntry } from "../../api/contracts";
 import type { LiveRunState } from "./run-event-reducer";
 import type { LiveMessagePart } from "./run-event-reducer";
@@ -24,13 +25,13 @@ export function HistoryMessage({ message }: { message: HistoryEntry }) {
 /**
  * 渲染一个包含结构化工具历史的完整对话轮次。
  *
- * @param props 会话时间线轮次
+ * @param props turn 为会话时间线轮次，onRetry 为可选的重试本轮回调，仅最后一轮传入
  * @returns 用户消息、工具调用和助手消息
  */
-export function HistoryTurn({ turn }: { turn: SessionTimelineTurn }) {
+export function HistoryTurn({ turn, onRetry }: { turn: SessionTimelineTurn; onRetry?: () => void }) {
   return (
     <>
-      <UserMessageBubble content={turn.user.content} timestamp={turn.user.timestamp} />
+      <UserMessageBubble content={turn.user.content} timestamp={turn.user.timestamp} onRetry={onRetry} />
       <article className="message assistant-message">
         <MessageParts parts={historyTurnParts(turn)} />
         {turn.assistant.content && <MessageActions text={turn.assistant.content} timestamp={turn.assistant.timestamp} />}
@@ -42,17 +43,27 @@ export function HistoryTurn({ turn }: { turn: SessionTimelineTurn }) {
 /**
  * 渲染当前正在流式生成的用户输入和助手回复。
  *
- * @param props 运行状态和运行标记
+ * @param props state 为运行状态，running 为运行标记，onRetry 为可选的重试本轮回调
  * @returns 当前运行消息组
  */
-export function LiveRunMessage({ state, running }: { state: LiveRunState; running: boolean }) {
+export function LiveRunMessage({ state, running, onRetry }: { state: LiveRunState; running: boolean; onRetry?: () => void }) {
   return (
     <>
-      <UserMessageBubble content={state.userInput} imageUrls={state.imageUrls} />
+      <UserMessageBubble content={state.userInput} imageUrls={state.imageUrls} onRetry={running ? undefined : onRetry} />
       <article className="message assistant-message live-message">
         <MessageParts parts={state.parts} live={running} />
         {running && !state.content && !state.reasoning && state.tools.length === 0 && <div className="response-pulse"><span /><span /><span /></div>}
-        {state.error && <div className="run-error">{state.error}</div>}
+        {state.error && (
+          <div className="run-error">
+            <span className="run-error-text">{state.error}</span>
+            {onRetry && state.completed && (
+              <button type="button" className="run-error-retry" onClick={onRetry}>
+                <RotateCcw size={12} />
+                <span>重试</span>
+              </button>
+            )}
+          </div>
+        )}
         {!running && state.content && <MessageActions text={state.content} />}
       </article>
     </>

@@ -1,4 +1,5 @@
-import ReactMarkdown, { defaultUrlTransform } from "react-markdown";
+import { memo } from "react";
+import ReactMarkdown, { defaultUrlTransform, type Components } from "react-markdown";
 import rehypeKatex from "rehype-katex";
 import remarkGfm from "remark-gfm";
 import remarkMath from "remark-math";
@@ -17,40 +18,47 @@ function transformUrl(url: string): string {
   return defaultUrlTransform(url);
 }
 
+/** 模块级插件常量，避免每次渲染创建新数组导致 ReactMarkdown 重新解析 */
+const remarkPlugins = [remarkGfm, remarkMath];
+const rehypePlugins = [rehypeKatex];
+
+/** 模块级组件映射常量，保证子组件在父组件重渲染时不被卸载重建 */
+const markdownComponents: Components = {
+  code({ className, children, ...props }) {
+    const language = /language-(\w+)/.exec(className ?? "")?.[1];
+    const text = String(children).replace(/\n$/, "");
+    if (language === "mermaid") return <MermaidDiagram source={text} />;
+    if (language || text.includes("\n")) return <MarkdownCodeBlock language={language} source={text} />;
+    return <code className="inline-code" {...props}>{children}</code>;
+  },
+  a({ children, ...props }) {
+    return <a {...props} target="_blank" rel="noreferrer">{children}</a>;
+  },
+  table({ children }) {
+    return <div className="markdown-table-wrap"><table>{children}</table></div>;
+  },
+  img({ alt, ...props }) {
+    return <img {...props} alt={alt ?? ""} loading="lazy" />;
+  }
+};
+
 /**
  * 渲染支持 GFM、数学公式、代码块和 Mermaid 的 Markdown 内容。
  *
  * @param props Markdown 源文本
  * @returns Markdown 内容
  */
-export function MarkdownRenderer({ source }: { source: string }) {
+export const MarkdownRenderer = memo(function MarkdownRenderer({ source }: { source: string }) {
   return (
     <div className="markdown-body">
       <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
+        remarkPlugins={remarkPlugins}
+        rehypePlugins={rehypePlugins}
         urlTransform={transformUrl}
-        components={{
-          code({ className, children, ...props }) {
-            const language = /language-(\w+)/.exec(className ?? "")?.[1];
-            const text = String(children).replace(/\n$/, "");
-            if (language === "mermaid") return <MermaidDiagram source={text} />;
-            if (language || text.includes("\n")) return <MarkdownCodeBlock language={language} source={text} />;
-            return <code className="inline-code" {...props}>{children}</code>;
-          },
-          a({ children, ...props }) {
-            return <a {...props} target="_blank" rel="noreferrer">{children}</a>;
-          },
-          table({ children }) {
-            return <div className="markdown-table-wrap"><table>{children}</table></div>;
-          },
-          img({ alt, ...props }) {
-            return <img {...props} alt={alt ?? ""} loading="lazy" />;
-          }
-        }}
+        components={markdownComponents}
       >
         {source}
       </ReactMarkdown>
     </div>
   );
-}
+});

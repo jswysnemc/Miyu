@@ -12,8 +12,7 @@ export type WorkspaceLayoutState = {
 
 const DEFAULT_WORKSPACE_WIDTH = 520;
 const MIN_WORKSPACE_WIDTH = 320;
-const MAX_WORKSPACE_WIDTH = 760;
-const RESERVED_WORKSPACE_WIDTH = 630;
+const RESERVED_WORKSPACE_WIDTH = 610;
 const DEFAULT_TERMINAL_HEIGHT = 280;
 const MIN_TERMINAL_HEIGHT = 150;
 
@@ -25,8 +24,8 @@ const MIN_TERMINAL_HEIGHT = 150;
  * @returns 经过边界约束的工作区宽度
  */
 export function clampWorkspaceWidth(width: number, viewportWidth: number): number {
-  const responsiveMaximum = Math.max(MIN_WORKSPACE_WIDTH, viewportWidth - RESERVED_WORKSPACE_WIDTH);
-  const maximum = Math.min(MAX_WORKSPACE_WIDTH, responsiveMaximum);
+  // 1. 只保留会话栏与聊天区的最小可用空间，其余全部允许分配给工作区
+  const maximum = Math.max(MIN_WORKSPACE_WIDTH, viewportWidth - RESERVED_WORKSPACE_WIDTH);
   return Math.min(Math.max(width, MIN_WORKSPACE_WIDTH), maximum);
 }
 

@@ -1,4 +1,5 @@
 import { FileTypeIcon } from "../../../shared/ui/file-icon";
+import { SyntaxHighlighter } from "../syntax-highlighter";
 import { parseDiff } from "./diff-parser";
 import type { DiffFile, DiffLine } from "./diff-parser";
 
@@ -41,7 +42,7 @@ function DiffFileBlock({ file }: { file: DiffFile }) {
         </span>
       </header>
       <div className="diff-file-lines">
-        {file.lines.map((line, index) => <DiffLineRow line={line} key={index} />)}
+        {file.lines.map((line, index) => <DiffLineRow line={line} language={languageOfPath(file.path)} key={index} />)}
       </div>
     </section>
   );
@@ -53,7 +54,7 @@ function DiffFileBlock({ file }: { file: DiffFile }) {
  * @param props 解析后的差异行
  * @returns 差异行元素
  */
-function DiffLineRow({ line }: { line: DiffLine }) {
+function DiffLineRow({ line, language }: { line: DiffLine; language?: string }) {
   // 1. hunk 头渲染为弱化分隔条
   if (line.kind === "hunk") {
     return (
@@ -70,7 +71,21 @@ function DiffLineRow({ line }: { line: DiffLine }) {
     <div className={`diff-row ${line.kind}`}>
       <span className="diff-gutter">{line.oldLine ?? ""}</span>
       <span className="diff-gutter">{line.newLine ?? ""}</span>
-      <code><span className="diff-marker">{marker}</span>{line.text || " "}</code>
+      <code>
+        <span className="diff-marker">{marker}</span>
+        {line.text && language ? <SyntaxHighlighter language={language} source={line.text} /> : line.text || " "}
+      </code>
     </div>
   );
+}
+
+/**
+ * 从文件路径推断代码着色语言。
+ *
+ * @param path 文件路径
+ * @returns 扩展名语言标识，无扩展名时为 undefined
+ */
+function languageOfPath(path: string): string | undefined {
+  const name = path.split("/").pop() ?? "";
+  return name.includes(".") ? name.split(".").pop() : undefined;
 }

@@ -4,8 +4,8 @@ import { clampWorkspaceWidth, parseWorkspaceLayout } from "./workspace-layout-st
 describe("workspace layout state", () => {
   it("clamps the panel width to the supported range", () => {
     expect(clampWorkspaceWidth(120, 1440)).toBe(320);
-    expect(clampWorkspaceWidth(900, 1440)).toBe(760);
-    expect(clampWorkspaceWidth(700, 1080)).toBe(450);
+    expect(clampWorkspaceWidth(900, 1440)).toBe(830);
+    expect(clampWorkspaceWidth(700, 1080)).toBe(470);
   });
 
   it("restores persisted visibility and width", () => {

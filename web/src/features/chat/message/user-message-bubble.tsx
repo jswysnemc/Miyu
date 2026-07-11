@@ -7,17 +7,18 @@ type UserMessageBubbleProps = {
   content: string;
   timestamp?: string;
   imageUrls?: string[];
+  onRetry?: () => void;
 };
 
 const COLLAPSE_HEIGHT = 320;
 
 /**
- * 用户消息气泡，支持 Markdown 渲染、超高折叠、附件放大和复制操作。
+ * 用户消息气泡，支持 Markdown 渲染、超高折叠、附件放大、复制和重试操作。
  *
- * @param props content 为消息原文，timestamp 为可选时间，imageUrls 为附件图片地址
+ * @param props content 为消息原文，timestamp 为可选时间，imageUrls 为附件图片地址，onRetry 为可选的重试回调
  * @returns 右对齐的用户消息气泡
  */
-export function UserMessageBubble({ content, timestamp, imageUrls }: UserMessageBubbleProps) {
+export function UserMessageBubble({ content, timestamp, imageUrls, onRetry }: UserMessageBubbleProps) {
   const bodyRef = useRef<HTMLDivElement | null>(null);
   const [collapsible, setCollapsible] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -49,7 +50,7 @@ export function UserMessageBubble({ content, timestamp, imageUrls }: UserMessage
               {expanded ? "收起" : "显示更多"}
             </button>
           )}
-          <MessageActions text={content} timestamp={timestamp} />
+          <MessageActions text={content} timestamp={timestamp} onRetry={onRetry} />
         </div>
       </div>
     </article>

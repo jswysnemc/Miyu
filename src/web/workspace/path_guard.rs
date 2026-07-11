@@ -11,7 +11,8 @@ use std::path::{Component, Path, PathBuf};
 /// - 规范化后的绝对路径
 pub(super) fn existing_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let root = root.canonicalize()?;
-    let relative = validate_relative(relative)?;
+    let relative = normalize_request_path(&root, relative)?;
+    let relative = validate_relative(&relative)?;
     let path = root.join(relative);
     let canonical = path
         .canonicalize()
@@ -32,7 +33,8 @@ pub(super) fn existing_path(root: &Path, relative: &str) -> Result<PathBuf> {
 /// - 经过父目录校验的绝对路径
 pub(super) fn writable_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let root = root.canonicalize()?;
-    let relative = validate_relative(relative)?;
+    let relative = normalize_request_path(&root, relative)?;
+    let relative = validate_relative(&relative)?;
     let path = root.join(relative);
     let parent = path
         .parent()
@@ -55,7 +57,8 @@ pub(super) fn writable_path(root: &Path, relative: &str) -> Result<PathBuf> {
 /// - 不解析最终符号链接的绝对路径
 pub(super) fn mutable_existing_path(root: &Path, relative: &str) -> Result<PathBuf> {
     let root = root.canonicalize()?;
-    let relative = validate_relative(relative)?;
+    let relative = normalize_request_path(&root, relative)?;
+    let relative = validate_relative(&relative)?;
     if relative == Path::new(".") {
         bail!("workspace root cannot be modified");
     }
@@ -94,6 +97,26 @@ fn validate_relative(value: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
+/// 把工作区根内的绝对路径归一化为相对路径，其余原样返回。
+///
+/// 参数:
+/// - `root`: 规范化后的工作区根目录
+/// - `value`: 浏览器提交的路径
+///
+/// 返回:
+/// - 相对路径字符串；根外的绝对路径返回错误
+fn normalize_request_path(root: &Path, value: &str) -> Result<String> {
+    let trimmed = value.trim();
+    if !Path::new(trimmed).is_absolute() {
+        return Ok(trimmed.to_string());
+    }
+    // 1. 绝对路径仅在位于工作区根内时被接受，并转换为相对路径
+    let stripped = Path::new(trimmed)
+        .strip_prefix(root)
+        .map_err(|_| anyhow::anyhow!("absolute path is outside the workspace root"))?;
+    Ok(stripped.to_string_lossy().into_owned())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -109,5 +132,17 @@ mod tests {
     fn rejects_workspace_root_mutation() {
         let temp = tempfile::tempdir().unwrap();
         assert!(mutable_existing_path(temp.path(), "").is_err());
+    }
+
+    #[test]
+    fn resolves_absolute_path_inside_root() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path().canonicalize().unwrap();
+        std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
+        let inside = root.join("main.rs");
+        // 1. 工作区内的绝对路径应被接受并解析
+        assert!(existing_path(temp.path(), inside.to_str().unwrap()).is_ok());
+        // 2. 工作区外的绝对路径应被拒绝
+        assert!(existing_path(temp.path(), "/etc/passwd").is_err());
     }
 }

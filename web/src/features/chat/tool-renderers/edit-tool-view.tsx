@@ -28,7 +28,7 @@ export function EditToolView({ argumentsText, output }: EditToolViewProps) {
   const changedFiles = Array.isArray(result?.changed_files) ? result.changed_files as ChangedFile[] : [];
   return (
     <div className="edit-tool-view">
-      {changedFiles.length > 0 && (
+      {!patch && changedFiles.length > 0 && (
         <div className="changed-file-list">
           {changedFiles.map((file, index) => (
             <div className="changed-file" key={`${file.path}-${index}`}>

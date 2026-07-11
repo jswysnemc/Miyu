@@ -1,3 +1,4 @@
+import { SyntaxHighlighter } from "../syntax-highlighter";
 import { prettyJson } from "./tool-data";
 
 type GenericToolViewProps = {
@@ -14,8 +15,24 @@ type GenericToolViewProps = {
 export function GenericToolView({ argumentsText, output }: GenericToolViewProps) {
   return (
     <div className="generic-tool-view">
-      {argumentsText && <section><span>参数</span><pre className="generic-tool-block"><code>{prettyJson(argumentsText)}</code></pre></section>}
-      {output && <section><span>结果</span><pre className="generic-tool-block result"><code>{prettyJson(output)}</code></pre></section>}
+      {argumentsText && <section><span>参数</span><JsonBlock source={argumentsText} /></section>}
+      {output && <section><span>结果</span><JsonBlock source={output} className="result" /></section>}
     </div>
+  );
+}
+
+/**
+ * 渲染格式化文本块，内容为合法 JSON 时做语法着色。
+ *
+ * @param props 原始文本与附加类名
+ * @returns 着色或纯文本代码块
+ */
+export function JsonBlock({ source, className = "" }: { source: string; className?: string }) {
+  const pretty = prettyJson(source);
+  const isJson = pretty !== source || source.trimStart().startsWith("{") || source.trimStart().startsWith("[");
+  return (
+    <pre className={`generic-tool-block ${className}`.trim()}>
+      {isJson ? <SyntaxHighlighter language="json" source={pretty} /> : <code>{pretty}</code>}
+    </pre>
   );
 }

@@ -82,18 +82,20 @@ export function ChatComposer(props: ChatComposerProps) {
         />
         <div className="composer-footer">
           <div className="composer-toolrail">
-            <ModelSelector
-              choices={props.choices}
-              selection={props.selection}
-              loading={props.modelLoading}
-              disabled={props.running}
-              onSelect={props.onModelSelect}
-            />
-            <ThinkingSelector
-              value={props.thinkingLevel}
-              disabled={props.running}
-              onChange={props.onThinkingLevelChange}
-            />
+            <div className="composer-model-group">
+              <ModelSelector
+                choices={props.choices}
+                selection={props.selection}
+                loading={props.modelLoading}
+                disabled={props.running}
+                onSelect={props.onModelSelect}
+              />
+              <ThinkingSelector
+                value={props.thinkingLevel}
+                disabled={props.running}
+                onChange={props.onThinkingLevelChange}
+              />
+            </div>
             <div className="composer-mode" aria-label="运行模式">
               <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
               <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>

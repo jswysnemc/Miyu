@@ -258,6 +258,10 @@
   border: 0;
   border-radius: 5px;
   background: transparent;
+  color: var(--ink);
+}
+
+.session-menu button.danger {
   color: var(--danger);
 }
 
@@ -267,6 +271,31 @@
 
 .session-menu button:disabled {
   opacity: 0.4;
+}
+
+.session-rename {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: 17px minmax(0, 1fr);
+  gap: 7px;
+  align-items: center;
+  min-width: 0;
+  padding: 9px 5px 9px 10px;
+}
+
+.session-rename input {
+  min-width: 0;
+  height: 22px;
+  padding: 0 6px;
+  border: 1px solid var(--signal);
+  border-radius: 5px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 13px;
+}
+
+.session-rename input:disabled {
+  opacity: 0.55;
 }
 
 .sidebar-state,
