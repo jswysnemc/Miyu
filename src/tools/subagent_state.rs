@@ -16,12 +16,25 @@ pub(crate) struct SubagentSnapshot {
     pub(crate) max_steps: usize,
     pub(crate) started_at: u64,
     pub(crate) updated_at: u64,
+    pub(crate) step: usize,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) phase: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub(crate) last_tool: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) result: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) error: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub(crate) stats: Option<Value>,
+}
+
+/// 子智能体运行过程中的一次进度更新。
+#[derive(Debug, Clone, Default)]
+pub(crate) struct SubagentProgressUpdate {
+    pub(crate) step: Option<usize>,
+    pub(crate) phase: Option<String>,
+    pub(crate) last_tool: Option<String>,
 }
 
 struct SubagentRecord {
@@ -54,6 +67,9 @@ pub(crate) fn create_subagent(
         max_steps,
         started_at: now,
         updated_at: now,
+        step: 0,
+        phase: None,
+        last_tool: None,
         result: None,
         error: None,
         stats: None,
@@ -96,6 +112,35 @@ pub(crate) fn finish_subagent(
     record.snapshot.error = error;
     record.snapshot.stats = stats;
     record.cancel = None;
+}
+
+/// 更新运行中子智能体的中间进度。
+///
+/// 参数:
+/// - `id`: 任务 ID
+/// - `update`: 本次进度更新(步数、阶段、最近工具)
+///
+/// 返回:
+/// - 无
+pub(crate) fn update_subagent_progress(id: &str, update: SubagentProgressUpdate) {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let Some(record) = subagents.get_mut(id) else {
+        return;
+    };
+    // 1. 只更新运行中的子智能体，避免覆盖已写入的终态
+    if record.snapshot.status != "running" {
+        return;
+    }
+    if let Some(step) = update.step {
+        record.snapshot.step = step;
+    }
+    if let Some(phase) = update.phase {
+        record.snapshot.phase = Some(phase);
+    }
+    if let Some(last_tool) = update.last_tool {
+        record.snapshot.last_tool = Some(last_tool);
+    }
+    record.snapshot.updated_at = unix_seconds();
 }
 
 /// 读取后台子智能体快照。

@@ -217,10 +217,22 @@ async fn execute_subagent(
             return;
         }
     };
+    // 1. 起进度 channel，把子代理的阶段/工具上报实时写回快照，供前端轮询感知
+    let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
+    let progress_task = tokio::spawn(consume_subagent_progress(subagent_id.clone(), progress_rx));
+    let progress = ToolProgress::new(progress_tx);
     let result = tokio::select! {
         _ = &mut cancel_rx => Err(anyhow::anyhow!("cancelled")),
-        result = run_subagent(&subagent.subagent_type, subagent.max_steps, &prompt, context) => result,
+        result = run_subagent(
+            &subagent.subagent_type,
+            subagent.max_steps,
+            &prompt,
+            context,
+            progress,
+        ) => result,
     };
+    // 2. 关闭 sender 后等待消费任务收尾，确保进度写入不丢
+    progress_task.abort();
     match result {
         Ok((content, stats)) => {
             subagent_state::finish_subagent(
@@ -255,6 +267,69 @@ async fn execute_subagent(
     }
 }
 
+/// 消费子代理进度消息并写回快照。
+///
+/// 参数:
+/// - `subagent_id`: 子智能体 ID
+/// - `progress_rx`: 进度消息接收器
+///
+/// 返回:
+/// - 无
+async fn consume_subagent_progress(
+    subagent_id: String,
+    mut progress_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
+) {
+    while let Some(message) = progress_rx.recv().await {
+        // 1. reasoning 与 full 模式的结构化消息不作为面板进度，跳过
+        if message.starts_with("__subagent_reasoning__")
+            || message.starts_with("__subtool_call__")
+            || message.starts_with("__subtool_result__")
+        {
+            continue;
+        }
+        subagent_state::update_subagent_progress(&subagent_id, parse_progress_message(&message));
+    }
+}
+
+/// 从进度文本解析出结构化进度更新。
+///
+/// 参数:
+/// - `message`: 子代理上报的进度文本
+///
+/// 返回:
+/// - 结构化进度更新
+fn parse_progress_message(message: &str) -> subagent_state::SubagentProgressUpdate {
+    let mut update = subagent_state::SubagentProgressUpdate {
+        phase: Some(message.to_string()),
+        ..Default::default()
+    };
+    // 1. 识别 "工具 #N：名称 ..." 或 "tool #N: name ..." 形式，提取步数与工具名
+    let marker = message.find('#');
+    if let Some(marker) = marker {
+        let rest = &message[marker + 1..];
+        let digits = rest
+            .chars()
+            .take_while(char::is_ascii_digit)
+            .collect::<String>();
+        if let Ok(step) = digits.parse::<usize>() {
+            update.step = Some(step);
+            let after = rest[digits.len()..]
+                .trim_start_matches([':', '：', ' '])
+                .trim();
+            let name = after
+                .split([' ', '：', ':'])
+                .next()
+                .unwrap_or("")
+                .trim()
+                .to_string();
+            if !name.is_empty() {
+                update.last_tool = Some(name);
+            }
+        }
+    }
+    update
+}
+
 /// 记录已结束子智能体的运行时状态。
 ///
 /// 参数:
@@ -276,6 +351,7 @@ fn record_finished_runtime_subagent(paths: &MiyuPaths, subagent_id: &str) {
 /// - `max_steps`: 最大工具调用次数
 /// - `prompt`: 子智能体提示
 /// - `context`: 子智能体上下文
+/// - `tool_progress`: 写回快照的进度上报通道
 ///
 /// 返回:
 /// - 子代理输出内容和公开统计信息
@@ -284,6 +360,7 @@ async fn run_subagent(
     max_steps: usize,
     prompt: &str,
     context: SubagentContext,
+    tool_progress: ToolProgress,
 ) -> Result<(String, Value)> {
     let client = OpenAiCompatibleClient::from_config(&context.config, &context.paths)?;
     let (system_prompt, tools, excluded) = match subagent_type {
@@ -295,11 +372,8 @@ async fn run_subagent(
         "general" => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
         _ => bail!("unsupported subagent_type: {subagent_type}"),
     };
-    let progress = SubagentProgress::new(
-        ToolProgress::default(),
-        ProgressMode::from_config(&context.config),
-        false,
-    );
+    // 1. 强制以 Summary 模式上报，让面板能看到工具步进而非依赖全局展示配置
+    let progress = SubagentProgress::new(tool_progress, ProgressMode::Summary, true);
     let runner = SubagentRunner::new(client, system_prompt, tools, progress)
         .max_steps(max_steps)
         .timeout_seconds(TOOL_TIMEOUT_SECONDS)
@@ -486,6 +560,35 @@ mod tests {
         assert_eq!(
             summarize_prompt("  inspect   this code\nnow "),
             "inspect this code now"
+        );
+    }
+
+    #[test]
+    fn parses_chinese_tool_progress() {
+        let update = parse_progress_message("工具 #3：Shell 运行中");
+
+        assert_eq!(update.step, Some(3));
+        assert_eq!(update.last_tool.as_deref(), Some("Shell"));
+        assert_eq!(update.phase.as_deref(), Some("工具 #3：Shell 运行中"));
+    }
+
+    #[test]
+    fn parses_english_tool_progress() {
+        let update = parse_progress_message("tool #12: read_file running");
+
+        assert_eq!(update.step, Some(12));
+        assert_eq!(update.last_tool.as_deref(), Some("read_file"));
+    }
+
+    #[test]
+    fn keeps_plain_phase_without_step() {
+        let update = parse_progress_message("工具调用 5 次　消耗 Token 1.2K");
+
+        assert_eq!(update.step, None);
+        assert_eq!(update.last_tool, None);
+        assert_eq!(
+            update.phase.as_deref(),
+            Some("工具调用 5 次　消耗 Token 1.2K")
         );
     }
 }

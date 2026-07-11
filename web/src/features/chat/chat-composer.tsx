@@ -17,6 +17,7 @@ import { SystemUsage } from "../usage/system-usage";
 import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { TodoMarkdownView } from "../todo/todo-markdown-view";
+import { useRuntimeActivity } from "../runtime-activity/use-runtime-activity";
 import "./chat-composer.css";
 
 type ChatComposerProps = {
@@ -54,6 +55,7 @@ type ChatComposerProps = {
  */
 export function ChatComposer(props: ChatComposerProps) {
   const git = useQuery({ queryKey:["workspace-diff"], queryFn:api.workspace.diff, staleTime:20_000 });
+  const runtimeActivity = useRuntimeActivity();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const textareaRef = useRef<ComposerTextareaHandle>(null);
 
@@ -99,7 +101,10 @@ export function ChatComposer(props: ChatComposerProps) {
             <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
             <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
           </div>
-          <button type="button" className="composer-rail-button" onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title="打开终端和后台管理" aria-label="打开终端和后台管理"><SquareTerminal size={14} /></button>
+          <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.active ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.active ? `${runtimeActivity.total} 个运行时任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
+            <SquareTerminal size={14} />
+            {runtimeActivity.active && <span className="composer-activity-badge">{runtimeActivity.total}</span>}
+          </button>
         </div>
         <AttachmentStrip attachments={props.attachments} onRemove={props.onRemoveAttachment} />
         <ComposerTextarea

@@ -1,14 +1,13 @@
-import { ArrowLeftRight, Bot, FileCode2, GitCompareArrows, Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, PanelLeftClose, PanelRightClose, SquareTerminal } from "lucide-react";
+import { ArrowLeftRight, FileCode2, GitCompareArrows, Maximize2, Minimize2, PanelBottomClose, PanelBottomOpen, PanelLeftClose, PanelRightClose, SquareTerminal } from "lucide-react";
 import { useState } from "react";
 import { DiffPane } from "./diff-pane";
 import { EditorPane } from "./editor-pane";
 import { FileTree } from "./file-tree";
 import { TerminalDock } from "../terminal/terminal-dock";
-import { SubagentPanel } from "../subagents/subagent-panel";
 import type { TerminalManager } from "../terminal/use-terminal-manager";
 import "./workspace-pane.css";
 
-type PaneTab = "files" | "diff" | "terminal" | "subagents";
+type PaneTab = "files" | "diff" | "terminal";
 
 type WorkspacePaneProps = {
   selectedFile: string | null;
@@ -44,13 +43,11 @@ export function WorkspacePane({ selectedFile, onSelectFile, onClearFile, onClose
         )}
         {tab === "diff" && <DiffPane />}
         {tab === "terminal" && <TerminalDock manager={terminalManager} onClose={() => setTab("files")} />}
-        {tab === "subagents" && <SubagentPanel />}
       </div>
       <nav className="workspace-activity-rail" aria-label="侧边工作台">
         <ActivityButton active={tab === "files"} onClick={() => setTab("files")} icon={<FileCode2 size={16}/>} label="文件" />
         <ActivityButton active={tab === "diff"} onClick={() => setTab("diff")} icon={<GitCompareArrows size={16}/>} label="Git" />
         <ActivityButton active={tab === "terminal"} onClick={() => setTab("terminal")} icon={<SquareTerminal size={16}/>} label="终端" />
-        <ActivityButton active={tab === "subagents"} onClick={() => setTab("subagents")} icon={<Bot size={16}/>} label="子智能体" />
         <span className="activity-rail-spacer" />
         <ActivityButton active={terminalOpen} onClick={onToggleTerminal} icon={terminalOpen ? <PanelBottomClose size={16}/> : <PanelBottomOpen size={16}/>} label="底部终端" />
         <ActivityButton active={maximized} onClick={onToggleMaximized} icon={maximized ? <Minimize2 size={16}/> : <Maximize2 size={16}/>} label="编辑器全屏" />

@@ -282,7 +282,8 @@ export type TodoItem = { id:string; text:string; status:TodoStatus; created_at:s
 
 export type Subagent = {
   id:string; description:string; subagent_type:string; status:string; max_steps:number;
-  started_at:number; updated_at:number; result?:string; error?:string; stats?:Record<string, unknown>;
+  started_at:number; updated_at:number; step:number; phase?:string; last_tool?:string;
+  result?:string; error?:string; stats?:Record<string, unknown>;
 };
 
 export type SystemUsage = {

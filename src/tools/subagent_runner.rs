@@ -14,29 +14,6 @@ pub(crate) enum ProgressMode {
     Full,
 }
 
-impl ProgressMode {
-    /// 从配置中读取子代理进度展示模式。
-    ///
-    /// 参数:
-    /// - `config`: 当前应用配置
-    ///
-    /// 返回:
-    /// - 子代理进度展示模式
-    pub(crate) fn from_config(config: &crate::config::AppConfig) -> Self {
-        match config
-            .display
-            .tool_calls
-            .trim()
-            .to_ascii_lowercase()
-            .as_str()
-        {
-            "hidden" => Self::Hidden,
-            "full" => Self::Full,
-            _ => Self::Summary,
-        }
-    }
-}
-
 #[derive(Clone)]
 pub(crate) struct SubagentProgress {
     progress: ToolProgress,

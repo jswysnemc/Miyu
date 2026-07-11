@@ -1,7 +1,25 @@
-.todo-markdown-view{min-width:0;margin:8px 0 20px;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
-.todo-markdown-trigger{display:flex;width:100%;min-height:38px;align-items:center;justify-content:space-between;padding:0;border:0;background:transparent;color:var(--ink);font-size:12px;text-align:left}
-.todo-markdown-trigger svg{color:var(--ink-soft);transition:transform 140ms ease}.todo-markdown-trigger svg.open{transform:rotate(180deg)}
-.todo-markdown-list{display:grid;gap:4px;margin:0;padding:0 0 10px;list-style:none}.todo-markdown-item{display:grid;grid-template-columns:18px minmax(0,1fr);align-items:center;gap:7px;min-height:27px;color:var(--ink);font-size:12px}
-.todo-markdown-item svg{color:var(--ink-soft)}.todo-markdown-item.is-in_progress svg{color:var(--blue)}.todo-markdown-item.is-completed svg{color:var(--signal)}.todo-markdown-item.is-completed span,.todo-markdown-item.is-cancelled span{color:var(--ink-soft);text-decoration:line-through}
-.todo-markdown-view.compact{position:relative;margin:0;border:0}.todo-markdown-view.compact .todo-markdown-trigger{min-height:28px;padding:0 7px;border-radius:7px}.todo-markdown-view.compact .todo-markdown-trigger:hover{background:var(--paper-deep)}
-.todo-markdown-view.compact .todo-markdown-list{position:absolute;right:0;bottom:calc(100% + 7px);width:280px;max-height:260px;overflow:auto;padding:8px;border:1px solid var(--line);border-radius:8px;background:var(--paper-raised);box-shadow:0 14px 36px rgb(20 28 23 / 16%);z-index:70}
+.todo-markdown-view { min-width: 0; margin: 8px 0 20px; border-top: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.todo-markdown-trigger { display: flex; width: 100%; min-height: 38px; align-items: center; gap: 8px; padding: 0; border: 0; background: transparent; color: var(--ink); font-size: 12px; text-align: left; }
+.todo-trigger-icon { display: grid; flex-shrink: 0; place-items: center; color: var(--signal); }
+.todo-trigger-body { display: grid; flex: 1; min-width: 0; gap: 4px; }
+.todo-trigger-line { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; min-width: 0; }
+.todo-trigger-line strong { overflow: hidden; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }
+.todo-trigger-count { flex-shrink: 0; font: 400 10px var(--font-code); color: var(--ink-soft); }
+.todo-trigger-track { height: 3px; overflow: hidden; border-radius: 999px; background: var(--control-surface); }
+.todo-trigger-fill { display: block; height: 100%; border-radius: 999px; background: var(--signal); transition: width 320ms ease; }
+.todo-markdown-trigger > svg { flex-shrink: 0; color: var(--ink-soft); transition: transform 140ms ease; }
+.todo-markdown-trigger > svg.open { transform: rotate(180deg); }
+
+.todo-markdown-list { display: grid; gap: 4px; margin: 0; padding: 0 0 10px; list-style: none; }
+.todo-markdown-item { display: grid; grid-template-columns: 18px minmax(0, 1fr); align-items: center; gap: 7px; min-height: 27px; color: var(--ink); font-size: 12px; }
+.todo-markdown-item svg { color: var(--ink-soft); }
+.todo-markdown-item.is-in_progress { color: var(--ink); }
+.todo-markdown-item.is-in_progress svg { color: var(--blue); }
+.todo-markdown-item.is-completed svg { color: var(--signal); }
+.todo-markdown-item.is-completed span, .todo-markdown-item.is-cancelled span { color: var(--ink-soft); text-decoration: line-through; }
+
+.todo-markdown-view.compact { position: relative; margin: 0; border: 0; }
+.todo-markdown-view.compact .todo-markdown-trigger { min-width: 168px; max-width: 240px; min-height: 30px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
+.todo-markdown-view.compact .todo-markdown-trigger:hover { background: var(--control-surface); border-color: var(--line-strong); }
+.todo-markdown-view.compact .todo-trigger-line strong { font-size: 11px; }
+.todo-markdown-view.compact .todo-markdown-list { position: absolute; right: 0; bottom: calc(100% + 7px); width: 300px; max-height: 300px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised); box-shadow: var(--shadow); z-index: 70; }
