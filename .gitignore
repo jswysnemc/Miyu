@@ -13,3 +13,4 @@
 *.old
 .qoder/
 .doc/
+.ace-tool/
