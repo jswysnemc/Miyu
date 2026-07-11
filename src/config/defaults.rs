@@ -1,3 +1,4 @@
+use super::agents::SubagentConfig;
 use super::model::*;
 use super::paths::persona_scope_name;
 use crate::default_models::OPENCODE_PROVIDER_ID;
@@ -15,6 +16,8 @@ impl Default for AppConfig {
             prompt: PromptConfig::default(),
             gateways: GatewayConfig::default(),
             agents: Vec::new(),
+            default_agent: None,
+            subagent: SubagentConfig::default(),
             agent_runtime: None,
             plugins: PluginsConfig::default(),
             memory: MemoryConfig::default(),
@@ -445,6 +448,17 @@ pub(super) fn default_thinking_format() -> String {
 
 pub(super) fn is_default_timeout(value: &u64) -> bool {
     *value == default_timeout()
+}
+
+/// 判断子智能体配置是否为默认空值,用于序列化时跳过。
+///
+/// 参数:
+/// - `value`: 子智能体配置
+///
+/// 返回:
+/// - 是否为默认空配置
+pub(super) fn is_default_subagent(value: &super::agents::SubagentConfig) -> bool {
+    value.provider_id.is_empty() && value.model.is_empty()
 }
 
 pub(super) fn is_default_temperature(value: &f32) -> bool {

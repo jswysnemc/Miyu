@@ -28,6 +28,24 @@
   white-space: nowrap;
 }
 
+.agent-selector-config {
+  display: grid;
+  flex-shrink: 0;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--paper);
+  color: var(--ink-soft);
+}
+
+.agent-selector-config:hover {
+  color: var(--ink);
+  border-color: var(--line-strong);
+  background: var(--control-surface);
+}
+
 @media (max-width: 900px) {
   .agent-selector > svg {
     display: none;

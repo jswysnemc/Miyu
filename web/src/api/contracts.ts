@@ -200,6 +200,9 @@ export type AppConfig = {
   active_provider: string;
   providers: ProviderConfig[];
   gateways: GatewayConfig;
+  agents?: AgentProfileConfig[];
+  default_agent?: string | null;
+  subagent?: SubagentConfig;
   plugins?: Record<string, Record<string, unknown>>;
   prompt?: {
     prompts_dir?: string;
@@ -214,6 +217,20 @@ export type AppConfig = {
   display?: Record<string, unknown>;
   context?: Record<string, unknown>;
   [key: string]: unknown;
+};
+
+export type AgentProfileConfig = {
+  id: string;
+  name: string;
+  system_prompt?: string;
+  enabled_tools?: string[];
+  skills_full?: string[];
+  skills_named?: string[];
+};
+
+export type SubagentConfig = {
+  provider_id?: string;
+  model?: string;
 };
 
 export type ConfigResponse = {

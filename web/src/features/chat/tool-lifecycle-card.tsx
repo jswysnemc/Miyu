@@ -5,6 +5,7 @@ import { toolCardSummary } from "./tool-renderers/tool-card-summary";
 import { toolFilePath } from "./tool-renderers/tool-data";
 import { ToolFileReference } from "./tool-renderers/tool-file-reference";
 import { ToolResultView } from "./tool-renderers/tool-result-view";
+import { TodoToolView } from "./tool-renderers/todo-tool-view";
 import "./tool-renderers/tool-renderers.css";
 
 /**
@@ -15,6 +16,10 @@ import "./tool-renderers/tool-renderers.css";
  */
 export function ToolLifecycleCard({ tool }: { tool: ToolLifecycle }) {
   const [expanded, setExpanded] = useState(tool.status === "failed");
+  // 1. todo 工具已完成时改用专门的清单卡片,不暴露原始 JSON
+  if (tool.name === "todo" && tool.status === "completed") {
+    return <TodoToolView argumentsText={tool.arguments || tool.argumentsPreview} output={tool.output} />;
+  }
   const statusIcon = tool.status === "completed"
     ? <Check size={14} />
     : tool.status === "failed"

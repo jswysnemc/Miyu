@@ -194,10 +194,19 @@
   min-width: 0;
   max-width: 100%;
   overflow: hidden;
-  border: 0;
-  border-radius: 5px;
+  border: 1px solid var(--technical-border);
+  border-radius: var(--radius-md);
   background: var(--technical-surface);
   color: var(--technical-text);
+  transition: border-color 140ms ease;
+}
+
+.tool-card:hover {
+  border-color: color-mix(in srgb, var(--technical-border) 60%, var(--line-strong));
+}
+
+.tool-card.failed {
+  border-color: color-mix(in srgb, var(--danger) 40%, var(--technical-border));
 }
 
 .tool-detail { border-top: 1px solid color-mix(in srgb, var(--line) 70%, transparent); }

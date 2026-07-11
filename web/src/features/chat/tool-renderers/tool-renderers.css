@@ -404,12 +404,12 @@
 
 .tool-card-head {
   display: grid;
-  grid-template-columns: 18px minmax(0, 1fr) auto 14px;
+  grid-template-columns: 22px minmax(0, 1fr) auto 14px;
   align-items: center;
-  gap: 8px;
+  gap: 9px;
   width: 100%;
-  min-height: 34px;
-  padding: 4px 8px;
+  min-height: 36px;
+  padding: 5px 10px;
   border: 0;
   background: transparent;
   text-align: left;
@@ -423,9 +423,11 @@
 
 .tool-icon {
   display: grid;
-  width: 18px;
-  height: 18px;
+  width: 22px;
+  height: 22px;
   place-items: center;
+  border-radius: var(--radius-sm);
+  background: var(--technical-surface-muted);
   color: var(--ink-soft);
 }
 
@@ -433,6 +435,9 @@
   width: 13px;
   height: 13px;
 }
+
+.tool-card.completed .tool-icon { color: var(--signal); }
+.tool-card.failed .tool-icon { color: var(--danger); }
 
 .tool-card-copy {
   display: flex;

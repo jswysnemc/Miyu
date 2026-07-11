@@ -40,6 +40,16 @@ pub(crate) struct SubagentProgressUpdate {
 struct SubagentRecord {
     snapshot: SubagentSnapshot,
     cancel: Option<oneshot::Sender<()>>,
+    /// 完成事件是否已通知主 Agent,避免重复提醒
+    finish_notified: bool,
+}
+
+/// 已完成但尚未通知主 Agent 的子智能体摘要。
+#[derive(Debug, Clone)]
+pub(crate) struct FinishedSubagentNotice {
+    pub(crate) id: String,
+    pub(crate) description: String,
+    pub(crate) status: String,
 }
 
 /// 创建后台子智能体记录。
@@ -79,6 +89,7 @@ pub(crate) fn create_subagent(
         SubagentRecord {
             snapshot: snapshot.clone(),
             cancel: Some(cancel_tx),
+            finish_notified: false,
         },
     );
     (snapshot, cancel_rx)
@@ -141,6 +152,34 @@ pub(crate) fn update_subagent_progress(id: &str, update: SubagentProgressUpdate)
         record.snapshot.last_tool = Some(last_tool);
     }
     record.snapshot.updated_at = unix_seconds();
+}
+
+/// 取出已完成但尚未通知主 Agent 的子智能体,并标记为已通知。
+///
+/// 供主 Agent 循环在工具轮后调用,把后台子智能体的完成事件推给主 Agent,
+/// 避免主 Agent 反复轮询 action=status。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 本次新完成子智能体的通知列表
+pub(crate) fn take_finished_notices() -> Vec<FinishedSubagentNotice> {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let mut notices = Vec::new();
+    for record in subagents.values_mut() {
+        // 1. 仅挑出已进入终态且未通知过的记录
+        if record.finish_notified || record.snapshot.status == "running" {
+            continue;
+        }
+        record.finish_notified = true;
+        notices.push(FinishedSubagentNotice {
+            id: record.snapshot.id.clone(),
+            description: record.snapshot.description.clone(),
+            status: record.snapshot.status.clone(),
+        });
+    }
+    notices
 }
 
 /// 读取后台子智能体快照。

@@ -1,41 +1,44 @@
-.subagent-panel { height: 100%; padding: 14px; overflow: auto; color: var(--ink); background: var(--paper-raised); }
-.subagent-panel > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 12px; }
-.subagent-panel > header > div { display: flex; align-items: baseline; gap: 8px; }
-.subagent-panel > header strong { font-size: 12px; color: var(--ink); }
-.subagent-panel > header span { font-size: 11px; color: var(--ink-soft); }
-.subagent-panel > header button { display: grid; place-items: center; width: 30px; height: 28px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--control-surface); color: var(--ink-soft); }
-.subagent-panel > header button:hover { color: var(--ink); border-color: var(--line-strong); }
+/* 子智能体工作区容器 */
+.subagent-workspace { display: flex; flex-direction: column; height: 100%; min-height: 0; background: var(--paper-raised); }
 
-.subagent-list { display: grid; gap: 8px; }
-.subagent-list article { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
-.subagent-list article:hover { border-color: var(--line-strong); background: var(--control-surface); }
+/* 概览 */
+.subagent-overview { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.subagent-overview-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 14px; border-bottom: 1px solid var(--line); }
+.subagent-overview-title { display: flex; align-items: center; gap: 7px; min-width: 0; color: var(--ink); }
+.subagent-overview-title svg { flex-shrink: 0; color: var(--signal); }
+.subagent-overview-title strong { font-size: 12px; font-weight: 600; }
+.subagent-overview-count { overflow: hidden; color: var(--ink-soft); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-overview-head > button { display: grid; flex-shrink: 0; width: 28px; height: 26px; place-items: center; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--control-surface); color: var(--ink-soft); }
+.subagent-overview-head > button:hover { color: var(--ink); border-color: var(--line-strong); }
+.subagent-overview-list { display: grid; flex: 1; gap: 8px; align-content: start; min-height: 0; overflow: auto; padding: 12px 14px; }
 
+.subagent-overview-empty { display: grid; gap: 6px; justify-items: center; padding: 48px 20px; color: var(--ink-soft); text-align: center; }
+.subagent-overview-empty svg { color: var(--line-strong); }
+.subagent-overview-empty p { margin: 0; font-size: 13px; color: var(--ink); }
+.subagent-overview-empty span { font-size: 11px; }
+
+/* 概览卡片 */
+.subagent-card { display: grid; gap: 8px; padding: 11px 12px; border: 1px solid var(--line); border-radius: var(--radius-md); background: var(--paper); cursor: pointer; transition: border-color 140ms ease, background 140ms ease; }
+.subagent-card:hover { border-color: var(--line-strong); background: var(--control-surface); }
+.subagent-card.active { border-color: var(--signal); background: var(--signal-soft); }
 .subagent-heading { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .subagent-heading strong { overflow: hidden; font-size: 12px; font-weight: 600; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
+.subagent-card dl { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; font-size: 11px; }
+.subagent-card dl div { display: flex; gap: 5px; }
+.subagent-card dt { color: var(--ink-soft); }
+.subagent-card dd { margin: 0; color: var(--ink); }
+.subagent-error { margin: 0; overflow-wrap: anywhere; color: var(--danger); font-size: 11px; }
+.subagent-cancel { display: inline-flex; align-items: center; gap: 5px; justify-self: start; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; color: var(--danger); font-size: 11px; }
+.subagent-cancel:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
 
+/* 状态徽章 */
 .subagent-status { flex-shrink: 0; padding: 1px 7px; border-radius: 999px; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; color: var(--ink-soft); background: var(--control-surface); }
 .subagent-status.running { color: var(--signal); background: var(--signal-soft); }
 .subagent-status.completed { color: var(--blue); background: color-mix(in srgb, var(--blue) 14%, transparent); }
 .subagent-status.failed { color: var(--danger); background: color-mix(in srgb, var(--danger) 14%, transparent); }
 .subagent-status.cancelled { color: var(--warning); background: color-mix(in srgb, var(--warning) 14%, transparent); }
 
-.subagent-list dl { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 0; font-size: 11px; }
-.subagent-list dl div { display: flex; gap: 5px; }
-.subagent-list dt { color: var(--ink-soft); }
-.subagent-list dd { margin: 0; color: var(--ink); }
-
-.subagent-list pre { max-height: 180px; margin: 0; overflow: auto; padding: 9px 10px; border: 1px solid var(--technical-border); border-radius: var(--radius-sm); background: var(--technical-surface); color: var(--technical-text); font: 400 11px/1.6 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
-.subagent-error { margin: 0; color: var(--danger); font-size: 11px; }
-
-.subagent-cancel { display: inline-flex; align-items: center; gap: 5px; justify-self: start; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; color: var(--danger); font-size: 11px; }
-.subagent-cancel:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
-
-.subagent-detail > header { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.subagent-detail > header button { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--control-surface); color: var(--ink-soft); font-size: 11px; }
-.subagent-detail > header button:hover { color: var(--ink); border-color: var(--line-strong); }
-.subagent-detail > header strong { overflow: hidden; font-size: 12px; color: var(--ink); text-overflow: ellipsis; white-space: nowrap; }
-.subagent-detail .markdown-body { padding: 0; }
-
+/* 实时进度 */
 .subagent-progress { display: grid; gap: 6px; }
 .subagent-progress-head { display: flex; align-items: center; gap: 6px; font-size: 11px; color: var(--ink-soft); }
 .subagent-progress-head .spin { flex-shrink: 0; color: var(--signal); }
@@ -43,9 +46,29 @@
 .subagent-progress-step { flex-shrink: 0; font: 400 10px var(--font-code); color: var(--ink-soft); }
 .subagent-progress-track { height: 4px; overflow: hidden; border-radius: 999px; background: var(--control-surface); }
 .subagent-progress-fill { display: block; height: 100%; border-radius: 999px; background: var(--signal); transition: width 320ms ease; }
-
 .spin { animation: subagent-spin 900ms linear infinite; }
 @keyframes subagent-spin { to { transform: rotate(360deg); } }
 
-.management-empty, .subagent-panel .management-empty { padding: 24px 0; color: var(--ink-soft); font-size: 12px; text-align: center; }
-.pane-error { margin-top: 10px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); border-radius: var(--radius-sm); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); font-size: 11px; }
+/* 详情视图 */
+.subagent-detail-view { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+.subagent-detail-head { display: flex; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid var(--line); }
+.subagent-detail-back { display: inline-flex; align-items: center; gap: 5px; padding: 5px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--control-surface); color: var(--ink-soft); font-size: 11px; }
+.subagent-detail-back:hover { color: var(--ink); border-color: var(--line-strong); }
+.subagent-detail-cancel { display: inline-flex; align-items: center; gap: 5px; margin-left: auto; padding: 5px 9px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: transparent; color: var(--danger); font-size: 11px; }
+.subagent-detail-cancel:hover { border-color: var(--danger); background: color-mix(in srgb, var(--danger) 10%, transparent); }
+.subagent-detail-scroll { flex: 1; min-height: 0; overflow: auto; padding: 16px; }
+.subagent-detail-title { margin: 0 0 12px; font-size: 15px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+.subagent-detail-meta { display: flex; flex-wrap: wrap; gap: 8px 20px; margin: 0 0 12px; font-size: 12px; }
+.subagent-detail-meta div { display: flex; gap: 6px; }
+.subagent-detail-meta dt { color: var(--ink-soft); }
+.subagent-detail-meta dd { margin: 0; color: var(--ink); }
+.subagent-detail-output { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.subagent-detail-pending { margin-top: 16px; color: var(--ink-soft); font-size: 12px; }
+
+/* 统计 */
+.subagent-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
+.subagent-stats div { display: flex; gap: 6px; align-items: baseline; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }
+.subagent-stats dt { color: var(--ink-soft); font-size: 10px; }
+.subagent-stats dd { margin: 0; color: var(--ink); font: 500 11px var(--font-code); }
+
+.pane-error { margin: 10px 14px; padding: 8px 10px; border: 1px solid color-mix(in srgb, var(--danger) 40%, var(--line)); border-radius: var(--radius-sm); color: var(--danger); background: color-mix(in srgb, var(--danger) 8%, transparent); font-size: 11px; }

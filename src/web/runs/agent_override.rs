@@ -13,9 +13,20 @@ pub(super) fn apply_agent_override(
     mut config: AppConfig,
     agent_id: Option<&str>,
 ) -> Result<AppConfig> {
-    let Some(agent_id) = agent_id.map(str::trim).filter(|value| !value.is_empty()) else {
+    // 1. 显式 agent_id 优先,缺省时回退到全局默认 agent 配置
+    let explicit = agent_id.map(str::trim).filter(|value| !value.is_empty());
+    let fallback = config
+        .default_agent
+        .clone()
+        .filter(|value| !value.trim().is_empty());
+    let Some(agent_id) = explicit
+        .map(str::to_string)
+        .or(fallback)
+        .filter(|value| !value.trim().is_empty())
+    else {
         return Ok(config);
     };
+    let agent_id = agent_id.trim();
     let profile = config
         .agents
         .iter()
@@ -77,5 +88,38 @@ mod tests {
     fn rejects_unknown_agent() {
         let error = apply_agent_override(AppConfig::default(), Some("missing")).unwrap_err();
         assert!(error.to_string().contains("agent not found"));
+    }
+
+    #[test]
+    fn falls_back_to_default_agent_when_id_absent() {
+        let mut config = AppConfig::default();
+        config.agents.push(AgentProfile {
+            id: "writer".to_string(),
+            name: "写作".to_string(),
+            system_prompt: "专注写作".to_string(),
+            enabled_tools: vec!["read_file".to_string()],
+            skills_full: Vec::new(),
+            skills_named: Vec::new(),
+        });
+        config.default_agent = Some("writer".to_string());
+        let resolved = apply_agent_override(config, None).unwrap();
+        assert_eq!(resolved.system_prompt.as_deref(), Some("专注写作"));
+    }
+
+    #[test]
+    fn explicit_agent_overrides_default_agent() {
+        let mut config = AppConfig::default();
+        config.agents.push(AgentProfile {
+            id: "writer".to_string(),
+            name: "写作".to_string(),
+            system_prompt: "专注写作".to_string(),
+            enabled_tools: Vec::new(),
+            skills_full: Vec::new(),
+            skills_named: Vec::new(),
+        });
+        config.default_agent = Some("writer".to_string());
+        // 显式传入虚拟默认 agent 时,应忽略 default_agent 回退
+        let resolved = apply_agent_override(config, Some(DEFAULT_AGENT_ID)).unwrap();
+        assert!(resolved.agent_runtime.is_none());
     }
 }

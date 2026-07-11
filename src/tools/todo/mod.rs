@@ -23,21 +23,41 @@ pub(crate) fn register(registry: &mut ToolRegistry, file: PathBuf) {
         ToolSpec::new(
             "todo",
             t(
-                "Manage the current session todo list. Use list to inspect it, add to create an item, update to change text or status, and remove to delete an item. Status values: pending, in_progress, completed, cancelled.",
-                "管理当前会话的 TODO 清单。使用 list 查看，add 新增，update 修改内容或状态，remove 删除。状态可用 pending、in_progress、completed、cancelled。",
+                "Track a multi-step plan for the current session. Actions: list reads all items; add appends a new pending item; update changes an item's text or status by id; remove deletes an item by id. Status flows pending -> in_progress -> completed (or cancelled). Rule: items advance in order, so you must finish earlier items before marking a later one in_progress or completed. Keep exactly one item in_progress at a time. Use this for tasks with three or more steps; skip it for trivial single-step work.",
+                "跟踪当前会话的多步计划。动作：list 读取全部条目；add 追加一个待处理条目；update 按 id 修改条目文本或状态；remove 按 id 删除条目。状态流转为 pending -> in_progress -> completed（或 cancelled）。规则：条目按顺序推进，必须先完成前面的条目，才能把后面的条目标记为 in_progress 或 completed；同一时刻只保留一个 in_progress 条目。任务达到三步及以上时使用，单步琐碎任务不必使用。",
             ),
             json!({
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["list", "add", "update", "remove"]
+                        "enum": ["list", "add", "update", "remove"],
+                        "description": t(
+                            "Which operation to perform.",
+                            "要执行的操作。",
+                        )
                     },
-                    "id": { "type": "string", "description": t("Todo item id.", "TODO 项标识。") },
-                    "text": { "type": "string", "description": t("Todo item text.", "TODO 项内容。") },
+                    "id": {
+                        "type": "string",
+                        "description": t(
+                            "Item id, required for update and remove. Obtain it from list or from the add result.",
+                            "条目 id，update 与 remove 必填，可从 list 或 add 的返回结果获取。",
+                        )
+                    },
+                    "text": {
+                        "type": "string",
+                        "description": t(
+                            "Item text. Required for add; optional for update to rename.",
+                            "条目文本。add 必填；update 时可选，用于重命名。",
+                        )
+                    },
                     "status": {
                         "type": "string",
-                        "enum": ["pending", "in_progress", "completed", "cancelled"]
+                        "enum": ["pending", "in_progress", "completed", "cancelled"],
+                        "description": t(
+                            "New status for update. Advance items in order and keep one in_progress at a time.",
+                            "update 的新状态。按顺序推进，同时只保留一个 in_progress。",
+                        )
                     }
                 },
                 "required": ["action"],

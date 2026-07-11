@@ -343,6 +343,10 @@ impl Agent {
             .tools
             .contains("todo")
             .then(|| tools::todo::TodoReminder::new(self.state.todo_file()));
+        let mut subagent_reminder = self
+            .tools
+            .contains("subagent")
+            .then(tools::SubagentReminder::new);
         loop {
             if self.max_tool_rounds > 0 && tool_round >= self.max_tool_rounds {
                 let content = format!(
@@ -592,6 +596,12 @@ impl Agent {
                     if let Some(content) = reminder.after_tool_round(todo_updated)? {
                         messages.push(ChatMessage::system(content));
                     }
+                }
+            }
+            // 1. 本轮所有工具处理完后,把新完成的后台子智能体主动通知主 Agent
+            if let Some(reminder) = subagent_reminder.as_mut() {
+                if let Some(content) = reminder.after_tool_round() {
+                    messages.push(ChatMessage::system(content));
                 }
             }
         }

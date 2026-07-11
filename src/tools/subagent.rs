@@ -83,8 +83,8 @@ pub(crate) fn register(
     registry.register(ToolSpec::new_with_progress(
         "subagent",
         t(
-            "Start and manage an in-process subagent. Only available in interactive REPL and Web sessions. Use action=start to run without blocking the main conversation; then poll status or result by subagent_id.",
-            "启动并管理进程内子智能体。此工具只在交互式 REPL 和 Web 会话中可用。使用 action=start 后不会阻塞主对话；随后用 subagent_id 查询状态或结果。",
+            "Start and manage an in-process subagent. Only available in interactive REPL and Web sessions. Use action=start to run without blocking the main conversation. Do not poll action=status in a loop: when a subagent finishes you receive an automatic system-reminder, then call action=result with its subagent_id to collect the output. action=list shows all subagents; action=cancel stops one.",
+            "启动并管理进程内子智能体。此工具只在交互式 REPL 和 Web 会话中可用。使用 action=start 后不会阻塞主对话。不要循环调用 action=status 轮询：子智能体完成时你会收到自动的系统提醒,届时再用 action=result 配合 subagent_id 取回结果。action=list 列出全部子智能体；action=cancel 取消某个。",
         ),
         json!({
             "type": "object",
@@ -362,7 +362,8 @@ async fn run_subagent(
     context: SubagentContext,
     tool_progress: ToolProgress,
 ) -> Result<(String, Value)> {
-    let client = OpenAiCompatibleClient::from_config(&context.config, &context.paths)?;
+    // 1. 按子智能体模型配置构造客户端,未配置时沿用主对话供应商与模型
+    let client = build_subagent_client(&context)?;
     let (system_prompt, tools, excluded) = match subagent_type {
         "explore" => (
             EXPLORE_PROMPT,
@@ -386,6 +387,40 @@ async fn run_subagent(
     .map_err(|_| anyhow::anyhow!("subagent timed out after {SUBAGENT_TIMEOUT_SECONDS}s"))??;
     let (chat_result, stats) = result;
     Ok((chat_result.content, stats_json(&stats)))
+}
+
+/// 按子智能体模型配置构造 LLM 客户端。
+///
+/// 子智能体配置了独立供应商/模型时,在一份克隆配置上覆盖 active_provider 与该供应商
+/// 的 default_model;未配置时直接沿用主对话配置。
+///
+/// 参数:
+/// - `context`: 子智能体上下文
+///
+/// 返回:
+/// - LLM 客户端
+fn build_subagent_client(context: &SubagentContext) -> Result<OpenAiCompatibleClient> {
+    let subagent = &context.config.subagent;
+    // 1. 未配置任何子智能体供应商与模型,沿用主对话配置
+    if subagent.provider_id.is_empty() && subagent.model.is_empty() {
+        return OpenAiCompatibleClient::from_config(&context.config, &context.paths);
+    }
+    let mut config = context.config.clone();
+    // 2. 指定了供应商则切换 active_provider,否则在当前供应商上改模型
+    if !subagent.provider_id.is_empty() {
+        config.active_provider = subagent.provider_id.clone();
+    }
+    if !subagent.model.is_empty() {
+        let active = config.active_provider.clone();
+        if let Some(provider) = config
+            .providers
+            .iter_mut()
+            .find(|provider| provider.id == active)
+        {
+            provider.default_model = subagent.model.clone();
+        }
+    }
+    OpenAiCompatibleClient::from_config(&config, &context.paths)
 }
 
 /// 生成子智能体统计 JSON。

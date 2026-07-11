@@ -30,7 +30,8 @@ export function groupCompletedToolCalls(parts: LiveMessagePart[]): GroupedMessag
   };
 
   for (const part of parts) {
-    if (part.type === "tool" && part.tool.status === "completed") {
+    // 1. todo 工具在消息流中始终独立成卡,不并入折叠组,保证计划变更可见
+    if (part.type === "tool" && part.tool.status === "completed" && part.tool.name !== "todo") {
       completedTools.push({ id: part.id, tool: part.tool });
       continue;
     }

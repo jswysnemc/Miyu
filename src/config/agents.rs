@@ -36,3 +36,17 @@ pub struct AgentProfile {
     #[serde(default)]
     pub skills_named: Vec<String>,
 }
+
+/// 子智能体运行配置。
+///
+/// 控制 task 工具启动的进程内子智能体使用哪个供应商与模型。
+/// 留空时子智能体沿用主对话当前的供应商与模型。
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SubagentConfig {
+    /// 子智能体使用的供应商 id，空表示沿用主对话
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub provider_id: String,
+    /// 子智能体使用的模型，空表示沿用该供应商默认模型
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub model: String,
+}

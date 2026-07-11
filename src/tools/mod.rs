@@ -28,6 +28,7 @@ mod protondb_query;
 mod registry;
 mod skills;
 mod subagent;
+mod subagent_reminder;
 mod subagent_runner;
 mod subagent_runtime;
 pub(crate) mod subagent_state;
@@ -48,6 +49,7 @@ pub(crate) use progressive::{register_loader as register_progressive_loader, LOA
 pub use registry::{empty_parameters, ToolPermission, ToolProgress, ToolRegistry, ToolSpec};
 pub(crate) use skills::load_installed_skill;
 pub use skills::{register_skills, skill_catalog, skills_catalog_prompt, skills_prompt};
+pub(crate) use subagent_reminder::SubagentReminder;
 
 /// 内置工具目录条目，包含工具名与用途分组。
 pub struct ToolCatalogEntry {

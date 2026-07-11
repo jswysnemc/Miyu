@@ -7,6 +7,7 @@ import { subagentDuration, subagentTypeLabel } from "./subagent-labels";
 
 type SubagentCardProps = {
   subagent: Subagent;
+  active?: boolean;
   onSelect: () => void;
   onCancel: () => void;
 };
@@ -14,10 +15,10 @@ type SubagentCardProps = {
 /**
  * 渲染单个子智能体卡片:状态、类型、实时进度与取消操作。
  *
- * @param props 子智能体数据与操作回调
+ * @param props 子智能体数据、选中态与操作回调
  * @returns 子智能体卡片
  */
-export function SubagentCard({ subagent, onSelect, onCancel }: SubagentCardProps) {
+export function SubagentCard({ subagent, active = false, onSelect, onCancel }: SubagentCardProps) {
   /**
    * 阻止取消操作冒泡到卡片选择。
    *
@@ -29,7 +30,7 @@ export function SubagentCard({ subagent, onSelect, onCancel }: SubagentCardProps
   };
   const running = subagent.status === "running";
   return (
-    <article onClick={onSelect}>
+    <article className={active ? "subagent-card active" : "subagent-card"} onClick={onSelect}>
       <div className="subagent-heading">
         <SubagentStatusBadge status={subagent.status} />
         <strong>{subagent.description}</strong>
@@ -40,7 +41,6 @@ export function SubagentCard({ subagent, onSelect, onCancel }: SubagentCardProps
         {subagent.last_tool && !running && <div><dt>末步</dt><dd>{subagent.last_tool}</dd></div>}
       </dl>
       <SubagentProgress subagent={subagent} />
-      {subagent.result && !running && <pre>{subagent.result}</pre>}
       {subagent.error && <p className="subagent-error">{subagent.error}</p>}
       {running && (
         <button type="button" className="subagent-cancel" onClick={handleCancel}><Ban size={13} />取消</button>

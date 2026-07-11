@@ -11,6 +11,7 @@ import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
 import { workspaceRelativePath } from "./workspace-path-utils";
+import type { PaneTab } from "./workspace-tab";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { TerminalResizeHandle } from "../terminal/terminal-resize-handle";
 import { useTerminalManager } from "../terminal/use-terminal-manager";
@@ -38,6 +39,7 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   const layout = useWorkspaceLayout();
   const terminalManager = useTerminalManager();
   const sessionSidebar = useSessionSidebarLayout();
+  const [paneTab, setPaneTab] = useState<PaneTab>("files");
   const [mobileLayout, dispatchMobileLayout] = useReducer(reduceMobileWorkbenchState, initialMobileWorkbenchState);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches);
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
@@ -105,6 +107,19 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     return () => window.removeEventListener("miyu:toggle-terminal", handleToggleTerminal);
   }, [layout.toggleTerminal]);
 
+  useEffect(() => {
+    // 响应聊天区"查看子智能体"请求,打开右侧工作区并切到子智能体视图
+    const handleOpenSubagents = () => {
+      layout.openWorkspace();
+      setPaneTab("subagents");
+      if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
+        dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
+      }
+    };
+    window.addEventListener("miyu:open-subagents", handleOpenSubagents);
+    return () => window.removeEventListener("miyu:open-subagents", handleOpenSubagents);
+  }, [layout.openWorkspace]);
+
   /**
    * 显示指定移动端工作台面板，并确保对应桌面布局区域已经打开。
    *
@@ -161,6 +176,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
           <aside className="coding-workspace">
             <WorkspacePane
               selectedFile={selectedFile}
+              tab={paneTab}
+              onTabChange={setPaneTab}
               onSelectFile={onSelectFile}
               onClearFile={onClearFile}
               onClose={closeWorkspace}
