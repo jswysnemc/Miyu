@@ -4,6 +4,26 @@ export type FileMentionSegment =
 
 const MENTION_PATTERN = /(^|\s)@(?:"((?:\\.|[^"\\])+)"|([^\s]+))/gu;
 
+export type FileMentionTriggerRange = {
+  start: number;
+  end: number;
+};
+
+/**
+ * 查找光标前刚输入的文件引用触发符。
+ *
+ * @param value 输入区当前纯文本
+ * @param caret 当前光标偏移
+ * @param insertedText 本次输入事件插入的文本
+ * @returns 触发符范围，光标前不是 @ 时返回 null
+ */
+export function findFileMentionTrigger(value: string, caret: number, insertedText: string | null): FileMentionTriggerRange | null {
+  if (insertedText !== "@") return null;
+  if (!Number.isInteger(caret) || caret <= 0 || caret > value.length) return null;
+  const start = caret - 1;
+  return value[start] === "@" ? { start, end: caret } : null;
+}
+
 /**
  * 将文件路径格式化为后端可直接理解的 @ 引用文本。
  *

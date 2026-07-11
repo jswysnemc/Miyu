@@ -10,7 +10,7 @@ import {
   serializeFileMentionEditor,
   setEditorTextSelection
 } from "./file-mention-editor";
-import { formatFileMention } from "./file-mention-token";
+import { findFileMentionTrigger, formatFileMention } from "./file-mention-token";
 import { FileMentionPopover } from "./file-mention-popover";
 import { isCursorOnFirstLine, isCursorOnLastLine, navigateInputHistory } from "./input-history";
 import type { InputHistoryState } from "./input-history";
@@ -112,9 +112,12 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     const next = serializeFileMentionEditor(event.currentTarget);
     const selection = readEditorTextSelection(event.currentTarget);
     const caret = selection?.end ?? next.length;
-    // 2. 仅在本次输入新增一个 @ 字符时打开文件选择器
-    if (next.length === props.value.length + 1 && next[caret - 1] === "@") {
-      mentionRangeRef.current = { start: caret - 1, end: caret };
+    // 2. 根据编辑器当前文本和实际光标识别 @，避免外部状态尚未同步时漏判
+    const inputEvent = event.nativeEvent as InputEvent;
+    const insertedText = inputEvent.inputType?.startsWith("insert") ? inputEvent.data : null;
+    const mentionRange = findFileMentionTrigger(next, caret, insertedText);
+    if (mentionRange) {
+      mentionRangeRef.current = mentionRange;
       setMentionOpen(true);
     }
     props.onChange(next);

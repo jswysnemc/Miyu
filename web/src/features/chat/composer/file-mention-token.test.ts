@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatFileMention, parseFileMentions } from "./file-mention-token";
+import { findFileMentionTrigger, formatFileMention, parseFileMentions } from "./file-mention-token";
 
 describe("file mention token", () => {
   it("parses mentions at text boundaries without converting email addresses", () => {
@@ -20,5 +20,12 @@ describe("file mention token", () => {
 
   it("keeps plain text unchanged", () => {
     expect(parseFileMentions("普通输入")).toEqual([{ type: "text", value: "普通输入" }]);
+  });
+
+  it("detects an at-sign immediately before the contenteditable caret", () => {
+    expect(findFileMentionTrigger("fix @", 5, "@")).toEqual({ start: 4, end: 5 });
+    expect(findFileMentionTrigger("fix @file", 9, "@")).toBeNull();
+    expect(findFileMentionTrigger("fix @", 4, "@")).toBeNull();
+    expect(findFileMentionTrigger("fix @", 5, null)).toBeNull();
   });
 });
