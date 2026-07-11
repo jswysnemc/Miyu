@@ -49,6 +49,9 @@ export function useSessionSidebarLayout() {
   /** 切换会话侧栏的折叠状态。 */
   const toggleCollapsed = () => setCollapsed((current) => !current);
 
+  /** 展开会话侧栏。 */
+  const expand = () => setCollapsed(false);
+
   /**
    * 更新会话侧栏宽度。
    *
@@ -56,5 +59,5 @@ export function useSessionSidebarLayout() {
    */
   const resize = (nextWidth: number) => setWidth(clampSessionSidebarWidth(nextWidth));
 
-  return { collapsed, width, toggleCollapsed, resize };
+  return { collapsed, width, toggleCollapsed, expand, resize };
 }

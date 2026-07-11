@@ -174,3 +174,19 @@
   background: transparent;
   color: var(--terminal-text);
 }
+
+@media (max-width: 760px) {
+  .terminal-dock {
+    grid-template-columns: 118px minmax(0, 1fr);
+    border-top: 0;
+  }
+
+  .terminal-pane {
+    padding: 6px 4px;
+  }
+
+  .terminal-sidebar > header,
+  .terminal-dock-close {
+    min-height: 44px;
+  }
+}

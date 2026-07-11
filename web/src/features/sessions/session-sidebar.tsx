@@ -8,6 +8,7 @@ import "./session-sidebar.css";
 type SessionSidebarProps = {
   collapsed: boolean;
   onToggleCollapsed: () => void;
+  onNavigate?: () => void;
 };
 
 /**
@@ -16,7 +17,7 @@ type SessionSidebarProps = {
  * @param props 折叠状态和切换回调
  * @returns 会话侧栏
  */
-export function SessionSidebar({ collapsed, onToggleCollapsed }: SessionSidebarProps) {
+export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: SessionSidebarProps) {
   const queryClient = useQueryClient();
   const [menu, setMenu] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
@@ -145,7 +146,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed }: SessionSidebarP
         <button type="button" className="sidebar-rail-button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话">
           <Plus size={17} />
         </button>
-        <NavLink to="/settings" className={({ isActive }) => isActive ? "sidebar-rail-button active" : "sidebar-rail-button"} aria-label="打开配置" title="配置">
+        <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => isActive ? "sidebar-rail-button active" : "sidebar-rail-button"} aria-label="打开配置" title="配置">
           <Settings size={17} strokeWidth={1.8} />
         </NavLink>
       </div>
@@ -207,7 +208,14 @@ export function SessionSidebar({ collapsed, onToggleCollapsed }: SessionSidebarP
                   />
                 </div>
               ) : (
-                <button type="button" className="session-main" onClick={() => selecting ? session.id !== "default" && toggleSelected(session.id) : !session.active && switchSession.mutate(session.id)}>
+                <button type="button" className="session-main" onClick={() => {
+                  if (selecting) {
+                    if (session.id !== "default") toggleSelected(session.id);
+                    return;
+                  }
+                  if (!session.active) switchSession.mutate(session.id);
+                  onNavigate?.();
+                }}>
                   <MessageSquare size={14} />
                   <span><strong>{session.title}</strong><small>{new Date(session.updated_at).toLocaleString()}</small></span>
                 </button>
@@ -225,7 +233,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed }: SessionSidebarP
       </div>
       {error && <p className="sidebar-error">{error.message}</p>}
       <div className="sidebar-footer">
-        <NavLink to="/settings" className={({ isActive }) => isActive ? "sidebar-settings-link active" : "sidebar-settings-link"}>
+        <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => isActive ? "sidebar-settings-link active" : "sidebar-settings-link"}>
           <Settings size={15} strokeWidth={1.8} /><span>配置</span>
         </NavLink>
       </div>
