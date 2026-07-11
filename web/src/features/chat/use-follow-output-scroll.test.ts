@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isNearOutputBottom, resolveFollowOutputState } from "./use-follow-output-scroll";
+import { isNearOutputBottom, resolveFollowOutputState, scrollOutputToBottom } from "./use-follow-output-scroll";
 
 describe("follow output scroll", () => {
   it("将底部容差内的位置视为正在跟随", () => {
@@ -29,5 +29,13 @@ describe("follow output scroll", () => {
       { scrollTop: 900, scrollHeight: 1200, clientHeight: 300 },
       true
     )).toEqual({ following: true, showJump: false });
+  });
+
+  it("将持续增长的输出区域滚动到最新位置", () => {
+    const element = { scrollTop: 120, scrollHeight: 960 };
+
+    scrollOutputToBottom(element);
+
+    expect(element.scrollTop).toBe(960);
   });
 });

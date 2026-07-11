@@ -1,5 +1,6 @@
 import { ChevronDown } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { scrollOutputToBottom } from "./use-follow-output-scroll";
 import "./reasoning-block.css";
 
 /**
@@ -11,6 +12,7 @@ import "./reasoning-block.css";
 export function ReasoningBlock({ source, live, startedAt, endedAt }: { source: string; live?: boolean; startedAt?: string; endedAt?: string }) {
   const [open, setOpen] = useState(Boolean(live));
   const [clock, setClock] = useState(() => Date.now());
+  const contentRef = useRef<HTMLDivElement>(null);
 
   // 1. 流式输出时自动展开，结束或历史加载时自动收起
   useEffect(() => {
@@ -24,6 +26,11 @@ export function ReasoningBlock({ source, live, startedAt, endedAt }: { source: s
     return () => window.clearInterval(timer);
   }, [live, startedAt]);
 
+  // 3. 思考内容持续增长时保持内部视口跟随最新位置
+  useLayoutEffect(() => {
+    if (live && open) scrollOutputToBottom(contentRef.current);
+  }, [live, open, source]);
+
   if (!source) return null;
   const duration = reasoningDuration(startedAt, endedAt, clock);
   return (
@@ -32,7 +39,7 @@ export function ReasoningBlock({ source, live, startedAt, endedAt }: { source: s
         <span>{live ? "正在思考" : "思考过程"}{duration ? `（用时 ${duration}）` : ""}</span>
         <ChevronDown size={14} className={open ? "rotate" : ""} />
       </button>
-      {open && <div className="reasoning-content">{source}</div>}
+      {open && <div ref={contentRef} className="reasoning-content">{source}</div>}
     </section>
   );
 }

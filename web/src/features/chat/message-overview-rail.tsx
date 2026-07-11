@@ -1,5 +1,5 @@
 import { type CSSProperties, type RefObject, useCallback, useLayoutEffect, useRef, useState } from "react";
-import { normalizedElementPosition, type MessageOverviewItem } from "./message-overview-utils";
+import { evenlySpacedOverviewPosition, type MessageOverviewItem } from "./message-overview-utils";
 import "./message-overview-rail.css";
 
 interface MessageOverviewRailProps {
@@ -16,18 +16,6 @@ interface PositionedOverviewItem {
 }
 
 const TRACK_INSET = 6;
-
-/**
- * 将数值限制在指定闭区间内。
- *
- * @param value 需要限制的数值
- * @param minimum 区间最小值
- * @param maximum 区间最大值
- * @returns 限制后的数值
- */
-function clamp(value: number, minimum: number, maximum: number) {
-  return Math.min(Math.max(value, minimum), maximum);
-}
 
 /**
  * 转义属性选择器中的字符串值，避免消息标识破坏选择器。
@@ -120,11 +108,11 @@ export function MessageOverviewRail({ scrollContainerRef, items, activeId, onNav
     }, undefined) ?? resolved[0];
     const resolvedActiveId = activeId ?? automaticActive?.item.id;
 
-    // 3. 将消息在全文中的比例映射到可用轨道高度
+    // 3. 按显示顺序将标识居中排列，并保持均匀的紧凑间距
     const trackHeight = Math.max(rail.clientHeight - TRACK_INSET * 2, 0);
-    const next = resolved.map(({ item, contentTop }) => ({
+    const next = resolved.map(({ item }, index) => ({
       item,
-      top: TRACK_INSET + normalizedElementPosition(contentTop, container.scrollHeight, container.clientHeight) * trackHeight,
+      top: TRACK_INSET + evenlySpacedOverviewPosition(index, resolved.length, trackHeight),
       active: item.id === resolvedActiveId
     }));
     setPositionedItems((previous) => layoutsEqual(previous, next) ? previous : next);

@@ -104,28 +104,26 @@ export function createOverviewSummary(content: string | null | undefined, maxLen
 }
 
 /**
- * 将数值限制到 0 到 1 之间。
+ * 按固定优选间距计算居中的概览标识位置。
  *
- * @param value 原始数值
- * @returns 夹紧后的有限数值
+ * @param index 当前项目序号
+ * @param itemCount 项目总数
+ * @param trackHeight 可用轨道高度
+ * @param preferredGap 标识之间的优选间距
+ * @returns 当前标识相对轨道顶部的位置
  */
-export function clamp01(value: number): number {
-  if (!Number.isFinite(value)) return 0;
-  return Math.min(1, Math.max(0, value));
-}
-
-/**
- * 计算元素在可滚动内容中的归一化位置。
- *
- * @param elementOffsetTop 元素顶部相对滚动内容顶部的距离
- * @param scrollHeight 滚动内容总高度
- * @param viewportHeight 可视区域高度
- * @returns 处于 0 到 1 之间的位置比例
- */
-export function normalizedElementPosition(elementOffsetTop: number, scrollHeight: number, viewportHeight: number): number {
-  const scrollableHeight = Math.max(0, scrollHeight - viewportHeight);
-  if (scrollableHeight === 0) return 0;
-  return clamp01(elementOffsetTop / scrollableHeight);
+export function evenlySpacedOverviewPosition(
+  index: number,
+  itemCount: number,
+  trackHeight: number,
+  preferredGap = 14
+): number {
+  if (itemCount <= 1) return Math.max(trackHeight, 0) / 2;
+  const safeTrackHeight = Math.max(trackHeight, 0);
+  const safeIndex = Math.min(Math.max(index, 0), itemCount - 1);
+  const gap = Math.min(Math.max(preferredGap, 0), safeTrackHeight / (itemCount - 1));
+  const groupHeight = gap * (itemCount - 1);
+  return (safeTrackHeight - groupHeight) / 2 + safeIndex * gap;
 }
 
 /**

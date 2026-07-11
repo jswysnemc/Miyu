@@ -11,6 +11,11 @@ export interface ScrollMetrics {
   clientHeight: number;
 }
 
+export interface OutputScrollTarget {
+  scrollTop: number;
+  scrollHeight: number;
+}
+
 const BOTTOM_THRESHOLD = 80;
 
 /**
@@ -22,6 +27,16 @@ const BOTTOM_THRESHOLD = 80;
  */
 export function isNearOutputBottom(metrics: ScrollMetrics, threshold = BOTTOM_THRESHOLD): boolean {
   return metrics.scrollHeight - metrics.scrollTop - metrics.clientHeight < threshold;
+}
+
+/**
+ * 将输出区域移动到当前内容底部。
+ *
+ * @param element 需要跟随最新内容的滚动区域
+ * @returns 无返回值
+ */
+export function scrollOutputToBottom(element: OutputScrollTarget | null): void {
+  if (element) element.scrollTop = element.scrollHeight;
 }
 
 /**
@@ -102,13 +117,12 @@ export function useFollowOutputScroll(
 
   useLayoutEffect(() => {
     const element = scrollContainerRef.current;
-    if (element && stateRef.current.following) element.scrollTop = element.scrollHeight;
+    if (stateRef.current.following) scrollOutputToBottom(element);
   }, [contentSignal, scrollContainerRef]);
 
   useLayoutEffect(() => {
     commitState({ following: true, showJump: false });
-    const element = scrollContainerRef.current;
-    if (element) element.scrollTop = element.scrollHeight;
+    scrollOutputToBottom(scrollContainerRef.current);
   }, [commitState, resetSignal, scrollContainerRef]);
 
   /** 平滑滚动到底部并恢复后续流式跟随。 */

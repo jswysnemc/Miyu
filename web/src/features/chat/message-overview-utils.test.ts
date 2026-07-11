@@ -2,11 +2,10 @@ import { describe, expect, it } from "vitest";
 import type { SessionTimelineTurn } from "../../api/contracts";
 import { initialRunState } from "./run-event-reducer";
 import {
-  clamp01,
   createLiveOverviewItem,
   createOverviewSummary,
   createTimelineOverviewItems,
-  normalizedElementPosition
+  evenlySpacedOverviewPosition
 } from "./message-overview-utils";
 
 /**
@@ -111,13 +110,12 @@ describe("message overview utils", () => {
     expect(item.summary).toBe("等待响应");
   });
 
-  it("将元素位置限制在滚动范围内", () => {
-    expect(clamp01(-0.2)).toBe(0);
-    expect(clamp01(0.4)).toBe(0.4);
-    expect(clamp01(1.4)).toBe(1);
-    expect(clamp01(Number.NaN)).toBe(0);
-    expect(normalizedElementPosition(300, 1000, 400)).toBe(0.5);
-    expect(normalizedElementPosition(900, 1000, 400)).toBe(1);
-    expect(normalizedElementPosition(20, 400, 400)).toBe(0);
+  it("按项目顺序生成均匀的概览标识位置", () => {
+    expect(evenlySpacedOverviewPosition(0, 4, 100)).toBe(29);
+    expect(evenlySpacedOverviewPosition(1, 4, 100)).toBe(43);
+    expect(evenlySpacedOverviewPosition(2, 4, 100)).toBe(57);
+    expect(evenlySpacedOverviewPosition(3, 4, 100)).toBe(71);
+    expect(evenlySpacedOverviewPosition(0, 1, 100)).toBe(50);
+    expect(evenlySpacedOverviewPosition(2, 3, 20)).toBe(20);
   });
 });
