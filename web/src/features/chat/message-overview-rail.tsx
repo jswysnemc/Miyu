@@ -15,7 +15,7 @@ interface PositionedOverviewItem {
   active: boolean;
 }
 
-const TRACK_INSET = 10;
+const TRACK_INSET = 6;
 
 /**
  * 将数值限制在指定闭区间内。
@@ -191,7 +191,6 @@ export function MessageOverviewRail({ scrollContainerRef, items, activeId, onNav
 
   return (
     <nav ref={railRef} className={`message-overview-rail${visible ? "" : " is-hidden"}`} aria-label="消息概览">
-      <span className="message-overview-track" aria-hidden="true" />
       <ol className="message-overview-list">
         {positionedItems.map(({ item, top, active }) => {
           const style = { "--message-overview-top": `${top}px` } as CSSProperties;

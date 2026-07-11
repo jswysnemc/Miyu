@@ -20,6 +20,8 @@ import type {
   SystemUsage,
   Session,
   TerminalInfo,
+  BackgroundTask,
+  BackgroundTaskOutput,
   Workspace,
   WorkspaceList
 } from "./contracts";
@@ -120,7 +122,11 @@ export const api = {
     stop: (id: string) => apiRequest<{ stopped: boolean }>(`/api/runs/${id}`, { method: "DELETE" })
   },
   workspace: {
-    tree: () => apiRequest<FileNode[]>("/api/workspace/tree?depth=5"),
+    tree: (path = "", depth = 5) => {
+      const query = new URLSearchParams({ depth: String(depth) });
+      if (path) query.set("path", path);
+      return apiRequest<FileNode[]>(`/api/workspace/tree?${query.toString()}`);
+    },
     file: (path: string) => apiRequest<FileContent>(`/api/workspace/file?path=${encodeURIComponent(path)}`),
     save: (path: string, content: string, expectedModifiedAt?: number | null) =>
       apiRequest<FileContent>("/api/workspace/file", {
@@ -187,6 +193,14 @@ export const api = {
     create: (cols: number, rows: number) =>
       apiRequest<TerminalInfo>("/api/terminals", { method: "POST", body: JSON.stringify({ cols, rows }) }),
     remove: (id: string) => apiRequest<{ removed: boolean }>(`/api/terminals/${id}`, { method: "DELETE" })
+  },
+  backgroundTasks: {
+    list: () => apiRequest<{ tasks: BackgroundTask[] }>("/api/background-tasks"),
+    output: (id: string, tailLines = 200) =>
+      apiRequest<BackgroundTaskOutput>(`/api/background-tasks/${encodeURIComponent(id)}/output?tail_lines=${tailLines}`),
+    stop: (id: string) => apiRequest<{ task: BackgroundTask; was_running: boolean }>(`/api/background-tasks/${encodeURIComponent(id)}/stop`, { method: "POST" }),
+    cleanup: (removeLogs = false) =>
+      apiRequest<{ removed: string[]; remaining: number }>(`/api/background-tasks?remove_logs=${removeLogs}`, { method: "DELETE" })
   },
   system: {
     usage: () => apiRequest<SystemUsage>("/api/system/usage")

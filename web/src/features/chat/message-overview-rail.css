@@ -1,24 +1,16 @@
 .message-overview-rail {
   position: absolute;
-  top: 12px;
-  bottom: 12px;
-  left: 4px;
-  width: 30px;
+  top: 50%;
+  left: 7px;
+  width: 22px;
+  height: min(148px, calc(100% - 96px));
+  transform: translateY(-50%);
   z-index: 6;
 }
 
 .message-overview-rail.is-hidden {
   visibility: hidden;
   pointer-events: none;
-}
-
-.message-overview-track {
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 14px;
-  width: 1px;
-  background: color-mix(in srgb, var(--line-strong) 68%, transparent);
 }
 
 .message-overview-list {
@@ -40,22 +32,22 @@
 .message-overview-marker {
   position: absolute;
   top: 0;
-  left: 4px;
+  left: 2px;
   display: grid;
-  width: 22px;
-  height: 18px;
+  width: 18px;
+  height: 14px;
   padding: 0;
   place-items: center;
   border: 0;
   border-radius: 5px;
   background: transparent;
-  color: var(--ink-faint);
+  color: color-mix(in srgb, var(--ink-faint) 62%, transparent);
   transform: translateY(-50%);
   cursor: pointer;
 }
 
 .message-overview-marker-line {
-  width: 10px;
+  width: 7px;
   height: 1px;
   background: currentColor;
   transition: width 140ms ease, height 140ms ease, color 140ms ease;
@@ -70,7 +62,7 @@
 .message-overview-marker:hover .message-overview-marker-line,
 .message-overview-marker:focus-visible .message-overview-marker-line,
 .message-overview-marker.is-active .message-overview-marker-line {
-  width: 16px;
+  width: 13px;
   height: 2px;
 }
 
@@ -82,7 +74,7 @@
 .message-overview-preview {
   position: absolute;
   top: 0;
-  left: 31px;
+  left: 25px;
   width: min(320px, calc(100vw - 100px));
   max-height: 180px;
   overflow: hidden;

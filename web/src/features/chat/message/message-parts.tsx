@@ -2,6 +2,8 @@ import type { LiveMessagePart } from "../run-event-reducer";
 import { MarkdownRenderer } from "../markdown-renderer";
 import { ReasoningBlock } from "../reasoning-block";
 import { ToolLifecycleCard } from "../tool-lifecycle-card";
+import { ToolCallGroup } from "./tool-call-group";
+import { groupCompletedToolCalls } from "./tool-call-grouping";
 
 /**
  * 按消息部件顺序渲染思考、正文和工具调用。
@@ -10,14 +12,17 @@ import { ToolLifecycleCard } from "../tool-lifecycle-card";
  * @returns 嵌入同一助手消息中的部件列表
  */
 export function MessageParts({ parts, live }: { parts: LiveMessagePart[]; live?: boolean }) {
+  const groupedParts = groupCompletedToolCalls(parts);
   return (
     <div className="message-parts">
-      {parts.map((part) => {
+      {groupedParts.map((item) => {
+        if (item.type === "tool-group") return <ToolCallGroup key={item.id} tools={item.tools} />;
+        const part = item.part;
         if (part.type === "reasoning") {
-          return <ReasoningBlock key={part.id} source={part.source} live={live && !part.endedAt} startedAt={part.startedAt} endedAt={part.endedAt} />;
+          return <ReasoningBlock key={item.id} source={part.source} live={live && !part.endedAt} startedAt={part.startedAt} endedAt={part.endedAt} />;
         }
-        if (part.type === "tool") return <ToolLifecycleCard key={part.id} tool={part.tool} />;
-        return <MarkdownRenderer key={part.id} source={part.source} />;
+        if (part.type === "tool") return <ToolLifecycleCard key={item.id} tool={part.tool} />;
+        return <MarkdownRenderer key={item.id} source={part.source} />;
       })}
     </div>
   );

@@ -8,9 +8,8 @@ import { ComposerTextarea } from "./composer/composer-textarea";
 import type { ComposerTextareaHandle } from "./composer/composer-textarea";
 import type { ComposerAttachment } from "./composer/use-composer-attachments";
 import { resolveComposerAvailability } from "./composer-availability";
-import { ModelSelector } from "./model-selector";
+import { ModelThinkingSelector } from "./model-thinking-selector";
 import type { LiveRunState } from "./run-event-reducer";
-import { ThinkingSelector } from "./thinking-selector";
 import "./chat-composer.css";
 
 type ChatComposerProps = {
@@ -93,17 +92,14 @@ export function ChatComposer(props: ChatComposerProps) {
         <div className="composer-footer">
           <div className="composer-toolrail">
             <div className="composer-model-group">
-              <ModelSelector
+              <ModelThinkingSelector
                 choices={props.choices}
                 selection={props.selection}
+                thinkingLevel={props.thinkingLevel}
                 loading={props.modelLoading}
                 disabled={props.running}
-                onSelect={props.onModelSelect}
-              />
-              <ThinkingSelector
-                value={props.thinkingLevel}
-                disabled={props.running}
-                onChange={props.onThinkingLevelChange}
+                onModelSelect={props.onModelSelect}
+                onThinkingLevelChange={props.onThinkingLevelChange}
               />
             </div>
             <div className="composer-mode" aria-label="运行模式">

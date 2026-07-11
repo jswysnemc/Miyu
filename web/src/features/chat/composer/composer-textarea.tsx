@@ -1,8 +1,19 @@
-import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { ChangeEvent, ClipboardEvent, KeyboardEvent } from "react";
+import { forwardRef, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import type { ClipboardEvent, FormEvent, KeyboardEvent, PointerEvent } from "react";
+import { useOutsidePointerDown } from "../../../shared/hooks/use-outside-pointer-down";
+import {
+  deleteAdjacentFileMention,
+  insertEditorPlainText,
+  readEditorTextSelection,
+  renderFileMentionEditor,
+  selectFileMentionToken,
+  serializeFileMentionEditor,
+  setEditorTextSelection
+} from "./file-mention-editor";
+import { formatFileMention } from "./file-mention-token";
+import { FileMentionPopover } from "./file-mention-popover";
 import { isCursorOnFirstLine, isCursorOnLastLine, navigateInputHistory } from "./input-history";
 import type { InputHistoryState } from "./input-history";
-import { FileMentionPopover } from "./file-mention-popover";
 
 type ComposerTextareaProps = {
   value: string;
@@ -19,47 +30,89 @@ export type ComposerTextareaHandle = {
 };
 
 /**
- * 渲染支持图片粘贴、历史切换和 @ 文件引用的输入框。
+ * 渲染支持原子文件引用、图片粘贴和输入历史的富文本输入区。
  *
  * @param props 输入内容、历史记录、附件回调和提交回调
  * @param ref 暴露 openMentionPicker 的句柄
- * @returns 聊天文本输入框
+ * @returns 聊天文本输入区
  */
 export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTextareaProps>(function ComposerTextarea(props, ref) {
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const editorRef = useRef<HTMLDivElement>(null);
+  const mentionPopoverRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<InputHistoryState>({ index: null, draft: "" });
   const lastEscapeRef = useRef(0);
-  const [mentionOpen, setMentionOpen] = useState(false);
+  const pendingSelectionRef = useRef<{ start: number; end: number } | null>(null);
   const mentionRangeRef = useRef<{ start: number; end: number } | null>(null);
+  const [mentionOpen, setMentionOpen] = useState(false);
 
   useImperativeHandle(ref, () => ({
     /** 以当前选区为插入点打开文件引用浮层。 */
     openMentionPicker: () => {
-      const textarea = textareaRef.current;
-      const caret = textarea ? textarea.selectionStart : props.value.length;
-      mentionRangeRef.current = { start: caret, end: textarea ? textarea.selectionEnd : caret };
+      const editor = editorRef.current;
+      const selection = editor ? readEditorTextSelection(editor) : null;
+      mentionRangeRef.current = selection ?? { start: props.value.length, end: props.value.length };
       setMentionOpen(true);
     }
   }));
 
-  useEffect(() => {
-    const textarea = textareaRef.current;
-    if (!textarea) return;
-    textarea.style.height = "0px";
-    textarea.style.height = `${Math.min(textarea.scrollHeight, 144)}px`;
-    textarea.style.overflowY = textarea.scrollHeight > 144 ? "auto" : "hidden";
+  useOutsidePointerDown(mentionPopoverRef, () => dismissMention(false), mentionOpen);
+
+  // 1. 外部状态变化时重建 token DOM，本地输入同步时不触碰浏览器选区
+  useLayoutEffect(() => {
+    const editor = editorRef.current;
+    if (!editor || serializeFileMentionEditor(editor) === props.value) return;
+    renderFileMentionEditor(editor, props.value);
+    const pending = pendingSelectionRef.current;
+    pendingSelectionRef.current = null;
+    const start = pending?.start ?? props.value.length;
+    const end = pending?.end ?? start;
+    requestAnimationFrame(() => {
+      editor.focus();
+      setEditorTextSelection(editor, start, end);
+    });
   }, [props.value]);
 
   /**
-   * 更新文本、退出历史浏览，并在输入 @ 时打开文件引用浮层。
+   * 关闭文件引用浮层。
    *
-   * @param event 文本输入事件
+   * @param restoreFocus 是否把焦点交还输入区
+   * @returns 无返回值
    */
-  const handleChange = (event: ChangeEvent<HTMLTextAreaElement>) => {
+  function dismissMention(restoreFocus: boolean): void {
+    mentionRangeRef.current = null;
+    setMentionOpen(false);
+    if (restoreFocus) requestAnimationFrame(() => editorRef.current?.focus());
+  }
+
+  /**
+   * 在触发位置插入完整文件引用 token。
+   *
+   * @param path 选中的文件相对路径
+   * @returns 无返回值
+   */
+  const handleMentionSelect = (path: string) => {
+    const current = editorRef.current ? serializeFileMentionEditor(editorRef.current) : props.value;
+    const range = mentionRangeRef.current ?? { start: current.length, end: current.length };
+    const mention = formatFileMention(path);
+    const insertion = `${mention} `;
+    const next = `${current.slice(0, range.start)}${insertion}${current.slice(range.end)}`;
+    pendingSelectionRef.current = { start: range.start + insertion.length, end: range.start + insertion.length };
+    props.onChange(next);
+    dismissMention(false);
+  };
+
+  /**
+   * 将 DOM 输入同步为后端文本，并在新增 @ 时打开文件选择器。
+   *
+   * @param event 输入事件
+   * @returns 无返回值
+   */
+  const handleInput = (event: FormEvent<HTMLDivElement>) => {
     historyRef.current = { index: null, draft: "" };
-    const next = event.target.value;
-    const caret = event.target.selectionStart;
-    // 1. 仅在本次输入新增了一个 @ 字符时触发浮层
+    const next = serializeFileMentionEditor(event.currentTarget);
+    const selection = readEditorTextSelection(event.currentTarget);
+    const caret = selection?.end ?? next.length;
+    // 2. 仅在本次输入新增一个 @ 字符时打开文件选择器
     if (next.length === props.value.length + 1 && next[caret - 1] === "@") {
       mentionRangeRef.current = { start: caret - 1, end: caret };
       setMentionOpen(true);
@@ -68,60 +121,71 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
   };
 
   /**
-   * 在触发位置插入文件引用并删除触发的 @ 字符。
-   *
-   * @param path 选中的文件相对路径
-   */
-  const handleMentionSelect = (path: string) => {
-    const range = mentionRangeRef.current ?? { start: props.value.length, end: props.value.length };
-    const insertion = `@${path} `;
-    props.onChange(`${props.value.slice(0, range.start)}${insertion}${props.value.slice(range.end)}`);
-    closeMention();
-    requestAnimationFrame(() => setTextareaSelection(textareaRef.current, range.start + insertion.length));
-  };
-
-  /** 关闭文件引用浮层并把焦点交还文本框。 */
-  const closeMention = () => {
-    mentionRangeRef.current = null;
-    setMentionOpen(false);
-    requestAnimationFrame(() => textareaRef.current?.focus());
-  };
-
-  /**
-   * 粘贴剪贴板中的全部图片，并在当前选区插入 token。
+   * 粘贴图片附件或纯文本，禁止富文本节点进入编辑区。
    *
    * @param event 剪贴板事件
+   * @returns 无返回值
    */
-  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+  const handlePaste = (event: ClipboardEvent<HTMLDivElement>) => {
+    const editor = event.currentTarget;
     const files = Array.from(event.clipboardData.files).filter((file) => file.type.startsWith("image/"));
-    if (files.length === 0) return;
+    const selection = readEditorTextSelection(editor) ?? { start: props.value.length, end: props.value.length };
     event.preventDefault();
-    const start = event.currentTarget.selectionStart;
-    const end = event.currentTarget.selectionEnd;
-    void props.onPasteImages(files, start, end).then((caret) => {
-      if (caret === undefined) return;
-      requestAnimationFrame(() => setTextareaSelection(textareaRef.current, caret));
-    });
+    if (files.length > 0) {
+      void props.onPasteImages(files, selection.start, selection.end).then((caret) => {
+        if (caret === undefined) return;
+        requestAnimationFrame(() => setEditorTextSelection(editor, caret));
+      });
+      return;
+    }
+    const text = event.clipboardData.getData("text/plain");
+    if (text && insertEditorPlainText(editor, text)) props.onChange(serializeFileMentionEditor(editor));
   };
 
   /**
-   * 处理输入历史、双击 Escape 清空和回车提交。
+   * 点击文件引用时选择完整 token，避免光标进入路径正文。
    *
-   * @param event 文本框键盘事件
+   * @param event 指针按下事件
+   * @returns 无返回值
    */
-  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
-    const textarea = event.currentTarget;
-    if (event.key === "ArrowUp" && isCursorOnFirstLine(props.value, textarea.selectionStart)) {
-      if (applyHistoryNavigation("up", props, historyRef, textareaRef)) event.preventDefault();
+  const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
+    event.currentTarget.focus();
+    if (!selectFileMentionToken(event.currentTarget, event.target)) return;
+    event.preventDefault();
+  };
+
+  /**
+   * 处理原子删除、输入历史、Escape 清空和回车提交。
+   *
+   * @param event 输入区键盘事件
+   * @returns 无返回值
+   */
+  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const editor = event.currentTarget;
+    const current = serializeFileMentionEditor(editor);
+    const selection = readEditorTextSelection(editor) ?? { start: current.length, end: current.length };
+    if ((event.key === "Backspace" || event.key === "Delete") && selection.start === selection.end) {
+      const direction = event.key === "Backspace" ? "backward" : "forward";
+      if (deleteAdjacentFileMention(editor, direction)) {
+        event.preventDefault();
+        props.onChange(serializeFileMentionEditor(editor));
+        return;
+      }
+    }
+    if (event.key === "ArrowUp" && isCursorOnFirstLine(current, selection.start)) {
+      if (applyHistoryNavigation("up", props, historyRef, pendingSelectionRef)) event.preventDefault();
       return;
     }
-    if (event.key === "ArrowDown" && isCursorOnLastLine(props.value, textarea.selectionEnd)) {
-      if (applyHistoryNavigation("down", props, historyRef, textareaRef)) event.preventDefault();
+    if (event.key === "ArrowDown" && isCursorOnLastLine(current, selection.end)) {
+      if (applyHistoryNavigation("down", props, historyRef, pendingSelectionRef)) event.preventDefault();
       return;
     }
     if (event.key === "Escape") {
       const now = Date.now();
-      if (now - lastEscapeRef.current < 500 && props.value) {
+      if (mentionOpen) {
+        event.preventDefault();
+        dismissMention(true);
+      } else if (now - lastEscapeRef.current < 500 && current) {
         event.preventDefault();
         props.onChange("");
         historyRef.current = { index: null, draft: "" };
@@ -132,21 +196,31 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
     if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
       event.preventDefault();
       props.onSubmit();
+      return;
+    }
+    if (event.key === "Enter" && event.shiftKey) {
+      event.preventDefault();
+      if (insertEditorPlainText(editor, "\n")) props.onChange(serializeFileMentionEditor(editor));
     }
   };
 
   return (
     <div className="composer-text-wrap">
-      <FileMentionPopover open={mentionOpen} onSelect={handleMentionSelect} onClose={closeMention} />
-      <textarea
-        ref={textareaRef}
-        value={props.value}
-        onChange={handleChange}
+      <FileMentionPopover ref={mentionPopoverRef} open={mentionOpen} onSelect={handleMentionSelect} onClose={() => dismissMention(true)} />
+      <div
+        ref={editorRef}
+        className="composer-editor"
+        contentEditable={!props.disabled}
+        suppressContentEditableWarning
+        role="textbox"
+        aria-label="消息输入"
+        aria-multiline="true"
+        aria-disabled={props.disabled}
+        data-placeholder={props.placeholder}
+        onInput={handleInput}
         onKeyDown={handleKeyDown}
         onPaste={handlePaste}
-        placeholder={props.placeholder}
-        disabled={props.disabled}
-        rows={1}
+        onPointerDown={handlePointerDown}
       />
     </div>
   );
@@ -158,34 +232,20 @@ export const ComposerTextarea = forwardRef<ComposerTextareaHandle, ComposerTexta
  * @param direction 历史移动方向
  * @param props 输入框属性
  * @param historyRef 历史游标引用
- * @param textareaRef 文本框引用
+ * @param pendingSelectionRef 等待恢复的选区
  * @returns 是否切换了历史输入
  */
 function applyHistoryNavigation(
   direction: "up" | "down",
   props: ComposerTextareaProps,
   historyRef: React.MutableRefObject<InputHistoryState>,
-  textareaRef: React.RefObject<HTMLTextAreaElement | null>
+  pendingSelectionRef: React.MutableRefObject<{ start: number; end: number } | null>
 ): boolean {
   const result = navigateInputHistory(props.historyEntries, historyRef.current, props.value, direction);
   if (!result) return false;
   historyRef.current = result.state;
+  const caret = direction === "up" ? 0 : result.value.length;
+  pendingSelectionRef.current = { start: caret, end: caret };
   props.onChange(result.value);
-  requestAnimationFrame(() => {
-    const caret = direction === "up" ? 0 : result.value.length;
-    setTextareaSelection(textareaRef.current, caret);
-  });
   return true;
-}
-
-/**
- * 聚焦文本框并设置折叠选区。
- *
- * @param textarea 文本框元素
- * @param caret 光标位置
- */
-function setTextareaSelection(textarea: HTMLTextAreaElement | null, caret: number) {
-  if (!textarea) return;
-  textarea.focus();
-  textarea.setSelectionRange(caret, caret);
 }

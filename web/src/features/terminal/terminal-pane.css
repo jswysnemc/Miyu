@@ -70,6 +70,15 @@
   text-transform: uppercase;
 }
 
+.terminal-dock-nav { gap: 2px; padding: 4px !important; }
+.terminal-dock-nav > button { display: inline-flex !important; width: auto !important; min-width: 0; gap: 4px; padding: 0 5px; }
+.terminal-dock-nav > button.active { background: var(--terminal-selection); color: var(--terminal-text); }
+.terminal-dock-nav > button:last-child { margin-left: auto; }
+.terminal-dock-nav span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.terminal-dock-nav b { min-width: 15px; padding: 1px 4px; border-radius: 8px; background: var(--signal); color: var(--paper); font-size: 8px; text-align: center; }
+.terminal-list.tasks-view { display: grid; place-items: center; }
+.terminal-task-summary { padding: 10px; color: var(--terminal-muted); font-size: 10px; text-align: center; }
+
 .terminal-sidebar button {
   border: 0;
   background: transparent;

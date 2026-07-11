@@ -2,6 +2,8 @@
 .edit-tool-view,
 .generic-tool-view {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   gap: 0;
   background: var(--technical-surface);
   color: var(--technical-text);
@@ -49,6 +51,8 @@
 
 .shell-output,
 .generic-tool-block {
+  min-width: 0;
+  max-width: 100%;
   max-height: 420px;
   overflow: auto;
   margin: 0;
@@ -66,6 +70,8 @@
 }
 
 .structured-diff {
+  min-width: 0;
+  max-width: 100%;
   max-height: 460px;
   overflow: auto;
   background: var(--technical-surface);
@@ -197,6 +203,8 @@
 
 .read-tool-view {
   display: grid;
+  min-width: 0;
+  max-width: 100%;
   background: var(--technical-surface);
   color: var(--technical-text);
   font-family: var(--font-code);

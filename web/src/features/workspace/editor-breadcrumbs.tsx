@@ -5,18 +5,13 @@ import { api } from "../../api/client";
 import type { FileNode } from "../../api/contracts";
 import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import { FileTypeIcon } from "../../shared/ui/file-icon";
-import { findFileNode, parentFilePath } from "./file-tree-utils";
+import { breadcrumbDirectoryPath, buildBreadcrumbParts } from "./editor-breadcrumb-utils";
+import { workspaceRelativePath } from "./workspace-path-utils";
 import "./editor-breadcrumbs.css";
 
 type EditorBreadcrumbsProps = {
   path: string;
   onSelectFile: (path: string) => void;
-};
-
-type BreadcrumbPart = {
-  label: string;
-  path: string;
-  kind: "root" | "directory" | "file";
 };
 
 /**
@@ -28,13 +23,21 @@ type BreadcrumbPart = {
 export function EditorBreadcrumbs({ path, onSelectFile }: EditorBreadcrumbsProps) {
   const rootRef = useRef<HTMLElement>(null);
   const [openPath, setOpenPath] = useState<string | null>(null);
-  const tree = useQuery({ queryKey: ["file-tree"], queryFn: api.workspace.tree });
+  const tree = useQuery({ queryKey: ["file-tree"], queryFn: () => api.workspace.tree() });
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
-  const workspaceName = workspaces.data?.workspaces.find((workspace) => workspace.id === workspaces.data.active_id)?.name ?? "工作区";
+  const workspace = workspaces.data?.workspaces.find((item) => item.id === workspaces.data.active_id);
+  const workspaceName = workspace?.name ?? "工作区";
   const nodes = tree.data ?? [];
-  const parts = useMemo(() => buildBreadcrumbParts(path, nodes, workspaceName), [path, nodes, workspaceName]);
+  const relativePath = useMemo(() => workspaceRelativePath(path, workspace?.path ?? ""), [path, workspace?.path]);
+  const parts = useMemo(() => buildBreadcrumbParts(relativePath, nodes, workspaceName), [relativePath, nodes, workspaceName]);
   const openPart = parts.find((part) => part.path === openPath) ?? null;
-  const menuNodes = openPart ? nodesForBreadcrumb(openPart, nodes) : [];
+  const menuDirectory = breadcrumbDirectoryPath(openPart);
+  const directory = useQuery({
+    queryKey: ["breadcrumb-directory", menuDirectory],
+    queryFn: () => api.workspace.tree(menuDirectory ?? "", 5),
+    enabled: menuDirectory !== null
+  });
+  const menuNodes = directory.data ?? [];
   useOutsidePointerDown(rootRef, () => setOpenPath(null), openPath !== null);
 
   return (
@@ -58,7 +61,7 @@ export function EditorBreadcrumbs({ path, onSelectFile }: EditorBreadcrumbsProps
       </div>
       {openPart && (
         <div className="editor-breadcrumb-menu">
-          {menuNodes.length > 0 ? menuNodes.map((node) => (
+          {directory.isLoading ? <span className="editor-breadcrumb-empty">正在读取目录</span> : menuNodes.length > 0 ? menuNodes.map((node) => (
             <BreadcrumbMenuItem key={node.path} node={node} onSelectFile={onSelectFile} onClose={() => setOpenPath(null)} depth={0} />
           )) : <span className="editor-breadcrumb-empty">目录中没有可显示的文件</span>}
         </div>
@@ -100,38 +103,4 @@ function BreadcrumbMenuItem({ node, onSelectFile, onClose, depth }: { node: File
       ))}
     </div>
   );
-}
-
-/**
- * 根据当前路径构建面包屑段。
- *
- * @param path 当前文件相对路径
- * @param nodes 工作区文件树
- * @param workspaceName 当前工作区名称
- * @returns 面包屑路径段
- */
-function buildBreadcrumbParts(path: string, nodes: FileNode[], workspaceName: string): BreadcrumbPart[] {
-  const segments = path.split("/").filter(Boolean);
-  const parts: BreadcrumbPart[] = [{ label: workspaceName, path: "", kind: "root" }];
-  let current = "";
-  segments.forEach((segment, index) => {
-    current = current ? `${current}/${segment}` : segment;
-    const node = findFileNode(nodes, current);
-    parts.push({ label: segment, path: current, kind: index === segments.length - 1 && node?.kind !== "directory" ? "file" : "directory" });
-  });
-  return parts;
-}
-
-/**
- * 返回面包屑段应显示的目录内容或同级节点。
- *
- * @param part 当前展开的面包屑段
- * @param nodes 工作区文件树
- * @returns 下拉菜单节点
- */
-function nodesForBreadcrumb(part: BreadcrumbPart, nodes: FileNode[]): FileNode[] {
-  if (part.kind === "root") return nodes;
-  if (part.kind === "directory") return findFileNode(nodes, part.path)?.children ?? [];
-  const parent = parentFilePath(part.path);
-  return parent ? findFileNode(nodes, parent)?.children ?? [] : nodes;
 }

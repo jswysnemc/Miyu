@@ -1,5 +1,5 @@
 import { FileText } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { forwardRef, useEffect, useMemo, useRef, useState } from "react";
 import type { KeyboardEvent } from "react";
 import { api } from "../../../api/client";
 import type { FileNode } from "../../../api/contracts";
@@ -44,7 +44,7 @@ function filterPaths(paths: string[], query: string): string[] {
  * @param props 打开状态、选中回调和关闭回调
  * @returns 文件引用浮层，关闭时返回 null
  */
-export function FileMentionPopover({ open, onSelect, onClose }: FileMentionPopoverProps) {
+export const FileMentionPopover = forwardRef<HTMLDivElement, FileMentionPopoverProps>(function FileMentionPopover({ open, onSelect, onClose }, ref) {
   const [paths, setPaths] = useState<string[]>([]);
   const [loading, setLoading] = useState(false);
   const [query, setQuery] = useState("");
@@ -120,7 +120,7 @@ export function FileMentionPopover({ open, onSelect, onClose }: FileMentionPopov
 
   if (!open) return null;
   return (
-    <div className="file-mention-popover" role="listbox" aria-label="选择引用文件">
+    <div className="file-mention-popover" role="listbox" aria-label="选择引用文件" ref={ref}>
       <input
         ref={inputRef}
         className="file-mention-filter"
@@ -148,4 +148,4 @@ export function FileMentionPopover({ open, onSelect, onClose }: FileMentionPopov
       </div>
     </div>
   );
-}
+});

@@ -11,6 +11,7 @@ import { useComposerAttachments } from "./composer/use-composer-attachments";
 import { useChatModel } from "./use-chat-model";
 import { useRunStream } from "./use-run-stream";
 import { useThinkingLevel } from "./use-thinking-level";
+import { useFollowOutputScroll } from "./use-follow-output-scroll";
 import "./chat-page.css";
 
 /**
@@ -45,46 +46,14 @@ export function ChatPage() {
   const [mode, setMode] = useState<"plan" | "yolo">("yolo");
   const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const atBottomRef = useRef(true);
-  const [showJump, setShowJump] = useState(false);
+  const scrollContentSignal = useMemo(() => [timeline.data, run.state], [timeline.data, run.state]);
+  const { showJump, jumpToBottom, pauseFollowing } = useFollowOutputScroll(scrollRef, scrollContentSignal, activeSession?.id);
 
   useEffect(() => {
     run.reset();
     setInput("");
     composerAttachments.clearAttachments();
-    // 1. 切换会话后恢复自动跟随并隐藏回底按钮
-    atBottomRef.current = true;
-    setShowJump(false);
   }, [activeSession?.id]);
-
-  // 1. 监听滚动位置维护"是否在底部"标记，距底 80px 内视为在底部
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (!element) return;
-    const onScroll = () => {
-      const distance = element.scrollHeight - element.scrollTop - element.clientHeight;
-      const atBottom = distance < 80;
-      atBottomRef.current = atBottom;
-      setShowJump(!atBottom);
-    };
-    element.addEventListener("scroll", onScroll, { passive: true });
-    return () => element.removeEventListener("scroll", onScroll);
-  }, []);
-
-  // 2. 流式内容更新时仅在用户处于底部才即时跟随，避免抢占用户滚动位置
-  useEffect(() => {
-    const element = scrollRef.current;
-    if (element && atBottomRef.current) element.scrollTop = element.scrollHeight;
-  }, [timeline.data, run.state]);
-
-  /** 平滑滚动到消息底部并恢复自动跟随。 */
-  const jumpToBottom = () => {
-    const element = scrollRef.current;
-    if (!element) return;
-    atBottomRef.current = true;
-    setShowJump(false);
-    element.scrollTo({ top: element.scrollHeight, behavior: "smooth" });
-  };
 
   /** 提交当前输入内容和模型选择。 */
   const submit = async () => {
@@ -164,7 +133,7 @@ export function ChatPage() {
         <MessageOverviewRail
           scrollContainerRef={scrollRef}
           items={overviewItems}
-          onNavigate={() => { atBottomRef.current = false; }}
+          onNavigate={pauseFollowing}
         />
         {showJump && (
           <button type="button" className="jump-to-bottom" onClick={jumpToBottom} aria-label="回到底部" title="回到底部">

@@ -25,7 +25,7 @@ type FileAction = { kind: "file" | "directory" | "rename"; value: string } | nul
 export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreeProps) {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const tree = useQuery({ queryKey: ["file-tree"], queryFn: api.workspace.tree, refetchOnWindowFocus: true, refetchInterval: 15_000 });
+  const tree = useQuery({ queryKey: ["file-tree"], queryFn: () => api.workspace.tree(), refetchOnWindowFocus: true, refetchInterval: 15_000 });
   const [focusedPath, setFocusedPath] = useState<string | null>(selectedFile);
   const [action, setAction] = useState<FileAction>(null);
   const [search, setSearch] = useState("");

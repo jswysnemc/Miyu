@@ -1,6 +1,8 @@
 import { PanelBottomOpen, PanelLeftOpen, PanelRightOpen } from "lucide-react";
+import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import { useEffect } from "react";
+import { api } from "../../api/client";
 import { ChatPage } from "../chat/chat-page";
 import { SessionSidebar } from "../sessions/session-sidebar";
 import { SessionSidebarResizeHandle } from "../sessions/session-sidebar-resize-handle";
@@ -8,6 +10,7 @@ import { useSessionSidebarLayout } from "../sessions/use-session-sidebar-layout"
 import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
+import { workspaceRelativePath } from "./workspace-path-utils";
 import { TerminalDock } from "../terminal/terminal-dock";
 import { TerminalResizeHandle } from "../terminal/terminal-resize-handle";
 
@@ -26,6 +29,8 @@ type WorkspaceLayoutProps = {
 export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: WorkspaceLayoutProps) {
   const layout = useWorkspaceLayout();
   const sessionSidebar = useSessionSidebarLayout();
+  const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
+  const activeWorkspace = workspaces.data?.workspaces.find((workspace) => workspace.id === workspaces.data.active_id);
   const style = {
     "--session-sidebar-width": `${sessionSidebar.width}px`,
     "--workspace-panel-width": `${layout.workspaceWidth}px`,
@@ -47,12 +52,12 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
       const path = (event as CustomEvent<{ path?: string }>).detail?.path;
       if (!path) return;
       // 1. 选中文件并确保右侧工作区可见
-      onSelectFile(path);
+      onSelectFile(workspaceRelativePath(path, activeWorkspace?.path ?? ""));
       layout.openWorkspace();
     };
     window.addEventListener("miyu:open-file", handleOpenFile);
     return () => window.removeEventListener("miyu:open-file", handleOpenFile);
-  }, [onSelectFile, layout.openWorkspace]);
+  }, [activeWorkspace?.path, onSelectFile, layout.openWorkspace]);
 
   return (
     <div className={classes} style={style}>

@@ -231,6 +231,27 @@ export type TerminalInfo = {
   rows: number;
 };
 
+export type BackgroundTask = {
+  id: string;
+  label: string;
+  command: string;
+  cwd: string;
+  pid: number;
+  status: string;
+  started_at: number;
+  updated_at: number;
+  timeout_seconds: number;
+};
+
+export type BackgroundTaskOutput = {
+  task: BackgroundTask;
+  stdout?: string | null;
+  stderr?: string | null;
+  stdout_truncated: boolean;
+  stderr_truncated: boolean;
+  tail_lines: number;
+};
+
 export type SystemUsage = {
   session: {
     id: string;

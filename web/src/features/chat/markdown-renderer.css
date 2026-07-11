@@ -1,5 +1,8 @@
 .markdown-body {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
+  overflow: hidden;
   overflow-wrap: anywhere;
   word-wrap: break-word;
 }
@@ -126,6 +129,7 @@
 
 .markdown-code-block,
 .mermaid-wrapper {
+  min-width: 0;
   width: 100%;
   max-width: 100%;
   margin: 12px 0;
@@ -178,6 +182,8 @@
 
 .markdown-code-block pre,
 .mermaid-source {
+  width: 100%;
+  min-width: 0;
   max-width: 100%;
   margin: 0;
   overflow: auto;
@@ -192,6 +198,8 @@
 
 .markdown-code-block code,
 .mermaid-source code {
+  display: block;
+  min-width: max-content;
   font-family: var(--font-code);
 }
 
