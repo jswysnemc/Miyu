@@ -28,12 +28,6 @@
   white-space: nowrap;
 }
 
-.agent-selector .ui-select-menu {
-  right: 0;
-  left: auto;
-  min-width: 180px;
-}
-
 @media (max-width: 900px) {
   .agent-selector > svg {
     display: none;

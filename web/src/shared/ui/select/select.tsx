@@ -1,5 +1,7 @@
 import { Check, ChevronDown } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { useAnchoredPopover } from "../popover/use-anchored-popover";
 import "./select.css";
 
 export type SelectOption<T extends string> = {
@@ -13,6 +15,10 @@ type SelectProps<T extends string> = {
   options: SelectOption<T>[];
   disabled?: boolean;
   ariaLabel?: string;
+  menuPreferredWidth?: number;
+  menuMinimumWidth?: number;
+  menuAlign?: "left" | "right";
+  menuClassName?: string;
   onChange: (value: T) => void;
 };
 
@@ -22,14 +28,24 @@ type SelectProps<T extends string> = {
  * @param props 当前值、选项和更新回调
  * @returns 自定义 combobox
  */
-export function Select<T extends string>({ value, options, disabled, ariaLabel, onChange }: SelectProps<T>) {
+export function Select<T extends string>({ value, options, disabled, ariaLabel, menuPreferredWidth, menuMinimumWidth, menuAlign, menuClassName, onChange }: SelectProps<T>) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const current = options.find((option) => option.value === value) ?? options[0];
+  const menuStyle = useAnchoredPopover({
+    open,
+    anchorRef: triggerRef,
+    preferredWidth: menuPreferredWidth,
+    minimumWidth: menuMinimumWidth,
+    align: menuAlign
+  });
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
-      if (!rootRef.current?.contains(event.target as Node)) setOpen(false);
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("pointerdown", handlePointerDown);
     return () => document.removeEventListener("pointerdown", handlePointerDown);
@@ -55,18 +71,19 @@ export function Select<T extends string>({ value, options, disabled, ariaLabel, 
 
   return (
     <div className="ui-select" ref={rootRef}>
-      <button type="button" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} onClick={() => setOpen((visible) => !visible)} onKeyDown={handleKeyDown}>
+      <button ref={triggerRef} type="button" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} onClick={() => setOpen((visible) => !visible)} onKeyDown={handleKeyDown}>
         <span>{current?.label ?? value}</span><ChevronDown size={14} className={open ? "open" : ""} />
       </button>
-      {open && (
-        <div className="ui-select-menu" role="listbox">
+      {open && createPortal(
+        <div ref={menuRef} className={`ui-select-menu${menuClassName ? ` ${menuClassName}` : ""}`} role="listbox" style={menuStyle}>
           {options.map((option) => (
             <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? "active" : ""} key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
               <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
               <Check size={14} />
             </button>
           ))}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

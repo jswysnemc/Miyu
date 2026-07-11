@@ -1,9 +1,10 @@
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Check, ChevronDown, FolderGit2, FolderOpen, X } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api/client";
-import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
+import { useAnchoredPopover } from "../../shared/ui/popover/use-anchored-popover";
 import { ServerDirectoryDialog } from "./server-directory-dialog";
 import "./workspace-switcher.css";
 
@@ -16,6 +17,8 @@ export function WorkspaceSwitcher() {
   const [open, setOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
   const confirm = useConfirm();
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
   const active = workspaces.data?.workspaces.find((workspace) => workspace.id === workspaces.data.active_id);
@@ -23,7 +26,18 @@ export function WorkspaceSwitcher() {
     mutationFn: (id: string) => switchWithTerminalConfirm(id, confirm),
     onSuccess: (switched) => { if (switched) window.location.reload(); }
   });
-  useOutsidePointerDown(rootRef, () => setOpen(false), open);
+  const menuStyle = useAnchoredPopover({ open, anchorRef: triggerRef, preferredWidth: 520, minimumWidth: 240 });
+
+  useEffect(() => {
+    if (!open) return;
+    /** 在工作区触发器和 Portal 菜单外按下指针时关闭菜单。 */
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
 
   /** 登记服务端目录并切换工作区。 */
   const openDirectory = async (path: string) => {
@@ -34,11 +48,11 @@ export function WorkspaceSwitcher() {
 
   return (
     <div className="workspace-switcher" ref={rootRef}>
-      <button className="workspace-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <button ref={triggerRef} className="workspace-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <FolderGit2 size={15} /><strong>{active?.name ?? "工作区"}</strong><ChevronDown size={13} className={open ? "open" : ""} />
       </button>
-      {open && (
-        <div className="workspace-menu">
+      {open && createPortal(
+        <div ref={menuRef} className="workspace-menu" style={menuStyle}>
           <div className="workspace-menu-head"><span><strong>{active?.name}</strong><small>{active?.path}</small></span><button type="button" aria-label="关闭工作区菜单" onClick={() => setOpen(false)}><X size={15} /></button></div>
           <div className="workspace-items">
             {workspaces.data?.workspaces.map((workspace) => (
@@ -49,7 +63,8 @@ export function WorkspaceSwitcher() {
           </div>
           <button type="button" className="workspace-add" onClick={() => { setOpen(false); setBrowserOpen(true); }}><FolderOpen size={15} /><span>浏览服务端目录</span></button>
           {switchWorkspace.error && <p className="form-error workspace-error">{switchWorkspace.error.message}</p>}
-        </div>
+        </div>,
+        document.body
       )}
       <ServerDirectoryDialog open={browserOpen} onClose={() => setBrowserOpen(false)} onSelect={openDirectory} />
     </div>

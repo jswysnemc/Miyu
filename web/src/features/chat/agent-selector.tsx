@@ -26,6 +26,10 @@ export function AgentSelector({ choices, selection, loading, disabled, onSelect 
         options={choices.map((choice) => ({ value: choice.id, label: choice.name }))}
         disabled={disabled || loading || choices.length === 0}
         ariaLabel="选择 Agent"
+        menuPreferredWidth={220}
+        menuMinimumWidth={180}
+        menuAlign="right"
+        menuClassName="agent-selector-menu"
         onChange={onSelect}
       />
     </div>

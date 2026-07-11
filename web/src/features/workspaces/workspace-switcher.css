@@ -53,10 +53,6 @@
 }
 
 .workspace-menu {
-  position: absolute;
-  top: 44px;
-  left: 0;
-  width: min(520px, calc(100vw - 28px));
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
