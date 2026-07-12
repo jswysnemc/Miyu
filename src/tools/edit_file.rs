@@ -46,6 +46,7 @@ fn edit_file_parameters() -> Value {
         },
         "oneOf": [
             {
+                "type": "object",
                 "required": ["patch"],
                 "not": {"anyOf": [
                     {"required": ["path"]},
@@ -56,6 +57,7 @@ fn edit_file_parameters() -> Value {
                 ]}
             },
             {
+                "type": "object",
                 "required": ["path", "content"],
                 "not": {"anyOf": [
                     {"required": ["patch"]},
@@ -65,6 +67,7 @@ fn edit_file_parameters() -> Value {
                 ]}
             },
             {
+                "type": "object",
                 "required": ["path", "start_line", "end_line", "replacement"],
                 "not": {"anyOf": [
                     {"required": ["patch"]},
@@ -295,6 +298,11 @@ mod tests {
     fn edit_file_schema_exposes_three_exclusive_modes() {
         let schema = edit_file_parameters();
         assert_eq!(schema["oneOf"].as_array().map(Vec::len), Some(3));
+        assert!(schema["oneOf"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|branch| branch["type"] == "object"));
         assert!(schema["properties"]["patch"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("Add File") && value.contains("+# Title")));

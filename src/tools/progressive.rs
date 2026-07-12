@@ -34,9 +34,9 @@ pub(crate) fn register_loader(registry: &mut ToolRegistry) {
                 }
             },
             "oneOf": [
-                { "required": ["tool_name"] },
-                { "required": ["group_name"] },
-                { "required": ["skill_name"] }
+                { "type": "object", "required": ["tool_name"] },
+                { "type": "object", "required": ["group_name"] },
+                { "type": "object", "required": ["skill_name"] }
             ],
             "additionalProperties": false
         }),
