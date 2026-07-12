@@ -90,28 +90,28 @@ export function ChatComposer(props: ChatComposerProps) {
   });
   return (
     <div className="composer-shell">
-      <form className="composer" onSubmit={handleSubmit}>
-        <div className="composer-context-bar">
-          <WorkspaceSwitcher />
-          {git.data?.repository && <span className="composer-context-chip" title={git.data.branch}><GitBranch size={13}/><span>{git.data.branch || "Git"}</span></span>}
-          <SystemUsage />
-          <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
-          <TodoMarkdownView sessionId={props.sessionId} compact />
-          <div className="composer-mode" aria-label="运行模式">
-            <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
-            <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
-          </div>
-          <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
-            <SquareTerminal size={14} />
-            {runtimeActivity.runningTasks > 0 && <span className="composer-activity-badge">{runtimeActivity.runningTasks}</span>}
-          </button>
-          {runtimeActivity.runningSubagents > 0 && (
-            <button type="button" className="composer-rail-button composer-activity-button is-active" onClick={() => window.dispatchEvent(new Event("miyu:open-subagents"))} title={`${runtimeActivity.runningSubagents} 个子智能体运行中`} aria-label="查看子智能体">
-              <Bot size={14} />
-              <span className="composer-activity-badge">{runtimeActivity.runningSubagents}</span>
-            </button>
-          )}
+      <div className="composer-context-strip">
+        <WorkspaceSwitcher />
+        {git.data?.repository && <span className="composer-context-chip" title={git.data.branch}><GitBranch size={13}/><span>{git.data.branch || "Git"}</span></span>}
+        <SystemUsage />
+        <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
+        <TodoMarkdownView sessionId={props.sessionId} compact />
+        <div className="composer-mode" aria-label="运行模式">
+          <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
+          <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
         </div>
+        <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
+          <SquareTerminal size={14} />
+          {runtimeActivity.runningTasks > 0 && <span className="composer-activity-badge">{runtimeActivity.runningTasks}</span>}
+        </button>
+        {runtimeActivity.runningSubagents > 0 && (
+          <button type="button" className="composer-rail-button composer-activity-button is-active" onClick={() => window.dispatchEvent(new Event("miyu:open-subagents"))} title={`${runtimeActivity.runningSubagents} 个子智能体运行中`} aria-label="查看子智能体">
+            <Bot size={14} />
+            <span className="composer-activity-badge">{runtimeActivity.runningSubagents}</span>
+          </button>
+        )}
+      </div>
+      <form className="composer" onSubmit={handleSubmit}>
         <AttachmentStrip attachments={props.attachments} onRemove={props.onRemoveAttachment} />
         <ComposerTextarea
           ref={textareaRef}

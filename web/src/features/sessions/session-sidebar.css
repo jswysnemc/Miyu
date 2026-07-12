@@ -188,6 +188,11 @@
   white-space: nowrap;
 }
 
+.workspace-menu-popover {
+  top: 32px;
+  right: 6px;
+}
+
 .workspace-session-children {
   position: relative;
   display: grid;

@@ -89,11 +89,11 @@
 }
 
 .terminal-dock-nav { gap: 2px; padding: 4px !important; }
-.terminal-dock-nav > button { display: inline-flex !important; width: auto !important; min-width: 24px; flex: none; gap: 4px; padding: 0 5px; }
+.terminal-dock-nav > button { display: grid !important; width: 26px !important; height: 26px; flex: none; padding: 0; place-items: center; }
 .terminal-dock-nav > button.active { background: var(--terminal-selection); color: var(--terminal-text); }
-.terminal-dock-nav > button:nth-last-child(2) { margin-left: auto; }
-.terminal-dock-nav span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.terminal-dock-nav b { min-width: 15px; padding: 1px 4px; border-radius: 8px; background: var(--signal); color: var(--paper); font-size: 8px; text-align: center; }
+.terminal-nav-spacer { flex: 1; }
+.terminal-dock-nav .nav-badge-anchor { position: relative; }
+.terminal-dock-nav b { position: absolute; top: 1px; right: 0; min-width: 13px; padding: 1px 3px; border-radius: 8px; background: var(--signal); color: var(--paper); font-size: 8px; font-weight: 600; text-align: center; }
 .terminal-list.tasks-view { display: grid; place-items: center; }
 .terminal-task-summary { padding: 10px; color: var(--terminal-muted); font-size: 10px; text-align: center; }
 

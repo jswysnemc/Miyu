@@ -149,6 +149,12 @@ export function ChatPage() {
           </button>
         )}
       </div>
+      {emptySession && (
+        <div className="empty-session-greeting">
+          <h2>开始新的对话</h2>
+          <p>输入任务或问题，Enter 发送，Shift+Enter 换行</p>
+        </div>
+      )}
       <ChatComposer
         value={input}
         mode={mode}

@@ -26,9 +26,10 @@ export function TerminalDock({ onClose, manager }: { onClose: () => void; manage
           {tabsCollapsed ? (
             <button type="button" onClick={() => setTabsCollapsed(false)} aria-label="展开终端标签" title="展开终端标签"><PanelLeftOpen size={14} /></button>
           ) : <>
-          <button type="button" className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")}><TerminalSquare size={13} /><span>终端</span></button>
-          <button type="button" className={view === "tasks" ? "active" : ""} onClick={() => setView("tasks")}><Activity size={13} /><span>后台任务</span>{runningCount > 0 && <b>{runningCount}</b>}</button>
-          {view === "terminal" && <button type="button" onClick={() => void manager.createTerminal()} aria-label="新建终端"><Plus size={14} /></button>}
+          <button type="button" className={view === "terminal" ? "active" : ""} onClick={() => setView("terminal")} aria-label="终端" title="终端"><TerminalSquare size={14} /></button>
+          <button type="button" className={view === "tasks" ? "nav-badge-anchor active" : "nav-badge-anchor"} onClick={() => setView("tasks")} aria-label="后台任务" title="后台任务"><Activity size={14} />{runningCount > 0 && <b>{runningCount}</b>}</button>
+          <span className="terminal-nav-spacer" />
+          {view === "terminal" && <button type="button" onClick={() => void manager.createTerminal()} aria-label="新建终端" title="新建终端"><Plus size={14} /></button>}
           <button type="button" onClick={() => setTabsCollapsed(true)} aria-label="折叠终端标签" title="折叠终端标签"><PanelLeftClose size={14} /></button>
           </>}
         </header>

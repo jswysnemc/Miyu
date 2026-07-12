@@ -1,10 +1,11 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ChevronDown, ChevronRight, FolderGit2, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
+import { CheckSquare2, ChevronDown, ChevronRight, FolderGit2, FolderSearch, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 import { switchWithTerminalConfirm } from "../workspaces/workspace-switcher";
+import { ServerDirectoryDialog } from "../workspaces/server-directory-dialog";
 import { ActiveAgentIndicator } from "./active-agent-indicator";
 import { useSessionTree } from "./use-session-tree";
 import "./session-sidebar.css";
@@ -25,6 +26,8 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   const queryClient = useQueryClient();
   const confirm = useConfirm();
   const [menu, setMenu] = useState<string | null>(null);
+  const [workspaceMenu, setWorkspaceMenu] = useState<string | null>(null);
+  const [browserOpen, setBrowserOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
@@ -36,9 +39,9 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   const activeWorkspace = tree.data?.find((workspace) => workspace.active);
   const sessions = activeWorkspace?.sessions ?? [];
 
-  // 1. 监听整页 pointerdown，点击菜单外任意位置时关闭管理菜单
+  // 1. 监听整页 pointerdown，点击菜单外任意位置时关闭会话或工作区管理菜单
   useEffect(() => {
-    if (!menu) return;
+    if (!menu && !workspaceMenu) return;
     /**
      * 处理菜单外部点击并关闭菜单。
      *
@@ -47,10 +50,11 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
     const onPointerDown = (event: PointerEvent) => {
       if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
       setMenu(null);
+      setWorkspaceMenu(null);
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [menu]);
+  }, [menu, workspaceMenu]);
 
   /** 刷新会话列表和全部消息缓存。 */
   const refresh = async () => {
@@ -129,6 +133,17 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   const selectWorkspaceSessions = () => {
     setSelecting(true);
     toggleAll();
+  };
+
+  /**
+   * 登记服务端目录并切换到对应工作区。
+   *
+   * @param path 服务端目录路径
+   */
+  const openDirectory = async (path: string) => {
+    const workspace = await api.workspaces.add(path);
+    const switched = await switchWithTerminalConfirm(workspace.id, confirm);
+    if (switched) window.location.reload();
   };
 
   /** 确认后关闭非活动工作区。 */
@@ -225,6 +240,9 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
       <div className="sidebar-heading">
         <div><span className="eyebrow">Sessions</span><h2>会话</h2></div>
         <div className="sidebar-heading-actions">
+          <button type="button" className="icon-button" aria-label="打开服务端目录" title="打开服务端目录" onClick={() => setBrowserOpen(true)}>
+            <FolderSearch size={16} />
+          </button>
           <button type="button" className="icon-button" aria-label="折叠会话侧栏" title="折叠会话侧栏" onClick={onToggleCollapsed}>
             <PanelLeftClose size={16} />
           </button>
@@ -235,6 +253,8 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
         {tree.data?.map((workspace) => {
           const workspaceExpanded = expanded.has(workspace.workspace_id);
           const workspaceRunning = workspace.sessions.some((session) => runningSessions.has(`${workspace.workspace_id}:${session.id}`));
+          const canSelect = workspace.active && manageableCount > 0;
+          const canClose = (tree.data?.length ?? 0) > 1;
           return <div className="session-workspace" key={workspace.workspace_id}>
             <div className={`${workspace.active ? "workspace-tree-row active" : "workspace-tree-row"}${workspace.active && selecting ? " selecting" : ""}`}>
               <button type="button" className="workspace-tree-main" onClick={() => toggleWorkspace(workspace.workspace_id)} aria-expanded={workspaceExpanded}>
@@ -245,12 +265,19 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
               </button>
               <span className="workspace-tree-actions">
                 {workspace.active && !selecting && <button type="button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话"><Plus size={14} /></button>}
-                {workspace.active && !selecting && manageableCount > 0 && <button type="button" onClick={selectWorkspaceSessions} aria-label={`全选 ${workspace.workspace_name} 的会话`} title="全选会话"><CheckSquare2 size={14} /></button>}
                 {workspace.active && selecting && <span className="workspace-selection-count">已选择 {selected.size} 项</span>}
                 {workspace.active && selecting && <button type="button" className={confirming ? "danger confirming" : "danger"} onClick={requestBulkDelete} disabled={selected.size === 0 || removeMany.isPending} aria-label={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"} title={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"}><Trash2 size={14} /></button>}
                 {workspace.active && selecting && <button type="button" onClick={closeSelection} aria-label="退出选择" title="退出选择"><X size={14} /></button>}
-                {(tree.data?.length ?? 0) > 1 && !(workspace.active && selecting) && <button type="button" onClick={() => void closeWorkspace(workspace.workspace_id, workspace.workspace_name, workspace.active)} aria-label={`关闭工作区 ${workspace.workspace_name}`} title="关闭工作区"><X size={14} /></button>}
+                {!(workspace.active && selecting) && (canSelect || canClose) && (
+                  <button type="button" onClick={() => { setMenu(null); setWorkspaceMenu((value) => value === workspace.workspace_id ? null : workspace.workspace_id); }} aria-label={`管理工作区 ${workspace.workspace_name}`} title="管理工作区"><MoreHorizontal size={14} /></button>
+                )}
               </span>
+              {workspaceMenu === workspace.workspace_id && (
+                <div className="session-menu workspace-menu-popover" ref={menuRef}>
+                  {canSelect && <button type="button" onClick={() => { setWorkspaceMenu(null); selectWorkspaceSessions(); }}><CheckSquare2 size={14} /> 多选会话</button>}
+                  {canClose && <button type="button" className="danger" onClick={() => { setWorkspaceMenu(null); void closeWorkspace(workspace.workspace_id, workspace.workspace_name, workspace.active); }}><X size={14} /> 关闭工作区</button>}
+                </div>
+              )}
             </div>
             {workspaceExpanded && <div className="workspace-session-children">{workspace.sessions.map((session) => {
           const checked = selected.has(session.id);
@@ -310,6 +337,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
           <Settings size={15} strokeWidth={1.8} /><span>配置</span>
         </NavLink>
       </div>
+      <ServerDirectoryDialog open={browserOpen} onClose={() => setBrowserOpen(false)} onSelect={openDirectory} />
     </div>
   );
 }
