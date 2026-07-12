@@ -4,6 +4,7 @@ use super::{
     ToolCallFunction, ToolCallStreamProgress, ToolDefinition, Usage,
 };
 use crate::config::{AppConfig, ProviderConfig};
+use crate::config::{WEB_SEARCH_TOOL_MODE_HIDE, WEB_SEARCH_TOOL_MODE_RENAME};
 use crate::i18n::text as t;
 use crate::llm::http_debug::{
     anthropic_request_headers, bearer_request_headers, HttpDebugConfig, HttpDebugRecorder,
@@ -287,6 +288,7 @@ impl OpenAiCompatibleClient {
     where
         F: FnMut(ChatStreamEvent) -> Result<()>,
     {
+        let tools = prepare_anthropic_tools(&self.provider, tools);
         let request = AnthropicRequest {
             model: self.provider.default_model.clone(),
             system: lower_anthropic_system(&messages),
@@ -605,4 +607,34 @@ fn anthropic_thinking_unsupported(status: u16, body: &str) -> bool {
         && ["unsupported", "not supported", "unknown", "invalid", "unrecognized"]
             .iter()
             .any(|marker| body.contains(marker))
+}
+
+/// 按模型配置处理 Anthropic 网页搜索工具名称冲突。
+///
+/// 参数:
+/// - `provider`: 当前供应商配置
+/// - `tools`: 当前可用工具
+///
+/// 返回:
+/// - 已隐藏或更名本地网页搜索工具的列表
+fn prepare_anthropic_tools(
+    provider: &ProviderConfig,
+    tools: Vec<ToolDefinition>,
+) -> Vec<ToolDefinition> {
+    match provider.model_web_search_tool_mode_for(&provider.default_model) {
+        Some(WEB_SEARCH_TOOL_MODE_HIDE) => tools
+            .into_iter()
+            .filter(|tool| tool.function.name != "web_search")
+            .collect(),
+        Some(WEB_SEARCH_TOOL_MODE_RENAME) => tools
+            .into_iter()
+            .map(|mut tool| {
+                if tool.function.name == "web_search" {
+                    tool.function.name = "miyu_web_search".to_string();
+                }
+                tool
+            })
+            .collect(),
+        _ => tools,
+    }
 }

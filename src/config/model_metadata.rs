@@ -8,6 +8,8 @@ pub const MODEL_TAG_VISION: &str = "vision";
 pub const MODEL_TAG_WEB_SEARCH: &str = "web_search";
 pub const MODEL_TAG_FAST: &str = "fast";
 pub const MODEL_TAG_LOW_COST: &str = "low_cost";
+pub const WEB_SEARCH_TOOL_MODE_HIDE: &str = "hide_builtin";
+pub const WEB_SEARCH_TOOL_MODE_RENAME: &str = "rename_local";
 pub const MODEL_TAGS: [&str; 6] = [
     MODEL_TAG_TOOL,
     MODEL_TAG_THINKING,
@@ -29,6 +31,8 @@ pub struct ModelMetadata {
     pub tools_enabled: Option<bool>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tags: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub web_search_tool_mode: Option<String>,
 }
 
 impl ModelMetadata {
@@ -40,7 +44,10 @@ impl ModelMetadata {
     /// 返回:
     /// - 没有上下文长度、工具开关和标签时返回 true
     pub fn is_empty(&self) -> bool {
-        self.context_chars.is_none() && self.tools_enabled.is_none() && self.tags.is_empty()
+        self.context_chars.is_none()
+            && self.tools_enabled.is_none()
+            && self.tags.is_empty()
+            && self.web_search_tool_mode.is_none()
     }
 }
 
@@ -85,6 +92,42 @@ impl ProviderConfig {
             .get(model)
             .and_then(|metadata| metadata.tools_enabled)
             .unwrap_or(true)
+    }
+
+    /// 返回模型的网页搜索工具冲突策略。
+    ///
+    /// 参数:
+    /// - `model`: 模型 ID
+    ///
+    /// 返回:
+    /// - 仅带 web_search 标签时返回已配置策略
+    pub fn model_web_search_tool_mode_for(&self, model: &str) -> Option<&str> {
+        let metadata = self.model_metadata.get(model)?;
+        if !metadata.tags.iter().any(|tag| tag == MODEL_TAG_WEB_SEARCH) {
+            return None;
+        }
+        Some(
+            metadata
+                .web_search_tool_mode
+                .as_deref()
+                .unwrap_or(WEB_SEARCH_TOOL_MODE_HIDE),
+        )
+    }
+
+    /// 设置模型的网页搜索工具冲突策略。
+    ///
+    /// 参数:
+    /// - `model`: 模型 ID
+    /// - `mode`: 隐藏内置冲突工具或更名本地工具
+    ///
+    /// 返回:
+    /// - 无
+    pub fn set_model_web_search_tool_mode(&mut self, model: &str, mode: Option<String>) {
+        if model.trim().is_empty() {
+            return;
+        }
+        self.model_metadata_mut(model).web_search_tool_mode = mode;
+        self.remove_empty_model_metadata(model);
     }
 
     /// 设置模型上下文 token 数。

@@ -5,7 +5,7 @@ mod auth;
 mod error;
 mod runs;
 mod server;
-mod services;
+pub(crate) mod services;
 mod system_monitor;
 mod terminal;
 mod workspace;

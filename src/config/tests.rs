@@ -78,6 +78,7 @@ fn remove_active_provider_model_clears_removed_current_model() {
             context_chars: Some(8192),
             tags: vec!["web_search".to_string()],
             tools_enabled: None,
+            web_search_tool_mode: None,
         },
     );
 
@@ -173,6 +174,7 @@ fn active_context_chars_prefers_model_metadata() {
             context_chars: Some(128_000),
             tools_enabled: None,
             tags: Vec::new(),
+            web_search_tool_mode: None,
         },
     );
 

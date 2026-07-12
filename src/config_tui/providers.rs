@@ -1,4 +1,4 @@
-use crate::config::{AppConfig, ProviderConfig};
+use crate::config::{AppConfig, ModelMetadata, ProviderConfig};
 use crate::i18n::text as t;
 use anyhow::Result;
 use crossterm::cursor::MoveTo;
@@ -12,7 +12,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use super::input::{read_key, read_key_with_timeout};
-use super::provider_fetch::fetch_models;
+use super::provider_fetch::{fetch_models, FetchModelsResult};
 use super::provider_forms::{edit_model_form, edit_provider_form};
 use super::ui::{draw_column, draw_menu, message, truncate};
 
@@ -25,6 +25,7 @@ pub(crate) struct ProviderBrowser<'a> {
     filter: String,
     filter_mode: bool,
     raw_models: Vec<String>,
+    remote_metadata: BTreeMap<String, ModelMetadata>,
     orgs: Vec<String>,
     models: Vec<ModelEntry>,
     status: String,
@@ -44,6 +45,7 @@ impl<'a> ProviderBrowser<'a> {
             filter: String::new(),
             filter_mode: false,
             raw_models: Vec::new(),
+            remote_metadata: BTreeMap::new(),
             orgs: Vec::new(),
             models: Vec::new(),
             status: String::new(),
@@ -182,14 +184,15 @@ impl<'a> ProviderBrowser<'a> {
         self.loading = false;
         self.fetch_rx = None;
         match result {
-            Ok(models) => {
+            Ok(result) => {
                 self.status = format!(
                     "{} {} {}",
                     t("Fetched", "已获取"),
-                    models.len(),
+                    result.models.len(),
                     t("models", "个模型")
                 );
-                self.raw_models = models;
+                self.raw_models = result.models;
+                self.remote_metadata = result.metadata;
             }
             Err(err) => {
                 self.status = format_status_line(&format!(
@@ -287,6 +290,18 @@ impl<'a> ProviderBrowser<'a> {
                     self.config.providers.get_mut(self.provider_idx),
                     self.models.get(self.model_idx).cloned(),
                 ) {
+                    if let Some(metadata) = self.remote_metadata.get(&model.full).cloned() {
+                        let current = provider
+                            .model_metadata
+                            .entry(model.full.clone())
+                            .or_default();
+                        if current.context_chars.is_none() {
+                            current.context_chars = metadata.context_chars;
+                        }
+                        if current.tags.is_empty() {
+                            current.tags = metadata.tags;
+                        }
+                    }
                     if edit_model_form(stdout, provider, &model.full)? {
                         self.config.active_provider = provider.id.clone();
                         self.status = format!(
@@ -481,7 +496,7 @@ impl<'a> ProviderBrowser<'a> {
     }
 }
 
-type FetchResult = (u64, Result<Vec<String>, String>);
+type FetchResult = (u64, Result<FetchModelsResult, String>);
 
 fn format_status_line(value: &str) -> String {
     value.split_whitespace().collect::<Vec<_>>().join(" ")

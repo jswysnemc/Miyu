@@ -86,6 +86,7 @@ pub(crate) fn fetch_models(paths: &MiyuPaths, provider: &ProviderConfig) -> Resu
 pub(crate) struct CatalogMetadata {
     pub(crate) provider: String,
     pub(crate) context_chars: Option<u64>,
+    pub(crate) tags: Vec<String>,
 }
 
 /// 从 models.dev 目录补充模型元数据。
@@ -128,11 +129,32 @@ fn find_catalog_model(catalog: &Value, model: &str) -> Option<CatalogMetadata> {
                 .and_then(Value::as_u64);
             return Some(CatalogMetadata {
                 provider: provider_id.clone(),
-                context_chars: context.map(|tokens| tokens.saturating_mul(4)),
+                context_chars: context,
+                tags: catalog_model_tags(value),
             });
         }
     }
     None
+}
+
+/// 从 models.dev 模型条目推导 Miyu 能力标签。
+fn catalog_model_tags(value: &Value) -> Vec<String> {
+    let mut tags = Vec::new();
+    if value.get("tool_call").and_then(Value::as_bool) == Some(true) {
+        tags.push("tool".to_string());
+    }
+    if value.get("reasoning").and_then(Value::as_bool) == Some(true) {
+        tags.push("thinking".to_string());
+    }
+    let supports_image = value
+        .get("modalities")
+        .and_then(|modalities| modalities.get("input"))
+        .and_then(Value::as_array)
+        .is_some_and(|items| items.iter().any(|item| item.as_str() == Some("image")));
+    if supports_image {
+        tags.push("vision".to_string());
+    }
+    tags
 }
 
 /// 解析供应商 API Key，缺失时允许无认证模型接口。

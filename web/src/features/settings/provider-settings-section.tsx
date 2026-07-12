@@ -29,7 +29,7 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
   const [fetching, setFetching] = useState(false);
   const [fetchError, setFetchError] = useState("");
   const [remoteModels, setRemoteModels] = useState<string[]>([]);
-  const [remoteMetadata, setRemoteMetadata] = useState<Record<string,{provider:string;context_chars?:number | null}>>({});
+  const [remoteMetadata, setRemoteMetadata] = useState<Record<string,{provider:string;context_chars?:number | null;tags?:string[]}>>({});
   const [importOpen, setImportOpen] = useState(false);
   const [tab, setTab] = useState<"connection" | "models" | "behavior" | "advanced">("connection");
   const selectedIndex = Math.max(0, config.providers.findIndex((provider) => provider.id === selectedId));
@@ -87,7 +87,7 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
     const nextModels = [...(provider.models ?? [])];
     for (const model of models) if (!nextModels.includes(model)) nextModels.push(model);
     const modelMetadata={...(provider.model_metadata ?? {})};
-    for(const model of models){const metadata=remoteMetadata[model];if(metadata?.context_chars) modelMetadata[model]={...(modelMetadata[model] ?? {}),context_chars:metadata.context_chars};}
+    for(const model of models){const metadata=remoteMetadata[model];if(metadata?.context_chars || metadata?.tags?.length){const current=modelMetadata[model] ?? {};modelMetadata[model]={...current,...(!current.context_chars && metadata.context_chars ? {context_chars:metadata.context_chars} : {}),...(metadata.tags?.length ? {tags:Array.from(new Set([...(current.tags ?? []),...metadata.tags]))} : {})};}}
     onProviderChange(selectedIndex, { models: nextModels,model_metadata:modelMetadata, default_model: provider.default_model || nextModels[0] || "" });
     setImportOpen(false);
     setTab("models");

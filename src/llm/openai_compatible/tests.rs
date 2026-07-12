@@ -372,6 +372,29 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_web_search_strategy_hides_or_renames_local_tool() {
+        let mut provider = test_provider("cpap", "https://cpap.example/v1");
+        provider.default_model = "grok-4.5".to_string();
+        provider.set_model_tags_for("grok-4.5", vec!["web_search".to_string()]);
+        let tool = ToolDefinition {
+            kind: "function",
+            function: crate::llm::FunctionDefinition {
+                name: "web_search".to_string(),
+                description: "search".to_string(),
+                parameters: json!({"type":"object"}),
+            },
+        };
+
+        assert!(prepare_anthropic_tools(&provider, vec![tool.clone()]).is_empty());
+        provider.set_model_web_search_tool_mode(
+            "grok-4.5",
+            Some(WEB_SEARCH_TOOL_MODE_RENAME.to_string()),
+        );
+        let renamed = prepare_anthropic_tools(&provider, vec![tool]);
+        assert_eq!(renamed[0].function.name, "miyu_web_search");
+    }
+
+    #[test]
     fn anthropic_stream_accepts_thinking_signature_delta() {
         let mut state = AnthropicStreamState::default();
         let mut on_chunk = |_| Ok(());

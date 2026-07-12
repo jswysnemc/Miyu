@@ -166,6 +166,7 @@ export type ModelMetadata = {
   context_chars?: number;
   tools_enabled?: boolean;
   tags?: string[];
+  web_search_tool_mode?: "hide_builtin" | "rename_local";
 };
 
 export type QqGatewayConfig = {
@@ -240,7 +241,7 @@ export type ConfigResponse = {
 
 export type ProviderModelsResponse = {
   models: string[];
-  metadata: Record<string, { provider:string; context_chars?:number | null }>;
+  metadata: Record<string, { provider:string; context_chars?:number | null; tags?:string[] }>;
 };
 
 export type RunModelSelection = {

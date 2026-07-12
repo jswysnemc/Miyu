@@ -26,6 +26,9 @@ export function ModelMetadataEditor({ provider, onChange }: ModelMetadataEditorP
   }, [models.join("\u0000"), provider.default_model, selected]);
 
   const metadata = provider.model_metadata?.[selected] ?? {};
+  const [contextUnit, setContextUnit] = useState<"none" | "k" | "m">("none");
+  const contextDivisor = contextUnit === "k" ? 1_000 : contextUnit === "m" ? 1_000_000 : 1;
+  const contextValue = metadata.context_chars ? metadata.context_chars / contextDivisor : "";
 
   /** 新增模型标识并选中。 */
   const addModel = () => {
@@ -81,10 +84,11 @@ export function ModelMetadataEditor({ provider, onChange }: ModelMetadataEditorP
           <div className="model-metadata-form">
             <div className="model-metadata-head"><div><strong>{selected}</strong><small>单模型能力与上下文</small></div><button type="button" className={provider.default_model === selected ? "settings-secondary active" : "settings-secondary"} onClick={() => onChange({ default_model: selected })}>{provider.default_model === selected ? "默认模型" : "设为默认"}</button></div>
             <div className="settings-form-grid">
-              <label className="settings-field"><span>上下文 token 数</span><input type="number" min="1" value={metadata.context_chars ?? ""} onChange={(event) => updateMetadata({ context_chars: event.target.value ? Number(event.target.value) : undefined })} placeholder="例如 128000" /><small>支持模型级上下文窗口</small></label>
+              <div className="settings-field"><span>上下文 token 数</span><div className="model-context-input"><input type="number" min="0" step="any" value={contextValue} onChange={(event) => updateMetadata({ context_chars: event.target.value ? Math.round(Number(event.target.value) * contextDivisor) : undefined })} placeholder="例如 128" /><Select value={contextUnit} options={CONTEXT_UNIT_OPTIONS} onChange={(value) => setContextUnit(value as "none" | "k" | "m")} ariaLabel="上下文单位" /></div><small>支持无单位、k、m</small></div>
               <div className="settings-field"><span>工具调用</span><Select value={metadata.tools_enabled === false ? "disabled" : "enabled"} options={TOOL_OPTIONS} onChange={(value) => updateMetadata({ tools_enabled: value === "enabled" ? undefined : false })} ariaLabel="模型工具调用" /><small>覆盖供应商默认能力</small></div>
             </div>
             <div className="model-tag-field"><span>模型标签</span><div>{MODEL_TAGS.map((tag) => <button type="button" className={(metadata.tags ?? []).includes(tag) ? "active" : ""} key={tag} onClick={() => toggleTag(tag)}>{tag}</button>)}</div></div>
+            {(metadata.tags ?? []).includes("web_search") && <div className="settings-field"><span>网页搜索工具冲突</span><Select value={metadata.web_search_tool_mode ?? "hide_builtin"} options={WEB_SEARCH_TOOL_OPTIONS} onChange={(value) => updateMetadata({ web_search_tool_mode: value as ModelMetadata["web_search_tool_mode"] })} ariaLabel="网页搜索工具冲突策略" /><small>隐藏同名本地工具，或将本地工具更名后发送</small></div>}
           </div>
         )}
       </div>
@@ -95,4 +99,15 @@ export function ModelMetadataEditor({ provider, onChange }: ModelMetadataEditorP
 const TOOL_OPTIONS = [
   { value: "enabled", label: "允许" },
   { value: "disabled", label: "禁用" }
+];
+
+const CONTEXT_UNIT_OPTIONS = [
+  { value: "none", label: "无" },
+  { value: "k", label: "k" },
+  { value: "m", label: "m" }
+];
+
+const WEB_SEARCH_TOOL_OPTIONS = [
+  { value: "hide_builtin", label: "隐藏本地同名工具" },
+  { value: "rename_local", label: "更名本地工具" }
 ];

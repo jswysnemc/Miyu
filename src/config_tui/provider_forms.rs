@@ -7,7 +7,8 @@ use std::io;
 use super::form::{parse_bool_field, run_form, Field};
 use super::model_metadata_form::{
     apply_context_chars_field, apply_tag_fields, apply_tools_enabled_field,
-    context_chars_field_value, tag_fields, tools_enabled_field,
+    apply_web_search_tool_mode_field, context_chars_field_value, tag_fields, tools_enabled_field,
+    web_search_tool_mode_field,
 };
 
 /// 编辑 provider 配置表单。
@@ -50,6 +51,17 @@ pub(super) fn edit_provider_form(
     let tag_start = fields.len();
     fields.extend(tag_fields(&provider, &provider.default_model));
     let tag_end = fields.len();
+    let web_search_mode_index = provider
+        .model_tags_for(&provider.default_model)
+        .iter()
+        .any(|tag| tag == "web_search")
+        .then(|| {
+            fields.push(web_search_tool_mode_field(
+                &provider,
+                &provider.default_model,
+            ));
+            fields.len() - 1
+        });
     fields.extend([
         Field::new(
             t("Timeout seconds", "超时秒数"),
@@ -88,7 +100,8 @@ pub(super) fn edit_provider_form(
     if !default_model.trim().is_empty() && !models.iter().any(|item| item == &default_model) {
         models.push(default_model.clone());
     }
-    let extra_body = normalize_extra_body(&fields[tag_end + 4].value)?;
+    let behavior_start = tag_end + usize::from(web_search_mode_index.is_some());
+    let extra_body = normalize_extra_body(&fields[behavior_start + 4].value)?;
     let mut updated = ProviderConfig {
         id: fields[0].value.trim().to_string(),
         display_name: fields[1].value.trim().to_string(),
@@ -99,16 +112,23 @@ pub(super) fn edit_provider_form(
         model_context_chars: provider.model_context_chars.clone(),
         model_metadata: provider.model_metadata.clone(),
         default_model,
-        timeout_seconds: fields[tag_end].value.trim().parse().unwrap_or(60),
-        temperature: fields[tag_end + 1].value.trim().parse().unwrap_or(0.7),
+        timeout_seconds: fields[behavior_start].value.trim().parse().unwrap_or(60),
+        temperature: fields[behavior_start + 1]
+            .value
+            .trim()
+            .parse()
+            .unwrap_or(0.7),
         anthropic_max_tokens: provider.anthropic_max_tokens,
-        thinking_level: fields[tag_end + 2].value.trim().to_string(),
-        thinking_format: fields[tag_end + 3].value.trim().to_string(),
+        thinking_level: fields[behavior_start + 2].value.trim().to_string(),
+        thinking_format: fields[behavior_start + 3].value.trim().to_string(),
         extra_body,
     };
     let default_model = updated.default_model.clone();
     apply_context_chars_field(&mut updated, &default_model, &fields[6].value)?;
     apply_tag_fields(&mut updated, &default_model, &fields[tag_start..tag_end])?;
+    if let Some(index) = web_search_mode_index {
+        apply_web_search_tool_mode_field(&mut updated, &default_model, &fields[index].value);
+    }
     Ok(Some(updated))
 }
 
@@ -166,6 +186,14 @@ pub(super) fn edit_model_form(
     let tag_start = fields.len();
     fields.extend(tag_fields(provider, model));
     let tag_end = fields.len();
+    let web_search_mode_index = provider
+        .model_tags_for(model)
+        .iter()
+        .any(|tag| tag == "web_search")
+        .then(|| {
+            fields.push(web_search_tool_mode_field(provider, model));
+            fields.len() - 1
+        });
     if !run_form(stdout, t(" EDIT MODEL ", " 编辑模型 "), &mut fields)? {
         return Ok(false);
     }
@@ -196,6 +224,9 @@ pub(super) fn edit_model_form(
     apply_tools_enabled_field(provider, model, &fields[2].value)?;
     apply_context_chars_field(provider, model, &fields[3].value)?;
     apply_tag_fields(provider, model, &fields[tag_start..tag_end])?;
+    if let Some(index) = web_search_mode_index {
+        apply_web_search_tool_mode_field(provider, model, &fields[index].value);
+    }
     Ok(true)
 }
 

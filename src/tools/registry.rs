@@ -199,6 +199,7 @@ impl ToolRegistry {
     }
 
     pub fn permission(&self, name: &str) -> Result<ToolPermission> {
+        let name = local_tool_name(name);
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");
         };
@@ -206,6 +207,7 @@ impl ToolRegistry {
     }
 
     pub async fn call(&self, name: &str, arguments: &str) -> Result<String> {
+        let name = local_tool_name(name);
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");
         };
@@ -223,6 +225,7 @@ impl ToolRegistry {
         arguments: &str,
         sender: mpsc::UnboundedSender<String>,
     ) -> Result<String> {
+        let name = local_tool_name(name);
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");
         };
@@ -232,6 +235,15 @@ impl ToolRegistry {
             serde_json::from_str(arguments)?
         };
         tool.call(args, ToolProgress::new(sender)).await
+    }
+}
+
+/// 将协议层工具别名还原为本地注册名称。
+fn local_tool_name(name: &str) -> &str {
+    if name == "miyu_web_search" {
+        "web_search"
+    } else {
+        name
     }
 }
 

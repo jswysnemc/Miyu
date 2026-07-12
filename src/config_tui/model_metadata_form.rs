@@ -1,4 +1,5 @@
 use crate::config::{parse_context_chars, ProviderConfig, MODEL_TAGS};
+use crate::config::{WEB_SEARCH_TOOL_MODE_HIDE, WEB_SEARCH_TOOL_MODE_RENAME};
 use crate::i18n::text as t;
 use anyhow::Result;
 
@@ -55,6 +56,27 @@ pub(super) fn tools_enabled_field(provider: &ProviderConfig, model: &str) -> Fie
         t("Tool calling support", "工具调用支持"),
         provider.model_tools_enabled_for(model),
     )
+}
+
+/// 返回网页搜索工具冲突策略字段。
+pub(super) fn web_search_tool_mode_field(provider: &ProviderConfig, model: &str) -> Field {
+    Field::new(
+        t("Web search tool conflict", "网页搜索工具冲突"),
+        provider
+            .model_web_search_tool_mode_for(model)
+            .unwrap_or(WEB_SEARCH_TOOL_MODE_HIDE)
+            .to_string(),
+    )
+    .choices(&[WEB_SEARCH_TOOL_MODE_HIDE, WEB_SEARCH_TOOL_MODE_RENAME])
+}
+
+/// 应用网页搜索工具冲突策略字段。
+pub(super) fn apply_web_search_tool_mode_field(
+    provider: &mut ProviderConfig,
+    model: &str,
+    value: &str,
+) {
+    provider.set_model_web_search_tool_mode(model, Some(value.trim().to_string()));
 }
 
 /// 应用模型上下文 token 字段。

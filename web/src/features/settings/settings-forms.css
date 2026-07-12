@@ -339,6 +339,7 @@
 }
 
 .model-metadata-form { padding: 14px; }
+.model-context-input { display: grid; grid-template-columns: minmax(0, 1fr) 92px; gap: 7px; }
 
 .model-metadata-head {
   display: flex;
@@ -428,7 +429,7 @@
 
 .model-import-list button {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 18px;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
   align-items: center;
   gap: 7px;
   min-height: 48px;

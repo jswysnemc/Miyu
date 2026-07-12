@@ -683,6 +683,18 @@ fn validate_provider_model_metadata(provider: &ProviderConfig) -> Result<()> {
                 );
             }
         }
+        if let Some(mode) = metadata.web_search_tool_mode.as_deref() {
+            if mode != super::model_metadata::WEB_SEARCH_TOOL_MODE_HIDE
+                && mode != super::model_metadata::WEB_SEARCH_TOOL_MODE_RENAME
+            {
+                bail!(
+                    "provider {} model_metadata web_search_tool_mode for {} is invalid: {}",
+                    provider.id,
+                    model,
+                    mode
+                );
+            }
+        }
     }
     Ok(())
 }
