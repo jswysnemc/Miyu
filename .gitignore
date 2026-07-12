@@ -1,5 +1,6 @@
 /target/
 /docs/
+/web/dist/
 /.idea/
 /.vscode/
 .DS_Store
