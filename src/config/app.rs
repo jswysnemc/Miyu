@@ -459,6 +459,7 @@ impl AppConfig {
         let provider = self.provider(None)?;
         Ok(provider
             .model_context_chars_for(&provider.default_model)
+            .or_else(|| default_context_chars_for_provider_model(provider, &provider.default_model))
             .unwrap_or(self.context.default_max_chars))
     }
 
@@ -616,6 +617,22 @@ impl AppConfig {
             None => self.providers.push(provider),
         }
     }
+}
+
+/// 返回官方模型家族的上下文长度 fallback。
+///
+/// 参数:
+/// - `provider`: 当前供应商
+/// - `model`: 当前模型 ID
+///
+/// 返回:
+/// - 官方 Anthropic Claude 返回 200K，其他返回空
+fn default_context_chars_for_provider_model(
+    provider: &ProviderConfig,
+    model: &str,
+) -> Option<usize> {
+    let model = model.to_ascii_lowercase();
+    (provider.uses_official_anthropic_api() && model.starts_with("claude-")).then_some(200_000)
 }
 
 /// 校验 Provider 的模型元数据。

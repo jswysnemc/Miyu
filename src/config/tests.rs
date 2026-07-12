@@ -11,9 +11,13 @@ fn provider_config_can_be_saved_without_active_model() {
 #[test]
 fn provider_model_choices_ignore_unconfigured_models() {
     let mut config = AppConfig::default();
+    let provider_id = config.providers[0].id.clone();
     config.providers[0].models.clear();
     config.providers[0].default_model.clear();
-    assert!(config.provider_model_choices().is_empty());
+    assert!(!config
+        .provider_model_choices()
+        .iter()
+        .any(|choice| choice.provider_id == provider_id));
 }
 
 #[test]
@@ -22,6 +26,41 @@ fn new_openai_compatible_provider_has_no_active_model() {
 
     assert!(provider.models.is_empty());
     assert!(provider.default_model.is_empty());
+}
+
+#[test]
+fn default_templates_include_official_anthropic_provider() {
+    let provider = ProviderConfig::default_templates()
+        .into_iter()
+        .find(|provider| provider.id == "anthropic")
+        .unwrap();
+
+    assert_eq!(provider.protocol, "anthropic");
+    assert_eq!(provider.base_url, "https://api.anthropic.com/v1");
+    assert!(provider.default_model.starts_with("claude-"));
+}
+
+#[test]
+fn official_anthropic_uses_family_context_fallback() {
+    let mut config = AppConfig::default();
+    config.active_provider = "anthropic".to_string();
+
+    assert_eq!(config.active_context_chars().unwrap(), 200_000);
+}
+
+#[test]
+fn explicit_anthropic_context_overrides_family_fallback() {
+    let mut config = AppConfig::default();
+    let provider = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == "anthropic")
+        .unwrap();
+    let model = provider.default_model.clone();
+    provider.set_model_context_chars_for(&model, Some(160_000));
+    config.active_provider = "anthropic".to_string();
+
+    assert_eq!(config.active_context_chars().unwrap(), 160_000);
 }
 
 #[test]
@@ -67,7 +106,10 @@ fn remove_active_provider_model_clears_last_current_model() {
 
     assert!(config.providers[0].models.is_empty());
     assert!(config.providers[0].default_model.is_empty());
-    assert!(config.provider_model_choices().is_empty());
+    assert!(!config
+        .provider_model_choices()
+        .iter()
+        .any(|choice| choice.provider_id == provider_id));
 }
 
 #[test]

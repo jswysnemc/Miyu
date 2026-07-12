@@ -67,6 +67,7 @@ pub(super) fn read_repl_input(
     let mut cursor = input.chars().count();
     let mut slash_selection = 0usize;
     let mut history_index = history.len();
+    let mut history_clean_index = None::<usize>;
     let mut clipboard_state = ReplClipboardState::default();
     let mut last_escape = None::<Instant>;
     let mut last_ctrl_c = None::<Instant>;
@@ -112,6 +113,7 @@ pub(super) fn read_repl_input(
                 let text = strip_terminal_control_sequences(&text);
                 insert_str_at_cursor(&mut input, &mut cursor, &text);
                 slash_selection = 0;
+                history_clean_index = None;
                 is_pasted = true;
                 redraw_input!()?;
             }
@@ -138,6 +140,7 @@ pub(super) fn read_repl_input(
                             if let Some(completed) = complete_repl_command(&input) {
                                 input = completed.to_string();
                                 cursor = input.chars().count();
+                                history_clean_index = None;
                             }
                             slash_selection = 0;
                         } else {
@@ -160,6 +163,7 @@ pub(super) fn read_repl_input(
                             cursor = 0;
                             slash_selection = 0;
                             clipboard_state.clear();
+                            history_clean_index = None;
                             is_pasted = false;
                             last_escape = None;
                             redraw_input!()?;
@@ -200,10 +204,18 @@ pub(super) fn read_repl_input(
                             ) {
                                 cursor = next_cursor;
                                 redraw_input!()?;
-                            } else if !history.is_empty() {
+                            } else if repl_should_browse_history(
+                                &input,
+                                history,
+                                history_clean_index,
+                            ) {
+                                if input.is_empty() {
+                                    history_index = history.len();
+                                }
                                 history_index = history_index.saturating_sub(1);
                                 input = history.get(history_index).cloned().unwrap_or_default();
                                 cursor = input.chars().count();
+                                history_clean_index = Some(history_index);
                                 slash_selection = 0;
                                 clipboard_state.clear();
                                 is_pasted = false;
@@ -224,17 +236,23 @@ pub(super) fn read_repl_input(
                                 terminal_cols(),
                             ) {
                                 cursor = next_cursor;
-                            } else if history_index + 1 < history.len() {
+                            } else if repl_history_is_clean(&input, history, history_clean_index)
+                                && history_index + 1 < history.len()
+                            {
                                 history_index += 1;
                                 input = history.get(history_index).cloned().unwrap_or_default();
                                 cursor = input.chars().count();
+                                history_clean_index = Some(history_index);
                                 slash_selection = 0;
                                 clipboard_state.clear();
                                 is_pasted = false;
-                            } else if history_index < history.len() {
+                            } else if repl_history_is_clean(&input, history, history_clean_index)
+                                && history_index < history.len()
+                            {
                                 history_index = history.len();
                                 input.clear();
                                 cursor = input.chars().count();
+                                history_clean_index = None;
                                 slash_selection = 0;
                                 clipboard_state.clear();
                                 is_pasted = false;
@@ -245,6 +263,7 @@ pub(super) fn read_repl_input(
                     KeyCode::Enter if modifiers.contains(KeyModifiers::SHIFT) => {
                         insert_newline_at_cursor(&mut input, &mut cursor);
                         slash_selection = 0;
+                        history_clean_index = None;
                         is_pasted = false;
                         redraw_input!()?;
                     }
@@ -274,12 +293,14 @@ pub(super) fn read_repl_input(
                     KeyCode::Char('j') if modifiers.contains(KeyModifiers::CONTROL) => {
                         insert_newline_at_cursor(&mut input, &mut cursor);
                         slash_selection = 0;
+                        history_clean_index = None;
                         is_pasted = false;
                         redraw_input!()?;
                     }
                     KeyCode::Char('v') if modifiers.contains(KeyModifiers::CONTROL) => {
                         is_pasted = clipboard_state.paste_into_input(&mut input, &mut cursor)?;
                         slash_selection = 0;
+                        history_clean_index = None;
                         redraw_input!()?;
                     }
                     KeyCode::Char('g') if modifiers.contains(KeyModifiers::CONTROL) => {
@@ -291,6 +312,7 @@ pub(super) fn read_repl_input(
                                 input = strip_terminal_control_sequences(&edited);
                                 cursor = input.chars().count();
                                 slash_selection = 0;
+                                history_clean_index = None;
                                 clipboard_state.clear();
                             }
                             Err(err) => {
@@ -318,6 +340,7 @@ pub(super) fn read_repl_input(
                         cursor = 0;
                         slash_selection = 0;
                         clipboard_state.clear();
+                        history_clean_index = None;
                         is_pasted = false;
                         redraw_input!()?;
                     }
@@ -338,30 +361,50 @@ pub(super) fn read_repl_input(
                     KeyCode::Char('w') if modifiers.contains(KeyModifiers::CONTROL) => {
                         remove_word_before_cursor(&mut input, &mut cursor);
                         slash_selection = 0;
+                        history_clean_index = None;
                         is_pasted = false;
                         redraw_input!()?;
                     }
                     KeyCode::Backspace => {
-                        if clipboard_state.remove_block_before_cursor(&mut input, &mut cursor) {
+                        let changed = if clipboard_state
+                            .remove_block_before_cursor(&mut input, &mut cursor)
+                        {
                             // 已删除完整剪贴板占位块
+                            true
                         } else if cursor > 0 {
                             remove_char_before_cursor(&mut input, &mut cursor);
-                        }
+                            true
+                        } else {
+                            false
+                        };
                         slash_selection = 0;
+                        if changed {
+                            history_clean_index = None;
+                        }
                         is_pasted = false;
                         redraw_input!()?;
                     }
                     KeyCode::Delete => {
-                        if !clipboard_state.remove_block_at_cursor(&mut input, cursor) {
+                        let changed = if clipboard_state.remove_block_at_cursor(&mut input, cursor)
+                        {
+                            true
+                        } else if cursor < input.chars().count() {
                             remove_char_at_cursor(&mut input, cursor);
-                        }
+                            true
+                        } else {
+                            false
+                        };
                         slash_selection = 0;
+                        if changed {
+                            history_clean_index = None;
+                        }
                         is_pasted = false;
                         redraw_input!()?;
                     }
                     KeyCode::Char(ch) if !modifiers.contains(KeyModifiers::CONTROL) => {
                         if !is_disallowed_control_char(ch) {
                             insert_char_at_cursor(&mut input, &mut cursor, ch);
+                            history_clean_index = None;
                         }
                         slash_selection = 0;
                         is_pasted = false;
@@ -373,4 +416,41 @@ pub(super) fn read_repl_input(
             _ => {}
         }
     }
+}
+
+/// 判断当前输入是否仍与选中的历史记录一致。
+///
+/// 参数:
+/// - `input`: 当前输入
+/// - `history`: 历史记录
+/// - `history_clean_index`: 最近选中的历史下标
+///
+/// 返回:
+/// - 未修改选中历史时返回 true
+pub(super) fn repl_history_is_clean(
+    input: &str,
+    history: &[String],
+    history_clean_index: Option<usize>,
+) -> bool {
+    history_clean_index
+        .and_then(|index| history.get(index))
+        .is_some_and(|entry| entry == input)
+}
+
+/// 判断上方向键是否可以进入历史浏览。
+///
+/// 参数:
+/// - `input`: 当前输入
+/// - `history`: 历史记录
+/// - `history_clean_index`: 最近选中的历史下标
+///
+/// 返回:
+/// - 输入为空或仍为未修改历史时返回 true
+pub(super) fn repl_should_browse_history(
+    input: &str,
+    history: &[String],
+    history_clean_index: Option<usize>,
+) -> bool {
+    !history.is_empty()
+        && (input.is_empty() || repl_history_is_clean(input, history, history_clean_index))
 }

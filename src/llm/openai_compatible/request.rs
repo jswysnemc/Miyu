@@ -89,11 +89,12 @@ enum AnthropicContentBlock {
 }
 
 #[derive(Debug, Serialize)]
-struct AnthropicImageSource {
-    #[serde(rename = "type")]
-    kind: &'static str,
-    media_type: String,
-    data: String,
+#[serde(tag = "type")]
+enum AnthropicImageSource {
+    #[serde(rename = "base64")]
+    Base64 { media_type: String, data: String },
+    #[serde(rename = "url")]
+    Url { url: String },
 }
 
 #[derive(Debug, Serialize)]
@@ -274,11 +275,17 @@ fn lower_anthropic_user_content(content: Option<super::ChatContent>) -> Vec<Anth
 }
 
 fn lower_anthropic_image_url(url: &str) -> Option<AnthropicContentBlock> {
+    if url.starts_with("http://") || url.starts_with("https://") {
+        return Some(AnthropicContentBlock::Image {
+            source: AnthropicImageSource::Url {
+                url: url.to_string(),
+            },
+        });
+    }
     let data = url.strip_prefix("data:")?;
     let (media_type, base64) = data.split_once(";base64,")?;
     Some(AnthropicContentBlock::Image {
-        source: AnthropicImageSource {
-            kind: "base64",
+        source: AnthropicImageSource::Base64 {
             media_type: media_type.to_string(),
             data: base64.to_string(),
         },

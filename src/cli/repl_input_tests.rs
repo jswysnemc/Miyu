@@ -2,6 +2,7 @@ use super::args::Cli;
 use super::chat::drain_stdin;
 use super::input_flags::parse_message_input_flags;
 use super::repl::load_repl_input_history;
+use super::repl_input::{repl_history_is_clean, repl_should_browse_history};
 use super::repl_input_render::*;
 use super::repl_text::*;
 use super::*;
@@ -168,6 +169,21 @@ fn slash_can_be_inserted_into_fresh_composer_after_a_turn() {
     assert_eq!(input, "/");
     assert_eq!(cursor, 1);
     assert!(!repl_command_suggestions(&input).is_empty());
+}
+
+#[test]
+fn history_browsing_does_not_replace_unsubmitted_draft() {
+    let history = vec!["first".to_string(), "second".to_string()];
+
+    assert!(repl_should_browse_history("", &history, None));
+    assert!(repl_should_browse_history("second", &history, Some(1)));
+    assert!(repl_history_is_clean("second", &history, Some(1)));
+    assert!(!repl_should_browse_history("draft", &history, None));
+    assert!(!repl_should_browse_history(
+        "second edited",
+        &history,
+        Some(1)
+    ));
 }
 
 #[test]

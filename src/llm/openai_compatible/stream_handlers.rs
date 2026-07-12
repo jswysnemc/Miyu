@@ -348,6 +348,9 @@ where
                             }
                         }
                     }
+                    Some("signature_delta") => {
+                        state.thinking_signature = delta.signature;
+                    }
                     _ => {}
                 }
             }
@@ -356,6 +359,9 @@ where
             if let Some(usage) = event.usage {
                 state.usage = Some(map_anthropic_usage(usage));
             }
+            flush_anthropic_state(state, on_event)?;
+        }
+        "message_stop" => {
             flush_anthropic_state(state, on_event)?;
             return Ok(true);
         }
@@ -534,4 +540,3 @@ fn finalize_stream_result(
         tool_calls,
     })
 }
-

@@ -8,6 +8,17 @@ use anyhow::{bail, Context, Result};
 use std::collections::HashMap;
 
 impl ProviderConfig {
+    /// 判断当前配置是否指向官方 Anthropic API。
+    ///
+    /// 返回:
+    /// - API 主机为 `api.anthropic.com` 时返回 true
+    pub fn uses_official_anthropic_api(&self) -> bool {
+        reqwest::Url::parse(&self.base_url)
+            .ok()
+            .and_then(|url| url.host_str().map(str::to_owned))
+            .is_some_and(|host| host.eq_ignore_ascii_case("api.anthropic.com"))
+    }
+
     pub fn default_opencodezen() -> Self {
         Self {
             id: OPENCODE_PROVIDER_ID.to_string(),
@@ -48,10 +59,35 @@ impl ProviderConfig {
         }
     }
 
+    /// 创建官方 Anthropic Messages 供应商模板。
+    ///
+    /// 返回:
+    /// - 使用官方 API 地址和 Claude 默认模型的配置
+    pub fn default_anthropic() -> Self {
+        Self {
+            id: "anthropic".to_string(),
+            display_name: "Anthropic".to_string(),
+            base_url: "https://api.anthropic.com/v1".to_string(),
+            protocol: "anthropic".to_string(),
+            api_key: Some("$env:ANTHROPIC_API_KEY".to_string()),
+            models: vec!["claude-sonnet-4-5".to_string()],
+            model_context_chars: HashMap::new(),
+            model_metadata: HashMap::new(),
+            default_model: "claude-sonnet-4-5".to_string(),
+            timeout_seconds: default_timeout(),
+            temperature: default_temperature(),
+            anthropic_max_tokens: default_anthropic_max_tokens(),
+            thinking_level: default_thinking_level(),
+            thinking_format: default_thinking_format(),
+            extra_body: String::new(),
+        }
+    }
+
     pub fn default_templates() -> Vec<Self> {
         let mut providers = vec![Self::default_opencodezen()];
         providers.extend([
             Self::template("openai", "OpenAI", "https://api.openai.com/v1"),
+            Self::default_anthropic(),
             Self::template("deepseek", "DeepSeek", "https://api.deepseek.com"),
             Self::template(
                 "gemini",

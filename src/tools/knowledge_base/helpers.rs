@@ -214,11 +214,15 @@ fn best_window(
     best.filter(|(_, _, coverage)| *coverage > 0.0)
 }
 
-fn extract_snippets(content: &str, tokens: &[String], context: usize) -> Vec<String> {
-    let lower = content.to_ascii_lowercase();
+fn extract_snippets(
+    content: &str,
+    content_lower: &str,
+    tokens: &[String],
+    context: usize,
+) -> Vec<String> {
     let mut snippets = Vec::new();
     for token in tokens {
-        if let Some(pos) = lower.find(token) {
+        if let Some(pos) = content_lower.find(token) {
             snippets.push(snippet_chars(content, pos, pos + token.len(), context));
         }
         if snippets.len() >= 3 {
@@ -401,4 +405,3 @@ fn slug(value: &str) -> String {
         slug.chars().take(48).collect()
     }
 }
-

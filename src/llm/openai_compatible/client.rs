@@ -27,13 +27,16 @@ enum ProviderProtocol {
 
 impl ProviderProtocol {
     fn from_provider(provider: &ProviderConfig) -> Result<Self> {
-        match provider.protocol.trim() {
+        match provider.protocol.trim().to_ascii_lowercase().as_str() {
             "" | "auto" => Ok(Self::Auto),
             "openai-chat" => Ok(Self::OpenAiChat),
             "openai-responses" => Ok(Self::OpenAiResponses),
-            "anthropic" | "anthropic-messages" | "messages" | "claude" | "claude-code" => {
-                Ok(Self::Anthropic)
-            }
+            "anthropic"
+            | "anthropic-messages"
+            | "messages"
+            | "claude"
+            | "claude-code"
+            | "claude-messages" => Ok(Self::Anthropic),
             protocol => bail!("unsupported provider protocol: {protocol}"),
         }
     }
@@ -151,7 +154,9 @@ impl OpenAiCompatibleClient {
         F: FnMut(ChatStreamEvent) -> Result<()>,
     {
         let protocol = ProviderProtocol::from_provider(&self.provider)?;
-        if protocol == ProviderProtocol::Anthropic {
+        if protocol == ProviderProtocol::Anthropic
+            || (protocol == ProviderProtocol::Auto && provider_looks_official_anthropic(&self.provider))
+        {
             return self
                 .chat_anthropic_stream(messages, tools, &mut on_event)
                 .await;
@@ -300,31 +305,70 @@ impl OpenAiCompatibleClient {
         let headers = anthropic_request_headers(&self.api_key);
         let mut debug =
             self.start_http_debug("POST", &url, "anthropic", &headers, &request);
-        let response = self
-            .client
-            .post(&url)
-            .header("x-api-key", &self.api_key)
-            .header("anthropic-version", "2023-06-01")
-            .json(&request)
-            .send()
-            .await?;
+        // 【Anthropic】【Messages 请求】1. 首先使用当前 thinking 配置发送请求
+        let response = self.send_anthropic_request(&url, &request).await?;
         let status = response.status();
         if let Some(debug) = debug.as_ref() {
             let _ = debug.write_response_headers(status.as_u16(), response.headers());
         }
-        if !status.is_success() {
+        let response = if status.is_success() {
+            response
+        } else {
             let body = response.text().await.unwrap_or_default();
             if let Some(debug) = debug.as_ref() {
                 let _ = debug.finish_error(status.as_u16(), &body);
             }
-            bail!(
-                "{} ({status}): {body}",
-                t(
-                    "anthropic messages stream request failed",
-                    "Anthropic Messages 流式请求失败"
-                )
-            );
-        }
+            // 【Anthropic】【Thinking 降级】2. 仅在服务端明确不支持 thinking 时移除参数重试一次
+            if request.get("thinking").is_some()
+                && anthropic_thinking_unsupported(status.as_u16(), &body)
+            {
+                let mut fallback_request = request.clone();
+                if let Some(object) = fallback_request.as_object_mut() {
+                    object.remove("thinking");
+                }
+                debug = self.start_http_debug(
+                    "POST",
+                    &url,
+                    "anthropic-thinking-fallback",
+                    &headers,
+                    &fallback_request,
+                );
+                let fallback_response = self.send_anthropic_request(&url, &fallback_request).await?;
+                let fallback_status = fallback_response.status();
+                if let Some(debug) = debug.as_ref() {
+                    let _ = debug.write_response_headers(
+                        fallback_status.as_u16(),
+                        fallback_response.headers(),
+                    );
+                }
+                if fallback_status.is_success() {
+                    // 【Anthropic】【Thinking 降级】3. 降级成功后继续消费 Messages 流
+                    fallback_response
+                } else {
+                    let fallback_body = fallback_response.text().await.unwrap_or_default();
+                    if let Some(debug) = debug.as_ref() {
+                        let _ = debug.finish_error(fallback_status.as_u16(), &fallback_body);
+                    }
+                    let hint = claude_protocol_hint(&self.provider);
+                    bail!(
+                        "{} ({fallback_status}): {fallback_body}{hint}",
+                        t(
+                            "anthropic messages stream request failed",
+                            "Anthropic Messages 流式请求失败"
+                        )
+                    );
+                }
+            } else {
+                let hint = claude_protocol_hint(&self.provider);
+                bail!(
+                    "{} ({status}): {body}{hint}",
+                    t(
+                        "anthropic messages stream request failed",
+                        "Anthropic Messages 流式请求失败"
+                    )
+                );
+            }
+        };
 
         let mut state = AnthropicStreamState::default();
         let mut buffer = SseDataBuffer::default();
@@ -368,6 +412,25 @@ impl OpenAiCompatibleClient {
             let _ = debug.finish_ok(&result);
         }
         Ok(result)
+    }
+
+    /// 发送一次 Anthropic Messages 请求。
+    ///
+    /// 参数:
+    /// - `url`: Messages API 地址
+    /// - `request`: 已应用思考与自定义字段的请求体
+    ///
+    /// 返回:
+    /// - HTTP 响应
+    async fn send_anthropic_request(&self, url: &str, request: &Value) -> Result<reqwest::Response> {
+        Ok(self
+            .client
+            .post(url)
+            .header("x-api-key", &self.api_key)
+            .header("anthropic-version", "2023-06-01")
+            .json(request)
+            .send()
+            .await?)
     }
 
     async fn chat_responses_stream<F>(
@@ -490,4 +553,56 @@ impl OpenAiCompatibleClient {
             || model.starts_with("o3")
             || model.starts_with("o4")
     }
+}
+
+/// 判断供应商是否指向官方 Anthropic API。
+///
+/// 参数:
+/// - `provider`: 供应商配置
+///
+/// 返回:
+/// - 仅官方 Anthropic 特征返回 true，Claude 代理不自动切换协议
+fn provider_looks_official_anthropic(provider: &ProviderConfig) -> bool {
+    provider.uses_official_anthropic_api()
+}
+
+/// 判断配置是否可能误把 Claude 当作 OpenAI Chat 协议。
+///
+/// 参数:
+/// - `provider`: 当前供应商配置
+///
+/// 返回:
+/// - 需要提示协议配置时返回英文提示，否则返回空字符串
+fn claude_protocol_hint(provider: &ProviderConfig) -> &'static str {
+    let protocol = provider.protocol.trim();
+    let model = provider.default_model.to_ascii_lowercase();
+    let claude_related = model.contains("claude")
+        || provider.id.to_ascii_lowercase().contains("claude")
+        || provider.display_name.to_ascii_lowercase().contains("claude");
+    if claude_related
+        && !provider_looks_official_anthropic(provider)
+        && matches!(protocol, "" | "auto" | "openai-chat")
+    {
+        return "\nHint: official Anthropic Claude requires protocol=anthropic and base_url=https://api.anthropic.com/v1; OpenAI-compatible Claude proxies should keep openai-chat or auto.";
+    }
+    ""
+}
+
+/// 判断 Anthropic 错误是否允许移除 thinking 后重试。
+///
+/// 参数:
+/// - `status`: HTTP 状态码
+/// - `body`: 服务端错误响应正文
+///
+/// 返回:
+/// - 服务端明确拒绝 thinking 参数时返回 true
+fn anthropic_thinking_unsupported(status: u16, body: &str) -> bool {
+    if !matches!(status, 400 | 422) {
+        return false;
+    }
+    let body = body.to_ascii_lowercase();
+    body.contains("thinking")
+        && ["unsupported", "not supported", "unknown", "invalid", "unrecognized"]
+            .iter()
+            .any(|marker| body.contains(marker))
 }

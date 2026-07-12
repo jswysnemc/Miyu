@@ -151,6 +151,8 @@ struct AnthropicStreamDelta {
     thinking: Option<String>,
     #[serde(default, deserialize_with = "null_as_default")]
     partial_json: Option<String>,
+    #[serde(default, deserialize_with = "null_as_default")]
+    signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -175,6 +177,7 @@ struct AnthropicStreamState {
     content_emitted: usize,
     reasoning: String,
     reasoning_emitted: usize,
+    thinking_signature: Option<String>,
     usage: Option<Usage>,
     tool_calls: AnthropicToolAccumulator,
 }
