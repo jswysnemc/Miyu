@@ -65,6 +65,26 @@
 .subagent-detail-output { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
 .subagent-detail-pending { margin-top: 16px; color: var(--ink-soft); font-size: 12px; }
 
+/* 执行时间线 */
+.subagent-timeline { display: grid; gap: 6px; margin: 14px 0 0; padding: 14px 0 0 0; border-top: 1px solid var(--line); list-style: none; }
+.subagent-timeline-item { min-width: 0; }
+.subagent-timeline-tool button { display: flex; align-items: center; gap: 7px; width: 100%; min-height: 28px; padding: 3px 8px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); color: var(--ink); font-size: 11px; text-align: left; }
+.subagent-timeline-tool button:hover { border-color: var(--line-strong); background: var(--control-surface); }
+.subagent-timeline-tool-state { display: grid; flex-shrink: 0; place-items: center; color: var(--ink-soft); }
+.subagent-timeline-tool-state.ok { color: var(--signal); }
+.subagent-timeline-tool-state.failed { color: var(--danger); }
+.subagent-timeline-tool-state.pending { color: var(--blue); }
+.subagent-timeline-tool-step { flex-shrink: 0; color: var(--ink-soft); font: 500 10px var(--font-code); }
+.subagent-timeline-tool-name { overflow: hidden; font: 500 11px var(--font-code); text-overflow: ellipsis; white-space: nowrap; }
+.subagent-timeline-tool-hint { flex-shrink: 0; margin-left: auto; color: var(--blue); font-size: 10px; }
+.subagent-timeline-tool-detail { margin: 4px 0 0; padding: 8px 10px; overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper-deep); color: var(--ink-soft); font: 400 10px/1.6 var(--font-code); white-space: pre-wrap; overflow-wrap: anywhere; }
+.subagent-timeline-reasoning button { display: flex; align-items: center; gap: 6px; max-width: 100%; padding: 2px 0; border: 0; background: transparent; color: var(--ink-soft); font-size: 11px; text-align: left; }
+.subagent-timeline-reasoning button span { overflow: hidden; font-style: italic; text-overflow: ellipsis; white-space: nowrap; }
+.subagent-timeline-reasoning button:hover { color: var(--ink); }
+.subagent-timeline-reasoning svg { flex-shrink: 0; }
+.subagent-timeline-reasoning p { margin: 4px 0 0 18px; color: var(--ink-soft); font-size: 11px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+.subagent-timeline-text { padding: 2px 0; font-size: 12px; }
+
 /* 统计 */
 .subagent-stats { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 12px; }
 .subagent-stats div { display: flex; gap: 6px; align-items: baseline; padding: 4px 10px; border: 1px solid var(--line); border-radius: var(--radius-sm); background: var(--paper); }

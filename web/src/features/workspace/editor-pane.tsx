@@ -99,9 +99,11 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
       <section className="editor-pane">
         <header className="editor-head editor-head-empty">
           <span>未打开文件</span>
-          <button type="button" className={fileTreeOpen ? "editor-tree-toggle active" : "editor-tree-toggle"} onClick={onToggleFileTree} aria-label={fileTreeOpen ? "关闭文件树" : "打开文件树"} aria-pressed={fileTreeOpen}>
-            <FolderTree size={15} />
-          </button>
+          {!fileTreeOpen && (
+            <button type="button" className="editor-tree-toggle" onClick={onToggleFileTree} aria-label="打开文件树" aria-pressed={false}>
+              <FolderTree size={15} />
+            </button>
+          )}
         </header>
         <div className="editor-empty"><FileCodePlaceholder /><p>从文件树选择文本文件</p></div>
       </section>
@@ -115,9 +117,11 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
         <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
           <Save size={14} /> 保存
         </button>
-        <button type="button" className={fileTreeOpen ? "editor-tree-toggle active" : "editor-tree-toggle"} onClick={onToggleFileTree} aria-label={fileTreeOpen ? "关闭文件树" : "打开文件树"} aria-pressed={fileTreeOpen}>
-          <FolderTree size={15} />
-        </button>
+        {!fileTreeOpen && (
+          <button type="button" className="editor-tree-toggle" onClick={onToggleFileTree} aria-label="打开文件树" aria-pressed={false}>
+            <FolderTree size={15} />
+          </button>
+        )}
       </header>
       <div className="editor-area" ref={editorAreaRef}>
         {file.data && editorReady && (

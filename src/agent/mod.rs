@@ -347,6 +347,12 @@ impl Agent {
             .tools
             .contains("subagent")
             .then(tools::SubagentReminder::new);
+        // 1. 上一轮结束后才完成的子智能体,在本轮首次请求前先补一次通知
+        if let Some(reminder) = subagent_reminder.as_mut() {
+            if let Some(content) = reminder.after_tool_round() {
+                messages.push(ChatMessage::system(content));
+            }
+        }
         loop {
             if self.max_tool_rounds > 0 && tool_round >= self.max_tool_rounds {
                 let content = format!(

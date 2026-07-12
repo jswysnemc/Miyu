@@ -1,34 +1,51 @@
 import { useQuery } from "@tanstack/react-query";
 import { Activity, Cpu, Gauge, HardDrive, TerminalSquare } from "lucide-react";
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api/client";
-import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
+import { useAnchoredPopover } from "../../shared/ui/popover/use-anchored-popover";
 import "./system-usage.css";
 
 /**
  * 渲染顶栏系统用量入口和详情浮层。
+ *
+ * 浮层通过 Portal 渲染到 body,按视口空间自动上下翻转,避免被
+ * 输入区其他元素遮挡或溢出屏幕。
  *
  * @returns 系统用量组件
  */
 export function SystemUsage() {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popoverRef = useRef<HTMLDivElement>(null);
   const usage = useQuery({
     queryKey: ["system-usage"],
     queryFn: api.system.usage,
     refetchInterval: 5_000
   });
   const contextPercent = Math.round(Math.min(1, Math.max(0, usage.data?.session.context_token_ratio ?? 0)) * 100);
-  useOutsidePointerDown(rootRef, () => setOpen(false), open);
+  const popoverStyle = useAnchoredPopover({ open, anchorRef: triggerRef, preferredWidth: 390, minimumWidth: 300, align: "right", maxHeight: 620 });
+
+  useEffect(() => {
+    if (!open) return;
+    /** 在触发器和 Portal 浮层外按下指针时关闭浮层。 */
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node;
+      if (!rootRef.current?.contains(target) && !popoverRef.current?.contains(target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => document.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
 
   return (
     <div className="system-usage" ref={rootRef}>
-      <button type="button" className="system-usage-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="查看系统用量">
+      <button ref={triggerRef} type="button" className="system-usage-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="查看系统用量">
         <span className="usage-ring" style={{ background: `conic-gradient(var(--signal) ${contextPercent}%, var(--paper-deep) 0)` }}><Gauge size={12} /></span>
         <span><strong>{usage.data ? formatTokenCount(usage.data.session.context_prompt_tokens) : "--"}</strong><small>{contextPercent}% 上下文</small></span>
       </button>
-      {open && (
-        <div className="system-usage-popover">
+      {open && createPortal(
+        <div ref={popoverRef} className="system-usage-popover" style={popoverStyle}>
           <header><div><span>系统用量</span><strong>当前会话与进程</strong></div><i className={usage.data?.runtime.active_run ? "active" : ""} /></header>
           {usage.isLoading && <div className="usage-loading">正在读取用量</div>}
           {usage.error && <div className="usage-error">{usage.error.message}</div>}
@@ -48,7 +65,8 @@ export function SystemUsage() {
               <div className="usage-token-breakdown"><span>输入 {formatTokenCount(usage.data.session.prompt_tokens)}</span><span>输出 {formatTokenCount(usage.data.session.completion_tokens)}</span><span>工具 {usage.data.session.tool_calls}</span><span>轮次 {usage.data.session.turn_count}</span></div>
             </>
           )}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
   );

@@ -1,5 +1,5 @@
 use super::subagent_runner::{ProgressMode, SubagentProgress, SubagentRunner, SubagentStats};
-use super::{subagent_runtime, subagent_state, ToolProgress, ToolRegistry, ToolSpec};
+use super::{subagent_feed, subagent_runtime, subagent_state, ToolProgress, ToolRegistry, ToolSpec};
 use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::llm::OpenAiCompatibleClient;
@@ -16,6 +16,10 @@ const MAX_MAX_STEPS: usize = 80;
 const SUBAGENT_TIMEOUT_SECONDS: u64 = 1800;
 const TOOL_TIMEOUT_SECONDS: u64 = 120;
 const DESCRIPTION_MAX_CHARS: usize = 160;
+const WAIT_DEFAULT_SECONDS: u64 = 180;
+const WAIT_MAX_SECONDS: u64 = 600;
+const WAIT_POLL_MILLIS: u64 = 500;
+const WAIT_REPORT_EVERY_SECONDS: u64 = 5;
 
 const EXPLORE_ALLOWED: &[&str] = &[
     "check_os_info",
@@ -83,15 +87,15 @@ pub(crate) fn register(
     registry.register(ToolSpec::new_with_progress(
         "subagent",
         t(
-            "Start and manage an in-process subagent. Only available in interactive REPL and Web sessions. Use action=start to run without blocking the main conversation. Do not poll action=status in a loop: when a subagent finishes you receive an automatic system-reminder, then call action=result with its subagent_id to collect the output. action=list shows all subagents; action=cancel stops one.",
-            "启动并管理进程内子智能体。此工具只在交互式 REPL 和 Web 会话中可用。使用 action=start 后不会阻塞主对话。不要循环调用 action=status 轮询：子智能体完成时你会收到自动的系统提醒,届时再用 action=result 配合 subagent_id 取回结果。action=list 列出全部子智能体；action=cancel 取消某个。",
+            "Start and manage an in-process subagent. Only available in interactive REPL and Web sessions. action=start runs it in the background without blocking the conversation. Rules after start: do not interfere with a running subagent - never poll action=status in a loop, never redo or take over its task, and never cancel it unless the user asks. When a subagent finishes you receive an automatic system-reminder; then call action=result with its subagent_id (failed or cancelled runs carry the error there too). If you cannot proceed without the outcome, call action=wait to block until one finishes instead of polling. action=list shows all subagents; action=cancel stops one.",
+            "启动并管理进程内子智能体。此工具只在交互式 REPL 和 Web 会话中可用。action=start 在后台运行,不阻塞主对话。启动后的规约:不要干涉运行中的子智能体——不要循环调用 action=status 轮询,不要抢做或重做它的任务,除非用户要求也不要取消它。子智能体结束时你会收到自动的系统提醒,届时用 action=result 配合 subagent_id 取回结果(失败或取消的也在这里附带错误信息)。如果没有结果就无法继续,用 action=wait 阻塞等待完成,而不是轮询。action=list 列出全部子智能体;action=cancel 取消某个。",
         ),
         json!({
             "type": "object",
             "properties": {
                 "action": {
                     "type": "string",
-                    "enum": ["start", "status", "result", "list", "cancel"],
+                    "enum": ["start", "status", "result", "wait", "list", "cancel"],
                     "description": t("Operation to perform. Defaults to start.", "要执行的操作，默认 start。")
                 },
                 "description": {
@@ -113,14 +117,18 @@ pub(crate) fn register(
                 },
                 "subagent_id": {
                     "type": "string",
-                    "description": t("Subagent id for status, result, or cancel.", "status、result 或 cancel 使用的子智能体 ID。")
+                    "description": t("Subagent id for status, result, cancel, or wait. wait without it waits for any running subagent.", "status、result、cancel 或 wait 使用的子智能体 ID。wait 不带它时等待任意一个运行中的子智能体。")
+                },
+                "timeout_seconds": {
+                    "type": "integer",
+                    "description": t("Max seconds for wait before returning. Defaults to 180, capped at 600.", "wait 的最长等待秒数，默认 180，上限 600。")
                 }
             },
             "additionalProperties": false
         }),
-        move |args, _progress| {
+        move |args, progress| {
             let context = context.clone();
-            async move { run_subagent_action(args, context).await }
+            async move { run_subagent_action(args, context, progress).await }
         },
     ));
 }
@@ -130,15 +138,21 @@ pub(crate) fn register(
 /// 参数:
 /// - `args`: 工具参数
 /// - `context`: 子智能体上下文
+/// - `progress`: 主对话工具进度上报器
 ///
 /// 返回:
 /// - JSON 字符串形式的操作结果
-async fn run_subagent_action(args: Value, context: SubagentContext) -> Result<String> {
+async fn run_subagent_action(
+    args: Value,
+    context: SubagentContext,
+    progress: ToolProgress,
+) -> Result<String> {
     let action = optional_string_arg(&args, "action")?.unwrap_or_else(|| "start".to_string());
     match action.as_str() {
         "start" => start_subagent(args, context).await,
         "status" => subagent_status(args),
         "result" => subagent_result(args),
+        "wait" => wait_subagent(args, progress).await,
         "list" => subagent_list(),
         "cancel" => subagent_cancel(args),
         _ => bail!("unsupported subagent action: {action}"),
@@ -180,10 +194,90 @@ async fn start_subagent(args: Value, context: SubagentContext) -> Result<String>
         "ok": true,
         "subagent": subagent,
         "message": t(
-            "subagent started; use action=status or action=result with subagent_id",
-            "子智能体已启动；使用 action=status 或 action=result 配合 subagent_id 查询"
+            "subagent started; continue your own work or call action=wait if you need the result. Do not poll action=status: a system-reminder arrives when it finishes",
+            "子智能体已启动；请继续自己的工作,需要结果时用 action=wait 等待。不要轮询 action=status:完成时会收到系统提醒"
         )
     }))?)
+}
+
+/// 阻塞等待子智能体进入终态。
+///
+/// 指定 subagent_id 时等待该子智能体;未指定时等待任意一个新完成的子智能体。
+/// 返回时把对应完成事件标记为已通知,避免再触发一次系统提醒。
+///
+/// 参数:
+/// - `args`: 等待参数
+/// - `progress`: 主对话工具进度上报器
+///
+/// 返回:
+/// - 完成子智能体的快照,或超时说明
+async fn wait_subagent(args: Value, progress: ToolProgress) -> Result<String> {
+    let subagent_id = optional_string_arg(&args, "subagent_id")?.filter(|id| !id.is_empty());
+    let timeout = args
+        .get("timeout_seconds")
+        .and_then(Value::as_u64)
+        .unwrap_or(WAIT_DEFAULT_SECONDS)
+        .clamp(5, WAIT_MAX_SECONDS);
+    let started = tokio::time::Instant::now();
+    let mut last_report = 0u64;
+    loop {
+        // 1. 指定 id:该子智能体进入终态即返回
+        if let Some(id) = &subagent_id {
+            let snapshot = subagent_state::subagent_snapshot(id)?;
+            if snapshot.status != "running" {
+                subagent_state::mark_finish_notified(id);
+                return Ok(serde_json::to_string_pretty(&json!({
+                    "ok": snapshot.status == "completed",
+                    "subagent": snapshot
+                }))?);
+            }
+        } else {
+            // 2. 未指定 id:任意新完成的子智能体即返回,并消费其通知事件
+            let notices = subagent_state::take_finished_notices();
+            if !notices.is_empty() {
+                let finished = notices
+                    .iter()
+                    .filter_map(|notice| subagent_state::subagent_snapshot(&notice.id).ok())
+                    .collect::<Vec<_>>();
+                return Ok(serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "finished": finished
+                }))?);
+            }
+            let subagents = subagent_state::list_subagents();
+            if subagents.iter().all(|snapshot| snapshot.status != "running") {
+                return Ok(serde_json::to_string_pretty(&json!({
+                    "ok": true,
+                    "message": t(
+                        "no running subagents to wait for; results were already delivered",
+                        "没有运行中的子智能体可等待,结果此前已经送达"
+                    ),
+                    "subagents": subagents
+                }))?);
+            }
+        }
+        let elapsed = started.elapsed().as_secs();
+        if elapsed >= timeout {
+            return Ok(serde_json::to_string_pretty(&json!({
+                "ok": false,
+                "timeout": true,
+                "message": t(
+                    "wait timed out while subagents are still running; continue other work, a system-reminder arrives on finish",
+                    "等待超时,子智能体仍在运行;请先继续其他工作,完成时会收到系统提醒"
+                )
+            }))?);
+        }
+        // 3. 周期性上报等待进度,避免前端看起来卡死
+        if elapsed >= last_report + WAIT_REPORT_EVERY_SECONDS {
+            last_report = elapsed;
+            progress.report(if crate::i18n::is_zh() {
+                format!("等待子智能体完成,已等待 {elapsed} 秒")
+            } else {
+                format!("waiting for subagent, {elapsed}s elapsed")
+            });
+        }
+        tokio::time::sleep(Duration::from_millis(WAIT_POLL_MILLIS)).await;
+    }
 }
 
 /// 执行后台子智能体并写回状态。
@@ -217,9 +311,12 @@ async fn execute_subagent(
             return;
         }
     };
-    // 1. 起进度 channel，把子代理的阶段/工具上报实时写回快照，供前端轮询感知
+    // 1. 起进度 channel，进度消息由 feed 解析写入时间线与快照，供前端实时渲染
     let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let progress_task = tokio::spawn(consume_subagent_progress(subagent_id.clone(), progress_rx));
+    let progress_task = tokio::spawn(subagent_feed::consume_progress(
+        subagent_id.clone(),
+        progress_rx,
+    ));
     let progress = ToolProgress::new(progress_tx);
     let result = tokio::select! {
         _ = &mut cancel_rx => Err(anyhow::anyhow!("cancelled")),
@@ -267,69 +364,6 @@ async fn execute_subagent(
     }
 }
 
-/// 消费子代理进度消息并写回快照。
-///
-/// 参数:
-/// - `subagent_id`: 子智能体 ID
-/// - `progress_rx`: 进度消息接收器
-///
-/// 返回:
-/// - 无
-async fn consume_subagent_progress(
-    subagent_id: String,
-    mut progress_rx: tokio::sync::mpsc::UnboundedReceiver<String>,
-) {
-    while let Some(message) = progress_rx.recv().await {
-        // 1. reasoning 与 full 模式的结构化消息不作为面板进度，跳过
-        if message.starts_with("__subagent_reasoning__")
-            || message.starts_with("__subtool_call__")
-            || message.starts_with("__subtool_result__")
-        {
-            continue;
-        }
-        subagent_state::update_subagent_progress(&subagent_id, parse_progress_message(&message));
-    }
-}
-
-/// 从进度文本解析出结构化进度更新。
-///
-/// 参数:
-/// - `message`: 子代理上报的进度文本
-///
-/// 返回:
-/// - 结构化进度更新
-fn parse_progress_message(message: &str) -> subagent_state::SubagentProgressUpdate {
-    let mut update = subagent_state::SubagentProgressUpdate {
-        phase: Some(message.to_string()),
-        ..Default::default()
-    };
-    // 1. 识别 "工具 #N：名称 ..." 或 "tool #N: name ..." 形式，提取步数与工具名
-    let marker = message.find('#');
-    if let Some(marker) = marker {
-        let rest = &message[marker + 1..];
-        let digits = rest
-            .chars()
-            .take_while(char::is_ascii_digit)
-            .collect::<String>();
-        if let Ok(step) = digits.parse::<usize>() {
-            update.step = Some(step);
-            let after = rest[digits.len()..]
-                .trim_start_matches([':', '：', ' '])
-                .trim();
-            let name = after
-                .split([' ', '：', ':'])
-                .next()
-                .unwrap_or("")
-                .trim()
-                .to_string();
-            if !name.is_empty() {
-                update.last_tool = Some(name);
-            }
-        }
-    }
-    update
-}
-
 /// 记录已结束子智能体的运行时状态。
 ///
 /// 参数:
@@ -373,8 +407,8 @@ async fn run_subagent(
         "general" => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
         _ => bail!("unsupported subagent_type: {subagent_type}"),
     };
-    // 1. 强制以 Summary 模式上报，让面板能看到工具步进而非依赖全局展示配置
-    let progress = SubagentProgress::new(tool_progress, ProgressMode::Summary, true);
+    // 2. 以 Full 模式上报,时间线可拿到工具调用参数、结果与流式文本
+    let progress = SubagentProgress::new(tool_progress, ProgressMode::Full, true);
     let runner = SubagentRunner::new(client, system_prompt, tools, progress)
         .max_steps(max_steps)
         .timeout_seconds(TOOL_TIMEOUT_SECONDS)
@@ -598,32 +632,34 @@ mod tests {
         );
     }
 
-    #[test]
-    fn parses_chinese_tool_progress() {
-        let update = parse_progress_message("工具 #3：Shell 运行中");
-
-        assert_eq!(update.step, Some(3));
-        assert_eq!(update.last_tool.as_deref(), Some("Shell"));
-        assert_eq!(update.phase.as_deref(), Some("工具 #3：Shell 运行中"));
-    }
-
-    #[test]
-    fn parses_english_tool_progress() {
-        let update = parse_progress_message("tool #12: read_file running");
-
-        assert_eq!(update.step, Some(12));
-        assert_eq!(update.last_tool.as_deref(), Some("read_file"));
-    }
-
-    #[test]
-    fn keeps_plain_phase_without_step() {
-        let update = parse_progress_message("工具调用 5 次　消耗 Token 1.2K");
-
-        assert_eq!(update.step, None);
-        assert_eq!(update.last_tool, None);
-        assert_eq!(
-            update.phase.as_deref(),
-            Some("工具调用 5 次　消耗 Token 1.2K")
+    #[tokio::test]
+    async fn wait_returns_finished_subagent_and_marks_notice_consumed() {
+        let (subagent, _cancel) = subagent_state::create_subagent(
+            "wait target".to_string(),
+            "general".to_string(),
+            5,
         );
+        subagent_state::finish_subagent(
+            &subagent.id,
+            "completed",
+            Some("done".to_string()),
+            None,
+            None,
+        );
+        let (progress_tx, _progress_rx) = tokio::sync::mpsc::unbounded_channel();
+
+        let result = wait_subagent(
+            json!({"subagent_id": subagent.id, "timeout_seconds": 5}),
+            ToolProgress::new(progress_tx),
+        )
+        .await
+        .unwrap();
+
+        let value = serde_json::from_str::<Value>(&result).unwrap();
+        assert_eq!(value["ok"], true);
+        assert_eq!(value["subagent"]["status"], "completed");
+        // 该完成事件已被 wait 消费,不应再次进入系统提醒
+        let notices = subagent_state::take_finished_notices();
+        assert!(notices.iter().all(|notice| notice.id != subagent.id));
     }
 }

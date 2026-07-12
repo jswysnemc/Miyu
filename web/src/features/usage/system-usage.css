@@ -60,16 +60,14 @@
 }
 
 .system-usage-popover {
-  position: absolute;
-  top: 43px;
-  right: 0;
+  overflow-y: auto;
   width: min(390px, calc(100vw - 24px));
   padding: 10px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--paper-raised);
   box-shadow: var(--shadow);
-  z-index: 90;
+  z-index: 110;
 }
 
 .system-usage-popover > header {
@@ -233,11 +231,5 @@
 
   .system-usage-trigger > span:last-child {
     display: none;
-  }
-
-  .system-usage-popover {
-    position: fixed;
-    top: 58px;
-    right: 12px;
   }
 }

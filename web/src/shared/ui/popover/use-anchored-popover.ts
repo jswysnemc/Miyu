@@ -7,6 +7,7 @@ type UseAnchoredPopoverOptions = {
   preferredWidth?: number;
   minimumWidth?: number;
   align?: "left" | "right";
+  maxHeight?: number;
 };
 
 /**
@@ -27,9 +28,11 @@ export function useAnchoredPopover(options: UseAnchoredPopoverOptions): CSSPrope
       if (!rect) return;
       const position = calculateAnchoredPopoverPosition(rect, {
         viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
         preferredWidth: options.preferredWidth ?? rect.width,
         minimumWidth: options.minimumWidth ?? rect.width,
-        align: options.align ?? "left"
+        align: options.align ?? "left",
+        maxHeight: options.maxHeight
       });
       setStyle({ position: "fixed", ...position });
     };
@@ -41,7 +44,7 @@ export function useAnchoredPopover(options: UseAnchoredPopoverOptions): CSSPrope
       window.removeEventListener("resize", updatePosition);
       window.removeEventListener("scroll", updatePosition, true);
     };
-  }, [options.align, options.anchorRef, options.minimumWidth, options.open, options.preferredWidth]);
+  }, [options.align, options.anchorRef, options.maxHeight, options.minimumWidth, options.open, options.preferredWidth]);
 
   return style;
 }

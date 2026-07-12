@@ -50,4 +50,16 @@ describe("tool call grouping", () => {
     expect(toolCallGroupLabel([command.tool, command.tool])).toBe("运行了 2 个命令");
     expect(toolCallGroupLabel([command.tool, edit.tool])).toBe("执行了 2 项操作");
   });
+
+  it("groups consecutive completed todo calls with a plan label", () => {
+    const grouped = groupCompletedToolCalls([
+      toolPart("a", "completed", "todo"),
+      toolPart("b", "completed", "todo"),
+      toolPart("c", "completed", "todo")
+    ]);
+    expect(grouped).toHaveLength(1);
+    expect(grouped[0].type).toBe("tool-group");
+    if (grouped[0].type !== "tool-group") throw new Error("测试分组类型异常");
+    expect(toolCallGroupLabel(grouped[0].tools)).toBe("更新了 3 次计划");
+  });
 });

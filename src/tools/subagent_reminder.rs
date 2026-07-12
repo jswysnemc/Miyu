@@ -51,7 +51,7 @@ fn render_notice(notices: &[FinishedSubagentNotice]) -> String {
         .collect::<Vec<_>>()
         .join("\n");
     format!(
-        "<system-reminder>以下后台子智能体已结束,结果已就绪,可用 subagent action=result 加 subagent_id 取回,无需再轮询 action=status:\n{lines}\n</system-reminder>"
+        "<system-reminder>以下后台子智能体已结束,结果已就绪,可用 subagent action=result 加 subagent_id 取回(失败或取消的附带错误信息),无需轮询 action=status:\n{lines}\n</system-reminder>"
     )
 }
 

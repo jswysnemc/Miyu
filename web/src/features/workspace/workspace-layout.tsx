@@ -1,4 +1,4 @@
-import { Code2, MessageSquare, PanelBottomOpen, PanelLeftOpen, PanelRightOpen, SquareTerminal } from "lucide-react";
+import { Code2, MessageSquare, SquareTerminal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
 import { useEffect, useReducer, useState } from "react";
@@ -7,6 +7,7 @@ import { ChatPage } from "../chat/chat-page";
 import { SessionSidebar } from "../sessions/session-sidebar";
 import { SessionSidebarResizeHandle } from "../sessions/session-sidebar-resize-handle";
 import { useSessionSidebarLayout } from "../sessions/use-session-sidebar-layout";
+import { WorkspaceActivityRail } from "./workspace-activity-rail";
 import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
@@ -145,6 +146,16 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     dispatchMobileLayout({ type: "show-pane", pane: "chat" });
   };
 
+  /**
+   * 打开工作区并切换到指定视图,悬浮活动栏使用。
+   *
+   * @param tab 目标工作区视图
+   */
+  const showWorkspaceTab = (tab: PaneTab) => {
+    layout.openWorkspace();
+    setPaneTab(tab);
+  };
+
   return (
     <div className={classes} style={style}>
       <nav className="workbench-mobile-tabs" aria-label="工作台面板">
@@ -180,24 +191,24 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
               onTabChange={setPaneTab}
               onSelectFile={onSelectFile}
               onClearFile={onClearFile}
-              onClose={closeWorkspace}
-              onToggleChat={layout.toggleChat}
-              onToggleMaximized={layout.toggleWorkspaceMaximized}
-              onToggleTerminal={layout.toggleTerminal}
-              onToggleSwapped={layout.toggleSwapped}
-              terminalOpen={layout.terminalOpen}
-              maximized={layout.workspaceMaximized}
               terminalManager={terminalManager}
             />
           </aside>
         )}
-        {!layout.workspaceOpen && (
-          <div className="workbench-floating-controls">
-            {!layout.chatOpen && <button type="button" onClick={layout.toggleChat}><PanelLeftOpen size={14} /><span>聊天</span></button>}
-            <button type="button" onClick={layout.openWorkspace}><PanelRightOpen size={14} /><span>编辑器</span></button>
-            <button type="button" onClick={layout.toggleTerminal}><PanelBottomOpen size={14} /><span>终端</span></button>
-          </div>
-        )}
+        <WorkspaceActivityRail
+          tab={paneTab}
+          workspaceOpen={layout.workspaceOpen}
+          chatOpen={layout.chatOpen}
+          maximized={layout.workspaceMaximized}
+          terminalOpen={layout.terminalOpen}
+          onSelectTab={showWorkspaceTab}
+          onCollapse={closeWorkspace}
+          onExpand={layout.openWorkspace}
+          onToggleChat={layout.toggleChat}
+          onToggleMaximized={layout.toggleWorkspaceMaximized}
+          onToggleSwapped={layout.toggleSwapped}
+          onToggleTerminal={layout.toggleTerminal}
+        />
       </div>
       {layout.terminalOpen && (
         <div className="coding-terminal">

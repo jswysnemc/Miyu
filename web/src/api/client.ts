@@ -28,6 +28,7 @@ import type {
   TodoItem,
   TodoStatus,
   Subagent,
+  SubagentDetail,
   Workspace,
   WorkspaceList
 } from "./contracts";
@@ -233,6 +234,7 @@ export const api = {
   },
   subagents: {
     list: () => apiRequest<Subagent[]>("/api/subagents"),
+    detail: (id: string) => apiRequest<SubagentDetail>(`/api/subagents/${encodeURIComponent(id)}`),
     cancel: (id: string) => apiRequest<Subagent>(`/api/subagents/${encodeURIComponent(id)}/cancel`, { method:"POST" })
   },
   system: {

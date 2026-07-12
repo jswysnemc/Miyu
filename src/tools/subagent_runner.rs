@@ -66,6 +66,19 @@ impl SubagentProgress {
         }
     }
 
+    /// 上报子代理轮间正文文本。
+    ///
+    /// 参数:
+    /// - `text`: 一轮工具调用前模型输出的正文
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn round_text(&self, text: &str) {
+        if self.enabled && self.mode == ProgressMode::Full && !text.is_empty() {
+            self.progress.report(format!("__subagent_text__{}", text));
+        }
+    }
+
     /// 上报子工具开始运行。
     ///
     /// 参数:
@@ -442,6 +455,8 @@ impl SubagentRunner {
             if result.tool_calls.is_empty() {
                 return Ok(result);
             }
+            // 1. 把本轮工具调用前的正文上报,详情时间线可流式跟随
+            self.progress.round_text(&result.content);
             messages.push(ChatMessage::assistant(
                 result.content.clone(),
                 Some(result.tool_calls.clone()),

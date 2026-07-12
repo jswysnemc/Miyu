@@ -30,8 +30,7 @@ export function groupCompletedToolCalls(parts: LiveMessagePart[]): GroupedMessag
   };
 
   for (const part of parts) {
-    // 1. todo 工具在消息流中始终独立成卡,不并入折叠组,保证计划变更可见
-    if (part.type === "tool" && part.tool.status === "completed" && part.tool.name !== "todo") {
+    if (part.type === "tool" && part.tool.status === "completed") {
       completedTools.push({ id: part.id, tool: part.tool });
       continue;
     }
@@ -46,9 +45,10 @@ export function groupCompletedToolCalls(parts: LiveMessagePart[]): GroupedMessag
  * 为工具组生成简短操作说明。
  *
  * @param tools 工具组中的完成项
- * @returns 命令组或通用操作组标题
+ * @returns 命令组、计划组或通用操作组标题
  */
 export function toolCallGroupLabel(tools: ToolLifecycle[]): string {
+  if (tools.every((tool) => tool.name === "todo")) return `更新了 ${tools.length} 次计划`;
   const commandOnly = tools.every((tool) => tool.name === "run_command" || tool.name.includes("command"));
   return commandOnly ? `运行了 ${tools.length} 个命令` : `执行了 ${tools.length} 项操作`;
 }

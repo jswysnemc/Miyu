@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, Pencil, RefreshCw, Trash2, X } from "lucide-react";
+import { Check, ChevronRight, FilePlus2, Folder, FolderOpen, FolderPlus, PanelRightClose, Pencil, RefreshCw, Trash2, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "../../api/client";
 import type { FileNode } from "../../api/contracts";
@@ -12,6 +12,7 @@ type FileTreeProps = {
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   onClearFile: () => void;
+  onClose: () => void;
 };
 
 type FileAction = { kind: "file" | "directory" | "rename"; value: string } | null;
@@ -19,10 +20,10 @@ type FileAction = { kind: "file" | "directory" | "rename"; value: string } | nul
 /**
  * 渲染支持创建、重命名和删除的工作区文件树。
  *
- * @param props 当前文件选择和更新回调
+ * @param props 当前文件选择、更新回调与关闭文件树回调
  * @returns 文件浏览器
  */
-export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreeProps) {
+export function FileTree({ selectedFile, onSelectFile, onClearFile, onClose }: FileTreeProps) {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const tree = useQuery({ queryKey: ["file-tree"], queryFn: () => api.workspace.tree(), refetchOnWindowFocus: true, refetchInterval: 15_000 });
@@ -99,6 +100,7 @@ export function FileTree({ selectedFile, onSelectFile, onClearFile }: FileTreePr
           <button type="button" onClick={beginRename} disabled={!focusedPath} aria-label="重命名"><Pencil size={12} /></button>
           <button type="button" onClick={() => void deleteFocused()} disabled={!focusedPath} aria-label="删除"><Trash2 size={12} /></button>
           <button type="button" onClick={() => void tree.refetch()} aria-label="刷新文件树"><RefreshCw size={12} /></button>
+          <button type="button" onClick={onClose} aria-label="关闭文件树"><PanelRightClose size={12} /></button>
         </div>
       </div>
       <WorkspaceFileSearch value={search} onChange={setSearch} />

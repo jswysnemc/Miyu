@@ -39,7 +39,8 @@ export function Select<T extends string>({ value, options, disabled, ariaLabel, 
     anchorRef: triggerRef,
     preferredWidth: menuPreferredWidth,
     minimumWidth: menuMinimumWidth,
-    align: menuAlign
+    align: menuAlign,
+    maxHeight: 280
   });
 
   useEffect(() => {

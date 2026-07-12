@@ -16,3 +16,4 @@
 .todo-tool-item.is-in_progress svg { color: var(--blue); }
 .todo-tool-item.is-completed svg { color: var(--signal); }
 .todo-tool-item.is-completed span, .todo-tool-item.is-cancelled span { color: var(--ink-soft); text-decoration: line-through; }
+.todo-tool-item.is-changed { margin: 0 -6px; padding: 0 6px; border-radius: var(--radius-sm); background: var(--signal-soft); }

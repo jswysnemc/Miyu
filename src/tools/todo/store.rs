@@ -98,38 +98,92 @@ impl TodoStore {
     ///
     /// 返回:
     /// - 新增后的 TODO 项
+    #[cfg(test)]
     pub(crate) fn add(&self, text: &str) -> Result<TodoItem> {
-        let text = required_text(text)?;
-        let mut items = self.list()?;
-        let now = Utc::now().to_rfc3339();
-        let item = TodoItem {
-            id: format!(
-                "todo_{}_{}",
-                Utc::now().timestamp_millis(),
-                rand::random::<u16>()
-            ),
-            text: text.to_string(),
-            status: TodoStatus::Pending,
-            created_at: now.clone(),
-            updated_at: now,
-        };
-        items.push(item.clone());
-        self.save(&items)?;
-        Ok(item)
+        Ok(self.add_many(&[text.to_string()], None)?.remove(0))
     }
 
-    /// 更新指定 TODO 项。
+    /// 批量新增 TODO 项,可指定 1 起始的插入位置。
     ///
     /// 参数:
-    /// - `id`: TODO 标识
+    /// - `texts`: TODO 内容列表
+    /// - `index`: 可选插入位置(1 起始,新条目插在该序号之前),缺省或超界时追加到末尾
+    ///
+    /// 返回:
+    /// - 本次新增的 TODO 项列表
+    pub(crate) fn add_many(&self, texts: &[String], index: Option<usize>) -> Result<Vec<TodoItem>> {
+        if texts.is_empty() {
+            bail!("todo add requires text or texts")
+        }
+        let mut items = self.list()?;
+        let now = Utc::now().to_rfc3339();
+        // 1. 逐条构造新条目,序号后缀保证同毫秒批量创建时 id 仍唯一
+        let created = texts
+            .iter()
+            .enumerate()
+            .map(|(offset, text)| {
+                Ok(TodoItem {
+                    id: format!(
+                        "todo_{}_{offset}_{}",
+                        Utc::now().timestamp_millis(),
+                        rand::random::<u16>()
+                    ),
+                    text: required_text(text)?.to_string(),
+                    status: TodoStatus::Pending,
+                    created_at: now.clone(),
+                    updated_at: now.clone(),
+                })
+            })
+            .collect::<Result<Vec<_>>>()?;
+        // 2. 按插入位置写入,1 起始序号转 0 起始下标并夹取到列表长度内
+        let position = index
+            .map(|value| value.saturating_sub(1).min(items.len()))
+            .unwrap_or(items.len());
+        items.splice(position..position, created.iter().cloned());
+        self.save(&items)?;
+        Ok(created)
+    }
+
+    /// 把 id 或 1 起始序号解析为列表下标。
+    ///
+    /// 参数:
+    /// - `id`: 可选条目 id
+    /// - `index`: 可选 1 起始序号,id 缺省时使用
+    ///
+    /// 返回:
+    /// - 目标条目的 0 起始下标
+    pub(crate) fn locate(&self, id: Option<&str>, index: Option<usize>) -> Result<usize> {
+        let items = self.list()?;
+        if let Some(id) = id.map(str::trim).filter(|value| !value.is_empty()) {
+            return items
+                .iter()
+                .position(|item| item.id == id)
+                .with_context(|| format!("todo item not found: {id}"));
+        }
+        let Some(index) = index else {
+            bail!("todo update/remove requires id or index")
+        };
+        if index == 0 || index > items.len() {
+            bail!(
+                "todo index out of range: {index} (list has {} items)",
+                items.len()
+            )
+        }
+        Ok(index - 1)
+    }
+
+    /// 更新指定下标的 TODO 项。
+    ///
+    /// 参数:
+    /// - `position`: 目标条目的 0 起始下标(由 locate 解析)
     /// - `text`: 可选的新内容
     /// - `status`: 可选的新状态
     ///
     /// 返回:
     /// - 更新后的 TODO 项
-    pub(crate) fn update(
+    pub(crate) fn update_at(
         &self,
-        id: &str,
+        position: usize,
         text: Option<&str>,
         status: Option<TodoStatus>,
     ) -> Result<TodoItem> {
@@ -137,14 +191,13 @@ impl TodoStore {
             bail!("todo update requires text or status")
         }
         let mut items = self.list()?;
-        let index = items
-            .iter()
-            .position(|item| item.id == id.trim())
-            .with_context(|| format!("todo item not found: {}", id.trim()))?;
-        if let Some(next_status) = status {
-            validate_transition(&items, index, next_status)?;
+        if position >= items.len() {
+            bail!("todo item not found at position {position}")
         }
-        let item = &mut items[index];
+        if let Some(next_status) = status {
+            validate_transition(&items, position, next_status)?;
+        }
+        let item = &mut items[position];
         if let Some(text) = text {
             item.text = required_text(text)?.to_string();
         }
@@ -157,20 +210,19 @@ impl TodoStore {
         Ok(updated)
     }
 
-    /// 删除指定 TODO 项。
+    /// 删除指定下标的 TODO 项。
     ///
     /// 参数:
-    /// - `id`: TODO 标识
+    /// - `position`: 目标条目的 0 起始下标(由 locate 解析)
     ///
     /// 返回:
     /// - 被删除的 TODO 项
-    pub(crate) fn remove(&self, id: &str) -> Result<TodoItem> {
+    pub(crate) fn remove_at(&self, position: usize) -> Result<TodoItem> {
         let mut items = self.list()?;
-        let index = items
-            .iter()
-            .position(|item| item.id == id.trim())
-            .with_context(|| format!("todo item not found: {}", id.trim()))?;
-        let removed = items.remove(index);
+        if position >= items.len() {
+            bail!("todo item not found at position {position}")
+        }
+        let removed = items.remove(position);
         self.save(&items)?;
         Ok(removed)
     }
@@ -231,9 +283,6 @@ fn validate_transition(items: &[TodoItem], index: usize, next: TodoStatus) -> Re
     {
         bail!("only one todo item can be in progress")
     }
-    if next == TodoStatus::Completed && items[index].status != TodoStatus::InProgress {
-        bail!("todo item must be in progress before completion")
-    }
     Ok(())
 }
 
@@ -272,11 +321,12 @@ mod tests {
         assert!(store.file().exists());
         assert!(store.has_unfinished().unwrap());
 
+        let position = store.locate(Some(&item.id), None).unwrap();
         store
-            .update(&item.id, None, Some(TodoStatus::InProgress))
+            .update_at(position, None, Some(TodoStatus::InProgress))
             .unwrap();
         let updated = store
-            .update(&item.id, None, Some(TodoStatus::Completed))
+            .update_at(position, None, Some(TodoStatus::Completed))
             .unwrap();
         assert_eq!(updated.status, TodoStatus::Completed);
         assert!(!store.has_unfinished().unwrap());
@@ -308,23 +358,82 @@ mod tests {
     fn enforces_sequential_single_in_progress_lifecycle() {
         let dir = tempfile::tempdir().unwrap();
         let store = TodoStore::new(dir.path().join("todos.json"));
-        let first = store.add("first").unwrap();
-        let second = store.add("second").unwrap();
+        store
+            .add_many(&["first".to_string(), "second".to_string()], None)
+            .unwrap();
 
         assert!(store
-            .update(&second.id, None, Some(TodoStatus::InProgress))
+            .update_at(1, None, Some(TodoStatus::InProgress))
             .is_err());
         store
-            .update(&first.id, None, Some(TodoStatus::InProgress))
+            .update_at(0, None, Some(TodoStatus::InProgress))
             .unwrap();
         assert!(store
-            .update(&second.id, None, Some(TodoStatus::InProgress))
+            .update_at(1, None, Some(TodoStatus::InProgress))
             .is_err());
         store
-            .update(&first.id, None, Some(TodoStatus::Completed))
+            .update_at(0, None, Some(TodoStatus::Completed))
             .unwrap();
         store
-            .update(&second.id, None, Some(TodoStatus::InProgress))
+            .update_at(1, None, Some(TodoStatus::InProgress))
             .unwrap();
+    }
+
+    #[test]
+    fn batch_add_inserts_at_one_based_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TodoStore::new(dir.path().join("todos.json"));
+        store
+            .add_many(&["a".to_string(), "d".to_string()], None)
+            .unwrap();
+
+        let created = store
+            .add_many(&["b".to_string(), "c".to_string()], Some(2))
+            .unwrap();
+
+        assert_eq!(created.len(), 2);
+        let texts = store
+            .list()
+            .unwrap()
+            .into_iter()
+            .map(|item| item.text)
+            .collect::<Vec<_>>();
+        assert_eq!(texts, vec!["a", "b", "c", "d"]);
+    }
+
+    #[test]
+    fn locate_resolves_id_and_one_based_index() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TodoStore::new(dir.path().join("todos.json"));
+        let created = store
+            .add_many(&["a".to_string(), "b".to_string()], None)
+            .unwrap();
+
+        assert_eq!(store.locate(Some(&created[1].id), None).unwrap(), 1);
+        assert_eq!(store.locate(None, Some(1)).unwrap(), 0);
+        assert!(store.locate(None, Some(0)).is_err());
+        assert!(store.locate(None, Some(3)).is_err());
+        assert!(store.locate(None, None).is_err());
+    }
+
+    #[test]
+    fn allows_completing_pending_item_when_earlier_items_finished() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TodoStore::new(dir.path().join("todos.json"));
+        store
+            .add_many(&["first".to_string(), "second".to_string()], None)
+            .unwrap();
+
+        // 前面存在未完成条目时仍拒绝跳序完成
+        assert!(store
+            .update_at(1, None, Some(TodoStatus::Completed))
+            .is_err());
+        store
+            .update_at(0, None, Some(TodoStatus::Completed))
+            .unwrap();
+        let second = store
+            .update_at(1, None, Some(TodoStatus::Completed))
+            .unwrap();
+        assert_eq!(second.status, TodoStatus::Completed);
     }
 }

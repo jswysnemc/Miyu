@@ -153,30 +153,97 @@
   user-select: none;
 }
 
-.workbench-floating-controls {
+.workspace-floating-rail {
   position: absolute;
-  top: 9px;
-  right: 10px;
+  top: 50%;
+  right: 7px;
   display: flex;
-  gap: 5px;
-  z-index: 18;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 5px 4px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: var(--paper-raised);
+  box-shadow: var(--shadow);
+  transform: translateY(-50%);
+  z-index: 30;
 }
 
-.workbench-floating-controls button {
+.workspace-floating-rail > button,
+.rail-menu-anchor > button {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.workspace-floating-rail > button:hover,
+.rail-menu-anchor > button:hover {
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+
+.workspace-floating-rail > button.active,
+.rail-menu-anchor > button.active {
+  background: var(--signal-soft);
+  color: var(--signal);
+}
+
+.rail-divider {
+  width: 18px;
+  height: 1px;
+  margin: 3px 0;
+  background: var(--line);
+}
+
+.rail-menu-anchor {
+  position: relative;
+}
+
+.rail-layout-menu {
+  position: absolute;
+  top: 50%;
+  right: calc(100% + 10px);
+  display: grid;
+  gap: 2px;
+  min-width: 158px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-raised);
+  box-shadow: var(--shadow);
+  transform: translateY(-50%);
+  z-index: 31;
+}
+
+.rail-layout-menu > button {
   display: flex;
   align-items: center;
-  gap: 6px;
-  min-height: 30px;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
   padding: 0 9px;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 7px;
-  background: var(--paper);
+  background: transparent;
   color: var(--ink-soft);
-  font-size: 10px;
+  font-size: 11px;
+  text-align: left;
 }
 
-.workbench-floating-controls button:hover {
+.rail-layout-menu > button:hover {
+  background: var(--paper-deep);
   color: var(--ink);
+}
+
+.rail-layout-menu > button.checked {
+  color: var(--signal);
 }
 
 .workbench-mobile-tabs,
@@ -272,7 +339,7 @@
   .session-sidebar-resize-handle,
   .workspace-resize-handle,
   .terminal-resize-handle,
-  .workbench-floating-controls {
+  .workspace-floating-rail {
     display: none;
   }
 

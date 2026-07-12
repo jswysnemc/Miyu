@@ -26,7 +26,7 @@ export function WorkspaceSwitcher() {
     mutationFn: (id: string) => switchWithTerminalConfirm(id, confirm),
     onSuccess: (switched) => { if (switched) window.location.reload(); }
   });
-  const menuStyle = useAnchoredPopover({ open, anchorRef: triggerRef, preferredWidth: 520, minimumWidth: 240 });
+  const menuStyle = useAnchoredPopover({ open, anchorRef: triggerRef, preferredWidth: 520, minimumWidth: 240, maxHeight: 560 });
 
   useEffect(() => {
     if (!open) return;

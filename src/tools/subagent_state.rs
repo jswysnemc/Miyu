@@ -1,3 +1,6 @@
+use super::readable_tool_name;
+use super::subagent_timeline::{SubagentTimeline, SubagentTimelineEntry};
+use crate::i18n::is_zh;
 use anyhow::{bail, Result};
 use serde::Serialize;
 use serde_json::Value;
@@ -42,6 +45,8 @@ struct SubagentRecord {
     cancel: Option<oneshot::Sender<()>>,
     /// 完成事件是否已通知主 Agent,避免重复提醒
     finish_notified: bool,
+    /// 执行时间线,供详情页实时流式渲染
+    timeline: SubagentTimeline,
 }
 
 /// 已完成但尚未通知主 Agent 的子智能体摘要。
@@ -90,6 +95,7 @@ pub(crate) fn create_subagent(
             snapshot: snapshot.clone(),
             cancel: Some(cancel_tx),
             finish_notified: false,
+            timeline: SubagentTimeline::default(),
         },
     );
     (snapshot, cancel_rx)
@@ -152,6 +158,133 @@ pub(crate) fn update_subagent_progress(id: &str, update: SubagentProgressUpdate)
         record.snapshot.last_tool = Some(last_tool);
     }
     record.snapshot.updated_at = unix_seconds();
+}
+
+/// 记录子智能体的一次子工具调用开始,并同步快照进度。
+///
+/// 参数:
+/// - `id`: 任务 ID
+/// - `name`: 子工具名称
+/// - `args`: 子工具参数 JSON 文本
+///
+/// 返回:
+/// - 无
+pub(crate) fn timeline_tool_started(id: &str, name: &str, args: &str) {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let Some(record) = running_record(&mut subagents, id) else {
+        return;
+    };
+    let step = record.timeline.push_tool(name, args);
+    record.snapshot.step = step;
+    record.snapshot.last_tool = Some(name.to_string());
+    record.snapshot.phase = Some(if is_zh() {
+        format!("工具 #{step}：{} 运行中", readable_tool_name(name))
+    } else {
+        format!("tool #{step}: {name} running")
+    });
+    record.snapshot.updated_at = unix_seconds();
+}
+
+/// 回填子智能体最近一次子工具调用的结果,并同步快照进度。
+///
+/// 参数:
+/// - `id`: 任务 ID
+/// - `name`: 子工具名称
+/// - `ok`: 是否成功
+/// - `output`: 子工具输出
+///
+/// 返回:
+/// - 无
+pub(crate) fn timeline_tool_finished(id: &str, name: &str, ok: bool, output: &str) {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let Some(record) = running_record(&mut subagents, id) else {
+        return;
+    };
+    let Some(step) = record.timeline.complete_tool(name, ok, output) else {
+        return;
+    };
+    let state_text = if ok {
+        "ok"
+    } else if is_zh() {
+        "失败"
+    } else {
+        "failed"
+    };
+    record.snapshot.phase = Some(if is_zh() {
+        format!("工具 #{step}：{} {state_text}", readable_tool_name(name))
+    } else {
+        format!("tool #{step}: {name} {state_text}")
+    });
+    record.snapshot.updated_at = unix_seconds();
+}
+
+/// 追加子智能体的正文或推理片段到时间线。
+///
+/// 参数:
+/// - `id`: 任务 ID
+/// - `text`: 文本片段
+/// - `reasoning`: 是否为推理片段
+///
+/// 返回:
+/// - 无
+pub(crate) fn timeline_streaming_text(id: &str, text: &str, reasoning: bool) {
+    let mut subagents = subagents().lock().expect("subagent state lock");
+    let Some(record) = running_record(&mut subagents, id) else {
+        return;
+    };
+    if reasoning {
+        record.timeline.append_reasoning(text);
+    } else {
+        record.timeline.append_text(text);
+    }
+    record.snapshot.updated_at = unix_seconds();
+}
+
+/// 读取子智能体的执行时间线快照。
+///
+/// 参数:
+/// - `id`: 任务 ID
+///
+/// 返回:
+/// - 时间线条目列表
+pub(crate) fn subagent_timeline(id: &str) -> Result<Vec<SubagentTimelineEntry>> {
+    subagents()
+        .lock()
+        .expect("subagent state lock")
+        .get(id)
+        .map(|record| record.timeline.entries())
+        .ok_or_else(|| anyhow::anyhow!("subagent not found: {id}"))
+}
+
+/// 把子智能体的完成事件标记为已通知。
+///
+/// 供 wait 动作在取回结果后调用,避免同一完成事件再触发一次系统提醒。
+///
+/// 参数:
+/// - `id`: 任务 ID
+///
+/// 返回:
+/// - 无
+pub(crate) fn mark_finish_notified(id: &str) {
+    if let Some(record) = subagents()
+        .lock()
+        .expect("subagent state lock")
+        .get_mut(id)
+    {
+        if record.snapshot.status != "running" {
+            record.finish_notified = true;
+        }
+    }
+}
+
+/// 取出仍在运行中的记录,终态记录返回空。
+fn running_record<'map>(
+    subagents: &'map mut HashMap<String, SubagentRecord>,
+    id: &str,
+) -> Option<&'map mut SubagentRecord> {
+    subagents
+        .get_mut(id)
+        .filter(|record| record.snapshot.status == "running")
 }
 
 /// 取出已完成但尚未通知主 Agent 的子智能体,并标记为已通知。

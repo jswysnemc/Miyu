@@ -53,12 +53,13 @@
 }
 
 .workspace-menu {
+  overflow-y: auto;
   padding: 8px;
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--paper-raised);
   box-shadow: var(--shadow);
-  z-index: 80;
+  z-index: 110;
 }
 
 .workspace-menu-head,
