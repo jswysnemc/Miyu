@@ -277,7 +277,7 @@ where
     match event.kind.as_str() {
         "message_start" => {
             if let Some(usage) = event.message.and_then(|message| message.usage) {
-                state.usage = Some(map_anthropic_usage(usage));
+                merge_anthropic_usage(state, usage);
             }
         }
         "content_block_start" => {
@@ -357,7 +357,7 @@ where
         }
         "message_delta" => {
             if let Some(usage) = event.usage {
-                state.usage = Some(map_anthropic_usage(usage));
+                merge_anthropic_usage(state, usage);
             }
             flush_anthropic_state(state, on_event)?;
         }
@@ -402,12 +402,36 @@ where
     )
 }
 
-fn map_anthropic_usage(usage: AnthropicUsage) -> Usage {
-    Usage {
-        prompt_tokens: usage.input_tokens,
-        completion_tokens: usage.output_tokens,
-        total_tokens: usage.input_tokens + usage.output_tokens,
+/// 合并 Anthropic 分阶段返回的令牌统计。
+///
+/// 参数:
+/// - `state`: 当前 Anthropic 流状态
+/// - `usage`: 本次事件实际携带的统计字段
+///
+/// 返回:
+/// - 无；合并结果写入流状态
+fn merge_anthropic_usage(state: &mut AnthropicStreamState, usage: AnthropicUsage) {
+    if let Some(value) = usage.input_tokens {
+        state.input_tokens = Some(value);
     }
+    if let Some(value) = usage.cache_creation_input_tokens {
+        state.cache_creation_input_tokens = Some(value);
+    }
+    if let Some(value) = usage.cache_read_input_tokens {
+        state.cache_read_input_tokens = Some(value);
+    }
+    if let Some(value) = usage.output_tokens {
+        state.output_tokens = Some(value);
+    }
+    let prompt_tokens = state.input_tokens.unwrap_or_default()
+        + state.cache_creation_input_tokens.unwrap_or_default()
+        + state.cache_read_input_tokens.unwrap_or_default();
+    let completion_tokens = state.output_tokens.unwrap_or_default();
+    state.usage = Some(Usage {
+        prompt_tokens,
+        completion_tokens,
+        total_tokens: prompt_tokens + completion_tokens,
+    });
 }
 
 fn delta_reasoning_text(delta: &ChatChoiceMessage) -> Option<String> {

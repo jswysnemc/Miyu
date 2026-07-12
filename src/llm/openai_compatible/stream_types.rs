@@ -158,9 +158,13 @@ struct AnthropicStreamDelta {
 #[derive(Debug, Deserialize)]
 struct AnthropicUsage {
     #[serde(default)]
-    input_tokens: u64,
+    input_tokens: Option<u64>,
     #[serde(default)]
-    output_tokens: u64,
+    output_tokens: Option<u64>,
+    #[serde(default)]
+    cache_creation_input_tokens: Option<u64>,
+    #[serde(default)]
+    cache_read_input_tokens: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -178,6 +182,10 @@ struct AnthropicStreamState {
     reasoning: String,
     reasoning_emitted: usize,
     thinking_signature: Option<String>,
+    input_tokens: Option<u64>,
+    cache_creation_input_tokens: Option<u64>,
+    cache_read_input_tokens: Option<u64>,
+    output_tokens: Option<u64>,
     usage: Option<Usage>,
     tool_calls: AnthropicToolAccumulator,
 }

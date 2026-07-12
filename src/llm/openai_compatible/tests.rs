@@ -459,6 +459,42 @@ mod tests {
     }
 
     #[test]
+    fn anthropic_stream_merges_partial_usage_and_cache_tokens() {
+        let mut state = AnthropicStreamState::default();
+        let mut on_chunk = |_| Ok(());
+
+        for data in [
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":100,"cache_creation_input_tokens":2000,"cache_read_input_tokens":4000,"output_tokens":0}}}"#,
+            r#"{"type":"message_delta","usage":{"output_tokens":13},"delta":{"stop_reason":"end_turn"}}"#,
+        ] {
+            handle_anthropic_sse_data(data, &mut state, &mut on_chunk).unwrap();
+        }
+
+        let usage = state.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 6100);
+        assert_eq!(usage.completion_tokens, 13);
+        assert_eq!(usage.total_tokens, 6113);
+    }
+
+    #[test]
+    fn anthropic_stream_accepts_later_explicit_input_usage() {
+        let mut state = AnthropicStreamState::default();
+        let mut on_chunk = |_| Ok(());
+
+        for data in [
+            r#"{"type":"message_start","message":{"usage":{"input_tokens":32,"output_tokens":0}}}"#,
+            r#"{"type":"message_delta","usage":{"input_tokens":6548,"output_tokens":13},"delta":{"stop_reason":"end_turn"}}"#,
+        ] {
+            handle_anthropic_sse_data(data, &mut state, &mut on_chunk).unwrap();
+        }
+
+        let usage = state.usage.unwrap();
+        assert_eq!(usage.prompt_tokens, 6548);
+        assert_eq!(usage.completion_tokens, 13);
+        assert_eq!(usage.total_tokens, 6561);
+    }
+
+    #[test]
     fn anthropic_stream_collects_tool_calls() {
         let mut state = AnthropicStreamState::default();
         let mut on_chunk = |_| Ok(());
