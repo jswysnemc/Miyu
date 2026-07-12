@@ -44,37 +44,6 @@ fn edit_file_parameters() -> Value {
             "end_line": {"type":"integer","minimum":1,"description": t("Last 1-based line to replace, inclusive. Line-range mode only.", "要替换的最后一行，1 起始且包含该行。仅用于行范围模式。")},
             "replacement": {"type":"string","description": t("Replacement text for line-range mode. Empty text deletes the selected range.", "行范围模式的替换文本。空文本删除所选行范围。")}
         },
-        "oneOf": [
-            {
-                "type": "object",
-                "required": ["patch"],
-                "not": {"anyOf": [
-                    {"required": ["path"]},
-                    {"required": ["content"]},
-                    {"required": ["start_line"]},
-                    {"required": ["end_line"]},
-                    {"required": ["replacement"]}
-                ]}
-            },
-            {
-                "type": "object",
-                "required": ["path", "content"],
-                "not": {"anyOf": [
-                    {"required": ["patch"]},
-                    {"required": ["start_line"]},
-                    {"required": ["end_line"]},
-                    {"required": ["replacement"]}
-                ]}
-            },
-            {
-                "type": "object",
-                "required": ["path", "start_line", "end_line", "replacement"],
-                "not": {"anyOf": [
-                    {"required": ["patch"]},
-                    {"required": ["content"]}
-                ]}
-            }
-        ],
         "additionalProperties": false
     })
 }
@@ -87,6 +56,7 @@ fn edit_file_parameters() -> Value {
 /// 返回:
 /// - JSON 格式编辑结果
 fn edit_file(args: Value) -> Result<String> {
+    validate_edit_file_mode(&args)?;
     if let Some(patch) = args.get("patch").and_then(Value::as_str) {
         let cwd = crate::runtime_cwd::current_dir()?;
         let applied = apply_patch(patch, &cwd)?;
@@ -100,6 +70,32 @@ fn edit_file(args: Value) -> Result<String> {
         return write_file(args);
     }
     edit_file_lines(args)
+}
+
+/// 校验编辑文件参数只使用一种模式。
+///
+/// 参数:
+/// - `args`: 编辑文件工具参数
+///
+/// 返回:
+/// - 参数仅匹配 patch、整文件或行范围模式之一时成功
+fn validate_edit_file_mode(args: &Value) -> Result<()> {
+    let patch_mode = args.get("patch").is_some();
+    let content_mode = args.get("content").is_some();
+    let line_mode = ["start_line", "end_line", "replacement"]
+        .iter()
+        .any(|key| args.get(*key).is_some());
+    let mode_count = [patch_mode, content_mode, line_mode]
+        .into_iter()
+        .filter(|enabled| *enabled)
+        .count();
+    if mode_count != 1 {
+        bail!("provide exactly one edit mode: patch, path+content, or path+start_line+end_line+replacement")
+    }
+    if !patch_mode && args.get("path").is_none() {
+        bail!("path is required for content and line-range edit modes")
+    }
+    Ok(())
 }
 
 /// 创建或覆盖 UTF-8 文本文件。
@@ -295,17 +291,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn edit_file_schema_exposes_three_exclusive_modes() {
+    fn edit_file_schema_uses_gateway_compatible_object_shape() {
         let schema = edit_file_parameters();
-        assert_eq!(schema["oneOf"].as_array().map(Vec::len), Some(3));
-        assert!(schema["oneOf"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .all(|branch| branch["type"] == "object"));
+        assert!(schema.get("oneOf").is_none());
+        assert!(schema.get("anyOf").is_none());
+        assert!(schema.get("not").is_none());
         assert!(schema["properties"]["patch"]["description"]
             .as_str()
             .is_some_and(|value| value.contains("Add File") && value.contains("+# Title")));
+    }
+
+    #[test]
+    fn edit_file_rejects_mixed_or_missing_modes() {
+        assert!(validate_edit_file_mode(&json!({})).is_err());
+        assert!(
+            validate_edit_file_mode(&json!({"patch": "x", "path": "a", "content": "b"})).is_err()
+        );
+        assert!(validate_edit_file_mode(&json!({"path": "a", "start_line": 1})).is_ok());
     }
 
     #[test]

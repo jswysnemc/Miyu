@@ -33,11 +33,6 @@ pub(crate) fn register_loader(registry: &mut ToolRegistry) {
                     "description": "Name of one installed skill whose full SKILL.md should be loaded. Use exactly one of tool_name, group_name, or skill_name."
                 }
             },
-            "oneOf": [
-                { "type": "object", "required": ["tool_name"] },
-                { "type": "object", "required": ["group_name"] },
-                { "type": "object", "required": ["skill_name"] }
-            ],
             "additionalProperties": false
         }),
         |_| async move {
