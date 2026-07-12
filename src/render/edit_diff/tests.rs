@@ -120,6 +120,44 @@ fn legacy_content_mode_uses_added_for_new_file() {
     assert!(!plain.contains("content:"));
 }
 
+#[test]
+fn content_mode_renders_diff_for_existing_file() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("existing.txt");
+    std::fs::write(&path, "old\n").unwrap();
+    let args = json!({
+        "path": path.to_string_lossy(),
+        "content": "new\n"
+    })
+    .to_string();
+
+    let output = render_for_test(&args).unwrap();
+    let plain = strip_ansi_for_test(&output);
+
+    assert!(plain.contains("  1 -  old"));
+    assert!(plain.contains("  1 +  new"));
+}
+
+#[test]
+fn line_range_mode_renders_replacement_diff() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("lines.txt");
+    std::fs::write(&path, "before\nold\nafter\n").unwrap();
+    let args = json!({
+        "path": path.to_string_lossy(),
+        "start_line": 2,
+        "end_line": 2,
+        "replacement": "new"
+    })
+    .to_string();
+
+    let output = render_for_test(&args).unwrap();
+    let plain = strip_ansi_for_test(&output);
+
+    assert!(plain.contains("  2 -  old"));
+    assert!(plain.contains("  2 +  new"));
+}
+
 /// 去除 ANSI 转义序列，方便断言可见文本。
 ///
 /// 参数:

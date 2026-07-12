@@ -29,6 +29,11 @@ pub(crate) fn render(view: &ToolView, mode: ToolCallDisplayMode) -> String {
             .trim_end()
             .to_string();
     }
+    if view.name == "todo" {
+        if let Some(rendered) = super::todo::render(view, mode) {
+            return rendered;
+        }
+    }
 
     let label = tool_event_label(&view.name, Some(&view.arguments));
     let status = match &view.outcome {

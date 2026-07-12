@@ -13,8 +13,9 @@ use crate::tools;
 use anyhow::{bail, Result};
 use crossterm::cursor::{self, Hide, MoveTo, Show};
 use crossterm::event::{
-    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyModifiers,
-    KeyboardEnhancementFlags, PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
+    self, DisableBracketedPaste, EnableBracketedPaste, Event, KeyCode, KeyEvent, KeyEventKind,
+    KeyModifiers, KeyboardEnhancementFlags, PopKeyboardEnhancementFlags,
+    PushKeyboardEnhancementFlags,
 };
 use crossterm::style::{Attribute, Print, SetAttribute};
 use crossterm::terminal::{self, Clear, ClearType};
@@ -54,6 +55,7 @@ mod repl_input_render;
 #[cfg(test)]
 mod repl_input_tests;
 mod repl_runtime;
+mod repl_shell;
 mod repl_text;
 mod reset;
 mod sessions;
@@ -83,6 +85,7 @@ use repl_input::read_repl_input;
 use repl_input_navigation::{move_cursor_down_by_visual_row, move_cursor_up_by_visual_row};
 use repl_input_render::{clear_repl_input, render_repl_input};
 use repl_runtime::{process_stream_tick, ReplRuntime};
+use repl_shell::execute_repl_shell;
 use repl_text::*;
 use reset::run_reset;
 use sessions::run_sessions;

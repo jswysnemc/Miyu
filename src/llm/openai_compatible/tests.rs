@@ -335,6 +335,17 @@ mod tests {
     }
 
     #[test]
+    fn protocol_config_accepts_messages_alias() {
+        let mut provider = test_provider("claude", "https://api.anthropic.com/v1");
+        provider.protocol = "messages".to_string();
+
+        assert_eq!(
+            ProviderProtocol::from_provider(&provider).unwrap(),
+            ProviderProtocol::Anthropic
+        );
+    }
+
+    #[test]
     fn anthropic_stream_emits_reasoning_content_and_usage() {
         let mut state = AnthropicStreamState::default();
         let mut chunks = Vec::new();
@@ -448,4 +459,3 @@ mod tests {
         assert!(events[0].contains("等"));
     }
 }
-

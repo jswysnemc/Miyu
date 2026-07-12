@@ -83,6 +83,15 @@ pub(super) async fn run_repl(
         {
             break;
         }
+        if let Some(command) = input.strip_prefix('!') {
+            match execute_repl_shell(command).await {
+                Ok(result) => {
+                    runtime.record_shell(result.command, result.output, result.exit_code)?
+                }
+                Err(err) => runtime.record_meta(err.to_string())?,
+            }
+            continue;
+        }
         match crate::control_commands::parse_control_command(
             input,
             crate::control_commands::ControlSurface::Repl,

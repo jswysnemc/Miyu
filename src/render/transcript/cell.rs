@@ -3,6 +3,7 @@ use super::line::AnsiLine;
 use super::markdown_cell::{self, MarkdownCell};
 use super::meta_cell::{self, MetaCell};
 use super::reasoning_cell::{self, ReasoningCell};
+use super::shell_cell::{self, ShellCell};
 use super::tool_cell::{self, ToolCell};
 use super::user_echo_cell::{self, UserEchoCell};
 use super::welcome_cell::{self, WelcomeCell};
@@ -21,6 +22,7 @@ pub(crate) enum HistoryCell {
     UserEcho(UserEchoCell),
     Markdown(MarkdownCell),
     Reasoning(ReasoningCell),
+    Shell(ShellCell),
     Tool(ToolCell),
     Diff(DiffCell),
     Meta(MetaCell),
@@ -48,6 +50,7 @@ impl HistoryCell {
             Self::UserEcho(cell) => user_echo_cell::render(cell),
             Self::Markdown(cell) => markdown_cell::render(cell),
             Self::Reasoning(cell) => reasoning_cell::render(cell, options.reasoning_mode),
+            Self::Shell(cell) => shell_cell::render(cell),
             Self::Tool(cell) => tool_cell::render(cell, options.tool_call_mode),
             Self::Diff(cell) => diff_cell::render(cell),
             Self::Meta(cell) => meta_cell::render(cell),
@@ -94,6 +97,23 @@ impl HistoryCell {
         Self::Reasoning(ReasoningCell { source })
     }
 
+    /// 构造本地 Shell 命令 cell。
+    ///
+    /// 参数:
+    /// - `command`: Shell 命令
+    /// - `output`: 合并后输出
+    /// - `exit_code`: 可选退出码
+    ///
+    /// 返回:
+    /// - Shell 历史 cell
+    pub(crate) fn shell(command: String, output: String, exit_code: Option<i32>) -> Self {
+        Self::Shell(ShellCell {
+            command,
+            output,
+            exit_code,
+        })
+    }
+
     /// 构造 edit_file diff cell。
     ///
     /// 参数:
@@ -102,7 +122,7 @@ impl HistoryCell {
     /// 返回:
     /// - diff cell
     pub(crate) fn diff(arguments: String) -> Self {
-        Self::Diff(DiffCell { arguments })
+        Self::Diff(DiffCell::from_arguments(arguments))
     }
 
     /// 构造元信息 cell。

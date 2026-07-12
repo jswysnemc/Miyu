@@ -27,6 +27,7 @@ use stream::{StreamState, StreamSync};
 use viewport::{InlineViewport, TerminalSize};
 
 const LIVE_REASONING_REFRESH_INTERVAL: Duration = Duration::from_millis(100);
+const SUBAGENT_REFRESH_INTERVAL: Duration = Duration::from_millis(150);
 
 /// REPL 的 source-backed transcript、inline viewport 与 resize reflow 运行期。
 pub(super) struct ReplRuntime {
@@ -37,6 +38,7 @@ pub(super) struct ReplRuntime {
     stream: StreamState,
     composer: Option<ComposerFrame>,
     next_live_reasoning_refresh: Option<Instant>,
+    subagent_signature: Vec<(String, String, u64, u64)>,
 }
 
 impl ReplRuntime {
@@ -60,6 +62,7 @@ impl ReplRuntime {
             stream: StreamState::default(),
             composer: None,
             next_live_reasoning_refresh: None,
+            subagent_signature: Vec::new(),
         }
     }
 
@@ -187,9 +190,23 @@ impl ReplRuntime {
     /// 返回:
     /// - 尚未到期时的等待时长
     pub(super) fn pending_wait(&self) -> Option<std::time::Duration> {
-        self.reflow
+        let reflow_wait = self
+            .reflow
             .pending_until()
-            .map(|deadline| deadline.saturating_duration_since(Instant::now()))
+            .map(|deadline| deadline.saturating_duration_since(Instant::now()));
+        let current_signature = self.transcript.subagent_signature();
+        let subagent_wait = if current_signature != self.subagent_signature {
+            Some(Duration::ZERO)
+        } else {
+            self.transcript
+                .has_running_subagents()
+                .then_some(SUBAGENT_REFRESH_INTERVAL)
+        };
+        match (reflow_wait, subagent_wait) {
+            (Some(left), Some(right)) => Some(left.min(right)),
+            (Some(wait), None) | (None, Some(wait)) => Some(wait),
+            (None, None) => None,
+        }
     }
 
     /// 重放已经到期的 resize 请求。
@@ -230,6 +247,25 @@ impl ReplRuntime {
     /// - 操作是否成功
     pub(super) fn record_meta(&mut self, text: String) -> Result<()> {
         self.transcript.push_meta(text);
+        self.sync_transcript(false)
+    }
+
+    /// 记录本地 Shell 命令与输出。
+    ///
+    /// 参数:
+    /// - `command`: Shell 命令
+    /// - `output`: 命令输出
+    /// - `exit_code`: 可选退出码
+    ///
+    /// 返回:
+    /// - 同步 transcript 是否成功
+    pub(super) fn record_shell(
+        &mut self,
+        command: String,
+        output: String,
+        exit_code: Option<i32>,
+    ) -> Result<()> {
+        self.transcript.push_shell(command, output, exit_code);
         self.sync_transcript(false)
     }
 
@@ -412,6 +448,30 @@ impl ReplRuntime {
         self.next_live_reasoning_refresh = Some(now + LIVE_REASONING_REFRESH_INTERVAL);
         self.sync_transcript(true)?;
         Ok(true)
+    }
+
+    /// 刷新后台子智能体的持久化时间线。
+    ///
+    /// 返回:
+    /// - 是否执行了 transcript 同步
+    pub(super) fn tick_subagents(&mut self) -> Result<bool> {
+        let signature = self.transcript.subagent_signature();
+        if signature == self.subagent_signature {
+            return Ok(false);
+        }
+        self.subagent_signature = signature;
+        self.sync_transcript(true)?;
+        Ok(true)
+    }
+
+    /// 处理输入阶段的定时重绘。
+    ///
+    /// 返回:
+    /// - 是否执行了任何刷新
+    pub(super) fn process_idle_tick(&mut self) -> Result<bool> {
+        let reflowed = self.maybe_reflow_due(false)?;
+        let subagents = self.tick_subagents()?;
+        Ok(reflowed || subagents)
     }
 
     /// 记录终端尺寸变化并安排 resize reflow。

@@ -76,8 +76,8 @@ fn replay_lines_to<W: Write>(
         queue!(
             output,
             MoveTo(0, viewport.origin_row().saturating_add(row as u16)),
-            Print(line.as_str()),
-            Clear(ClearType::UntilNewLine)
+            Clear(ClearType::CurrentLine),
+            Print(line.as_str())
         )?;
     }
     Ok(())
@@ -114,8 +114,8 @@ fn append_lines_to<W: Write>(
         queue!(
             output,
             MoveTo(0, previous_top.saturating_add(index as u16)),
-            Print(line.as_str()),
-            Clear(ClearType::UntilNewLine)
+            Clear(ClearType::CurrentLine),
+            Print(line.as_str())
         )?;
     }
     if direct_line_count == lines.len() {
@@ -130,8 +130,8 @@ fn append_lines_to<W: Write>(
             Print("\r\n"),
             // 2. 末条历史固定在 composer 紧上方，随后由 composer 重绘覆盖旧输入区
             MoveTo(0, composer_top.saturating_sub(1)),
-            Print(line.as_str()),
-            Clear(ClearType::UntilNewLine)
+            Clear(ClearType::CurrentLine),
+            Print(line.as_str())
         )?;
     }
     Ok(AppendOutcome {
@@ -168,8 +168,25 @@ mod tests {
         replay_lines_to(&mut output, &viewport, &lines).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\x1b[1;1Hfirst\x1b[K\x1b[2;1Hsecond\x1b[K"));
+        assert!(output.contains("\x1b[1;1H\x1b[2Kfirst\x1b[2;1H\x1b[2Ksecond"));
         assert!(!output.contains("\r\n"));
+    }
+
+    /// 验证有背景的 diff 行不会在打印后被默认背景清行覆盖。
+    #[test]
+    fn replay_clears_before_printing_filled_diff_lines() {
+        let mut viewport = InlineViewport::new();
+        viewport.update(TerminalSize { cols: 80, rows: 24 }, 3, 1);
+        let mut output = Vec::new();
+        let line = AnsiLine::new("\x1b[48;5;22mchanged\x1b[K\x1b[0m".to_string());
+
+        replay_lines_to(&mut output, &viewport, &[line]).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        let clear = output.find("\x1b[2K").unwrap();
+        let background = output.find("\x1b[48;5;22m").unwrap();
+        assert!(clear < background);
+        assert!(!output[background..].contains("\x1b[2K"));
     }
 
     /// 验证历史未填满时，新行直接写入旧 composer 顶部。
@@ -196,7 +213,7 @@ mod tests {
         .unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\x1b[5;1Hnext\x1b[K"));
+        assert!(output.contains("\x1b[5;1H\x1b[2Knext"));
         assert!(!output.contains("\x1b[r"));
         assert_eq!(outcome.scrolled_rows, 0);
     }
@@ -225,7 +242,7 @@ mod tests {
         .unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\x1b[24;1H\r\n\x1b[21;1Hnext\x1b[K"));
+        assert!(output.contains("\x1b[24;1H\r\n\x1b[21;1H\x1b[2Knext"));
         assert_eq!(outcome.scrolled_rows, 1);
     }
 
@@ -250,8 +267,8 @@ mod tests {
         append_lines_to(&mut output, &previous, &viewport, &lines).unwrap();
 
         let output = String::from_utf8(output).unwrap();
-        assert!(output.contains("\x1b[5;1Hline-0\x1b[K"));
-        assert!(output.contains("\x1b[21;1Hline-16\x1b[K"));
-        assert!(output.contains("\x1b[24;1H\r\n\x1b[21;1Hline-17\x1b[K"));
+        assert!(output.contains("\x1b[5;1H\x1b[2Kline-0"));
+        assert!(output.contains("\x1b[21;1H\x1b[2Kline-16"));
+        assert!(output.contains("\x1b[24;1H\r\n\x1b[21;1H\x1b[2Kline-17"));
     }
 }

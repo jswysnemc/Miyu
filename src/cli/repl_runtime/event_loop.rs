@@ -11,5 +11,6 @@ use anyhow::Result;
 pub(crate) fn process_stream_tick(runtime: &mut ReplRuntime) -> Result<()> {
     runtime.observe_terminal_size(true)?;
     runtime.maybe_reflow_due(true)?;
-    runtime.tick_live_reasoning().map(|_| ())
+    runtime.tick_live_reasoning()?;
+    runtime.tick_subagents().map(|_| ())
 }

@@ -30,3 +30,17 @@ fn summary_view_keeps_failure_visible() {
     assert!(!output.is_empty());
     assert!(output.contains("err"));
 }
+
+#[test]
+fn todo_result_renders_items_instead_of_raw_json() {
+    let output = render_result(
+        "todo",
+        true,
+        r#"{"ok":true,"items":[{"id":"1","text":"检查测试","status":"completed"},{"id":"2","text":"构建项目","status":"in_progress"}]}"#,
+        ToolCallDisplayMode::Full,
+    );
+
+    assert!(output.contains("[x] 检查测试"));
+    assert!(output.contains("[>] 构建项目"));
+    assert!(!output.contains("\"items\""));
+}

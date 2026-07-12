@@ -237,3 +237,66 @@ fn diff_fill_is_reapplied_to_each_prewrapped_row() {
     assert_eq!(lines.len(), 2);
     assert!(lines.iter().all(|line| line.as_str().contains("\x1b[K")));
 }
+
+#[test]
+fn diff_cell_keeps_pre_edit_snapshot_after_file_changes() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("snapshot.txt");
+    std::fs::write(&path, "old\n").unwrap();
+    let arguments = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "content": "new\n"
+    })
+    .to_string();
+    let mut store = TranscriptStore::new(100);
+
+    store.push_tool_call("edit_file".to_string(), arguments);
+    std::fs::write(&path, "new\n").unwrap();
+    let rendered = store
+        .display_tail(80, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+
+    assert!(rendered.contains("old"));
+    assert!(rendered.contains("new"));
+}
+
+#[test]
+fn background_subagent_cell_reads_persisted_timeline() {
+    let (subagent, _cancel) = crate::tools::subagent_state::create_subagent(
+        "检查项目".to_string(),
+        "explore".to_string(),
+        5,
+    );
+    let mut store = TranscriptStore::new(100);
+    store.push_tool_call(
+        "subagent".to_string(),
+        r#"{"description":"检查项目"}"#.to_string(),
+    );
+    store.push_tool_result(
+        "subagent".to_string(),
+        true,
+        serde_json::json!({"ok":true,"subagent":subagent.clone()}).to_string(),
+    );
+    crate::tools::subagent_state::timeline_streaming_text(&subagent.id, "正在检查", true);
+
+    assert!(store.has_running_subagents());
+    let running_signature = store.subagent_signature();
+    let rendered = store
+        .display_tail(100, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+    assert!(rendered.contains("正在检查"));
+
+    crate::tools::subagent_state::finish_subagent(
+        &subagent.id,
+        "completed",
+        Some("检查完成".to_string()),
+        None,
+        None,
+    );
+    assert!(!store.has_running_subagents());
+    assert_ne!(store.subagent_signature(), running_signature);
+}

@@ -2,6 +2,7 @@ use super::cell::{HistoryCell, TranscriptMode};
 use super::line::AnsiLine;
 use super::markdown_cell;
 use super::reasoning_cell;
+use super::subagent_cell::SubagentCell;
 use super::tool_cell::ToolCell;
 use super::welcome_cell::WelcomeCell;
 use crate::llm::{ChatStreamChunk, ChatStreamKind, ToolCallStreamProgress};
@@ -112,6 +113,19 @@ impl TranscriptStore {
         self.push_cell(HistoryCell::meta(text));
     }
 
+    /// 记录 REPL 本地 Shell 命令与输出。
+    ///
+    /// 参数:
+    /// - `command`: Shell 命令
+    /// - `output`: 命令输出
+    /// - `exit_code`: 可选退出码
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn push_shell(&mut self, command: String, output: String, exit_code: Option<i32>) {
+        self.push_cell(HistoryCell::shell(command, output, exit_code));
+    }
+
     /// 记录 REPL 启动信息面板。
     ///
     /// 参数:
@@ -214,6 +228,13 @@ impl TranscriptStore {
         if name == "edit_file" {
             self.active_tool_index = None;
             self.push_cell(HistoryCell::diff(arguments));
+        } else if name == "subagent" {
+            let index = self.cells.len();
+            self.cells
+                .push(HistoryCell::Tool(ToolCell::Subagent(SubagentCell::new(
+                    arguments,
+                ))));
+            self.active_tool_index = Some(index);
         } else {
             let index = self.cells.len();
             self.cells
@@ -235,6 +256,11 @@ impl TranscriptStore {
     /// - 无
     pub(crate) fn push_tool_result(&mut self, name: String, ok: bool, output: String) {
         self.finalize_live_tail();
+        if name == "subagent" && self.update_active_subagent(|cell| cell.finish(ok, output.clone()))
+        {
+            self.active_tool_index = None;
+            return;
+        }
         if self.update_active_tool(&name, |view| view.finish(ok, output.clone())) {
             self.active_tool_index = None;
             return;
@@ -256,6 +282,11 @@ impl TranscriptStore {
     /// - 无
     pub(crate) fn push_tool_progress(&mut self, name: String, message: String) {
         self.finalize_live_tail();
+        if name == "subagent"
+            && self.update_active_subagent(|cell| cell.push_progress(message.clone()))
+        {
+            return;
+        }
         if self.update_active_tool(&name, |view| view.set_progress(message.clone())) {
             return;
         }
@@ -346,6 +377,30 @@ impl TranscriptStore {
             return false;
         }
         update(view);
+        true
+    }
+
+    /// 更新当前活动的子智能体单元。
+    ///
+    /// 参数:
+    /// - `update`: 子智能体单元更新函数
+    ///
+    /// 返回:
+    /// - 是否找到仍在执行的子智能体
+    fn update_active_subagent<F>(&mut self, update: F) -> bool
+    where
+        F: FnOnce(&mut SubagentCell),
+    {
+        let Some(index) = self.active_tool_index else {
+            return false;
+        };
+        let Some(HistoryCell::Tool(ToolCell::Subagent(cell))) = self.cells.get_mut(index) else {
+            return false;
+        };
+        if !cell.is_active() {
+            return false;
+        }
+        update(cell);
         true
     }
 
@@ -448,6 +503,33 @@ impl TranscriptStore {
             }
         }
         lines
+    }
+
+    /// 判断 transcript 中是否有仍在更新的后台子智能体。
+    ///
+    /// 返回:
+    /// - 需要定时重绘时返回 true
+    pub(crate) fn has_running_subagents(&self) -> bool {
+        self.cells.iter().any(|cell| {
+            matches!(
+                cell,
+                HistoryCell::Tool(ToolCell::Subagent(subagent)) if subagent.has_live_updates()
+            )
+        })
+    }
+
+    /// 返回 transcript 中子智能体状态和时间线签名。
+    ///
+    /// 返回:
+    /// - 按 cell 顺序组织的状态签名
+    pub(crate) fn subagent_signature(&self) -> Vec<(String, String, u64, u64)> {
+        self.cells
+            .iter()
+            .filter_map(|cell| match cell {
+                HistoryCell::Tool(ToolCell::Subagent(subagent)) => subagent.state_signature(),
+                _ => None,
+            })
+            .collect()
     }
 }
 

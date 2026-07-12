@@ -616,13 +616,6 @@ impl StreamRenderer {
                     execute!(stdout, ResetColor)?;
                     writeln!(stdout)?;
                 }
-                if !self.plain {
-                    writeln!(
-                        stdout,
-                        "\x1b[2m{TOOL_BULLET} {}\x1b[0m",
-                        self.work_status.unwrap_or(WorkStatus::Working).label()
-                    )?;
-                }
             }
         }
         stdout.flush()?;

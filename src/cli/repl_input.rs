@@ -98,7 +98,7 @@ pub(super) fn read_repl_input(
     loop {
         if let Some(wait) = runtime.pending_wait() {
             if !event::poll(wait)? {
-                if runtime.maybe_reflow_due(false)? {
+                if runtime.process_idle_tick()? {
                     input_row = 0;
                     rendered_rows = 0;
                     redraw_input!()?;
@@ -116,8 +116,15 @@ pub(super) fn read_repl_input(
                 redraw_input!()?;
             }
             Event::Key(KeyEvent {
-                code, modifiers, ..
+                code,
+                modifiers,
+                kind,
+                ..
             }) => {
+                // 只处理按下与长按重复事件，避免重新进入原始模式后的释放事件覆盖新输入
+                if kind == KeyEventKind::Release {
+                    continue;
+                }
                 if code != KeyCode::Esc {
                     last_escape = None;
                 }

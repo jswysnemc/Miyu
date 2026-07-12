@@ -159,6 +159,18 @@ fn input_helpers_insert_newline_at_cursor() {
 }
 
 #[test]
+fn slash_can_be_inserted_into_fresh_composer_after_a_turn() {
+    let mut input = String::new();
+    let mut cursor = 0;
+
+    insert_char_at_cursor(&mut input, &mut cursor, '/');
+
+    assert_eq!(input, "/");
+    assert_eq!(cursor, 1);
+    assert!(!repl_command_suggestions(&input).is_empty());
+}
+
+#[test]
 fn long_paste_visible_lines_are_collapsed() {
     let lines = (0..20)
         .map(|index| format!("line {index}"))

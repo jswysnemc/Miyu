@@ -31,7 +31,9 @@ impl ProviderProtocol {
             "" | "auto" => Ok(Self::Auto),
             "openai-chat" => Ok(Self::OpenAiChat),
             "openai-responses" => Ok(Self::OpenAiResponses),
-            "anthropic" => Ok(Self::Anthropic),
+            "anthropic" | "anthropic-messages" | "messages" | "claude" | "claude-code" => {
+                Ok(Self::Anthropic)
+            }
             protocol => bail!("unsupported provider protocol: {protocol}"),
         }
     }
@@ -489,4 +491,3 @@ impl OpenAiCompatibleClient {
             || model.starts_with("o4")
     }
 }
-

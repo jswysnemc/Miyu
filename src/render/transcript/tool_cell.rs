@@ -1,3 +1,4 @@
+use super::subagent_cell::{self, SubagentCell};
 use crate::render::tool_event_line::tool_event_text;
 use crate::render::tool_view::{self, ToolView};
 use crate::render::ToolCallDisplayMode;
@@ -6,6 +7,7 @@ use crate::render::ToolCallDisplayMode;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum ToolCell {
     Invocation(ToolView),
+    Subagent(SubagentCell),
     CompactionStarted { turn_count: usize },
     CompactionFinished { applied: bool },
 }
@@ -21,6 +23,7 @@ pub(crate) enum ToolCell {
 pub(crate) fn render(cell: &ToolCell, mode: ToolCallDisplayMode) -> String {
     match cell {
         ToolCell::Invocation(view) => tool_view::render(view, mode),
+        ToolCell::Subagent(cell) => subagent_cell::render(cell, mode),
         ToolCell::CompactionStarted { turn_count } => {
             tool_event_text(&format!("compact context×{turn_count}"), "run")
         }

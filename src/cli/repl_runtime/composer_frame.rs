@@ -133,8 +133,11 @@ impl ComposerFrame {
     fn layout(&self, cols: usize) -> ComposerLayout {
         let cols = cols.max(1);
         let lines = repl_input_lines(&self.input);
-        let display_lines =
-            repl_visible_input_lines("", &lines, REPL_MAX_VISIBLE_INPUT_ROWS, self.is_pasted);
+        let display_lines = if self.input.is_empty() {
+            vec![placeholder_text()]
+        } else {
+            repl_visible_input_lines("", &lines, REPL_MAX_VISIBLE_INPUT_ROWS, self.is_pasted)
+        };
         let input_rows = repl_prompt_rows_for_cols("", &display_lines, cols).max(1);
         let slash_panel = SlashPanel::new(&self.input, self.slash_selection);
         let (cursor_col, cursor_row_offset) = if display_lines.len() == lines.len() {
@@ -154,6 +157,18 @@ impl ComposerFrame {
             cursor_row_offset,
         }
     }
+}
+
+/// 返回空输入框的灰色提示文本。
+///
+/// 返回:
+/// - 包含快捷操作说明的 ANSI 文本
+fn placeholder_text() -> String {
+    let text = crate::i18n::text(
+        "Type a message, / for commands, ! for shell",
+        "输入消息，/ 查看命令，! 执行 Shell",
+    );
+    format!("\x1b[2m{text}\x1b[0m")
 }
 
 /// composer 在单一终端宽度下的计算结果。
@@ -232,5 +247,30 @@ mod tests {
         assert!(output.matches('─').count() >= 2);
         assert!(output.contains("/"));
         assert!(!output.contains("120k"));
+    }
+
+    /// 验证空输入框显示灰色操作提示。
+    #[test]
+    fn empty_composer_shows_placeholder() {
+        let chrome = ReplChrome {
+            mode: AgentMode::Yolo,
+            context_ratio: 0.0,
+            context_window_tokens: 120_000,
+            model: "gpt".to_string(),
+            thinking: "auto".to_string(),
+            directory: "/workspace".to_string(),
+            git_branch: None,
+        };
+        let frame = ComposerFrame::new(chrome, String::new(), 0, false, 0);
+        let mut viewport = InlineViewport::new();
+        viewport.update(TerminalSize { cols: 72, rows: 24 }, frame.height(72), 4);
+        let mut output = Vec::new();
+
+        frame.draw(&mut output, &viewport).unwrap();
+
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("/"));
+        assert!(output.contains("!"));
+        assert!(output.contains("\x1b[2m"));
     }
 }
