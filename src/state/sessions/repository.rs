@@ -17,6 +17,38 @@ pub fn list_sessions(paths: &MiyuPaths) -> Result<Vec<SessionInfo>> {
     ensure_default_session_for_base(&scope.state_dir)
 }
 
+/// 读取指定工作区的会话列表。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 工作区目录
+///
+/// 返回:
+/// - 指定工作区的会话列表
+pub fn list_sessions_for_workspace(
+    paths: &MiyuPaths,
+    workspace_path: &Path,
+) -> Result<Vec<SessionInfo>> {
+    let scope = workspace_scope_for_path(paths, workspace_path);
+    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
+    ensure_default_session_for_base(&scope.state_dir)
+}
+
+/// 读取指定工作区的当前会话标识。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 工作区目录
+///
+/// 返回:
+/// - 当前会话标识
+pub fn active_session_id_for_workspace(paths: &MiyuPaths, workspace_path: &Path) -> Result<String> {
+    let scope = workspace_scope_for_path(paths, workspace_path);
+    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
+    ensure_default_session_for_base(&scope.state_dir)?;
+    read_current_session_id_from_base(&scope.state_dir)
+}
+
 /// 创建新会话并设为当前会话。
 ///
 /// 参数:

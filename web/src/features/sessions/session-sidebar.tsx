@@ -1,8 +1,12 @@
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ListChecks, MessageSquare, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { CheckSquare2, ChevronDown, ChevronRight, FolderGit2, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { NavLink } from "react-router-dom";
 import { api } from "../../api/client";
+import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
+import { switchWithTerminalConfirm } from "../workspaces/workspace-switcher";
+import { ActiveAgentIndicator } from "./active-agent-indicator";
+import { useSessionTree } from "./use-session-tree";
 import "./session-sidebar.css";
 
 type SessionSidebarProps = {
@@ -19,14 +23,18 @@ type SessionSidebarProps = {
  */
 export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: SessionSidebarProps) {
   const queryClient = useQueryClient();
+  const confirm = useConfirm();
   const [menu, setMenu] = useState<string | null>(null);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [confirming, setConfirming] = useState(false);
   const [renaming, setRenaming] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
+  const [navigationError, setNavigationError] = useState<Error | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions.list });
+  const { tree, expanded, runningSessions, toggleWorkspace } = useSessionTree();
+  const activeWorkspace = tree.data?.find((workspace) => workspace.active);
+  const sessions = activeWorkspace?.sessions ?? [];
 
   // 1. 监听整页 pointerdown，点击菜单外任意位置时关闭管理菜单
   useEffect(() => {
@@ -47,12 +55,12 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   /** 刷新会话列表和全部消息缓存。 */
   const refresh = async () => {
     await queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    await queryClient.invalidateQueries({ queryKey: ["session-tree"] });
     await queryClient.invalidateQueries({ queryKey: ["messages"] });
     await queryClient.invalidateQueries({ queryKey: ["timeline"] });
   };
 
   const create = useMutation({ mutationFn: () => api.sessions.create(), onSuccess: refresh });
-  const switchSession = useMutation({ mutationFn: api.sessions.switch, onSuccess: refresh });
   const remove = useMutation({ mutationFn: api.sessions.remove, onSuccess: refresh });
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.sessions.rename(id, title),
@@ -68,6 +76,13 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
       setSelecting(false);
       setConfirming(false);
       await refresh();
+    }
+  });
+  const removeWorkspace = useMutation({
+    mutationFn: api.workspaces.remove,
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["workspaces"] });
+      await queryClient.invalidateQueries({ queryKey: ["session-tree"] });
     }
   });
 
@@ -88,7 +103,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
 
   /** 切换全部可删除会话的选中状态。 */
   const toggleAll = () => {
-    const ids = sessions.data?.filter((session) => session.id !== "default").map((session) => session.id) ?? [];
+    const ids = sessions.filter((session) => session.id !== "default").map((session) => session.id);
     setSelected(selected.size === ids.length ? new Set() : new Set(ids));
     setConfirming(false);
   };
@@ -110,6 +125,37 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
     setConfirming(false);
   };
 
+  /** 从当前工作区进入全选模式。 */
+  const selectWorkspaceSessions = () => {
+    setSelecting(true);
+    toggleAll();
+  };
+
+  /** 确认后关闭非活动工作区。 */
+  const closeWorkspace = async (workspaceId: string, workspaceName: string, workspaceActive: boolean) => {
+    setNavigationError(null);
+    try {
+      const accepted = await confirm({
+        title: "关闭工作区",
+        description: `从列表中关闭“${workspaceName}”？工作区文件不会被删除。`,
+        confirmLabel: "关闭"
+      });
+      if (!accepted) return;
+      if (workspaceActive) {
+        const fallback = tree.data?.find((workspace) => workspace.workspace_id !== workspaceId);
+        if (!fallback) return;
+        const switched = await switchWithTerminalConfirm(fallback.workspace_id, confirm);
+        if (!switched) return;
+        await api.workspaces.remove(workspaceId);
+        window.location.reload();
+        return;
+      }
+      removeWorkspace.mutate(workspaceId);
+    } catch (cause) {
+      setNavigationError(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  };
+
   /**
    * 进入指定会话的重命名编辑态。
    *
@@ -126,7 +172,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   const submitRename = () => {
     if (!renaming) return;
     const title = renameDraft.trim();
-    const current = sessions.data?.find((session) => session.id === renaming);
+    const current = sessions.find((session) => session.id === renaming);
     if (!title || title === current?.title) {
       setRenaming(null);
       return;
@@ -134,8 +180,29 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
     rename.mutate({ id: renaming, title });
   };
 
-  const manageableCount = sessions.data?.filter((session) => session.id !== "default").length ?? 0;
-  const error = sessions.error ?? switchSession.error ?? remove.error ?? removeMany.error ?? rename.error;
+  const manageableCount = sessions.filter((session) => session.id !== "default").length;
+  const error = navigationError ?? tree.error ?? remove.error ?? removeMany.error ?? rename.error ?? removeWorkspace.error;
+
+  /** 切换工作区和会话，跨工作区时完成切换后重新载入工作台。 */
+  const openSession = async (workspaceId: string, sessionId: string, workspaceActive: boolean, sessionActive: boolean) => {
+    setNavigationError(null);
+    try {
+      if (sessionActive) {
+        onNavigate?.();
+        return;
+      }
+      if (!workspaceActive) {
+        const switched = await switchWithTerminalConfirm(workspaceId, confirm);
+        if (!switched) return;
+      }
+      await api.sessions.switch(sessionId);
+      if (!workspaceActive) window.location.reload();
+      else await refresh();
+      onNavigate?.();
+    } catch (cause) {
+      setNavigationError(cause instanceof Error ? cause : new Error(String(cause)));
+    }
+  };
 
   if (collapsed) {
     return (
@@ -161,37 +228,42 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
           <button type="button" className="icon-button" aria-label="折叠会话侧栏" title="折叠会话侧栏" onClick={onToggleCollapsed}>
             <PanelLeftClose size={16} />
           </button>
-          <button type="button" className={selecting ? "icon-button active" : "icon-button"} aria-label={selecting ? "退出选择" : "批量管理"} onClick={() => selecting ? closeSelection() : setSelecting(true)} disabled={manageableCount === 0}>
-            {selecting ? <X size={16} /> : <ListChecks size={16} />}
-          </button>
-          <button type="button" className="new-session-button" onClick={() => create.mutate()} disabled={create.isPending}>
-            <Plus size={15} /><span>{create.isPending ? "正在新建" : "新会话"}</span>
-          </button>
         </div>
       </div>
-      {selecting && (
-        <div className="session-bulk-bar">
-          <button type="button" onClick={toggleAll}>{selected.size === manageableCount && manageableCount > 0 ? <CheckSquare2 size={14} /> : <Square size={14} />}全选</button>
-          <span>已选择 {selected.size} 项</span>
-          <button type="button" className={confirming ? "danger confirming" : "danger"} onClick={requestBulkDelete} disabled={selected.size === 0 || removeMany.isPending}>
-            <Trash2 size={14} />{removeMany.isPending ? "正在删除" : confirming ? `确认删除 ${selected.size} 项` : "删除"}
-          </button>
-        </div>
-      )}
       <div className="session-list">
-        {sessions.isLoading && <div className="sidebar-state"><RefreshCw size={15} className="spin" /> 读取会话</div>}
-        {sessions.data?.map((session) => {
+        {tree.isLoading && <div className="sidebar-state"><RefreshCw size={15} className="spin" /> 读取会话</div>}
+        {tree.data?.map((workspace) => {
+          const workspaceExpanded = expanded.has(workspace.workspace_id);
+          const workspaceRunning = workspace.sessions.some((session) => runningSessions.has(`${workspace.workspace_id}:${session.id}`));
+          return <div className="session-workspace" key={workspace.workspace_id}>
+            <div className={`${workspace.active ? "workspace-tree-row active" : "workspace-tree-row"}${workspace.active && selecting ? " selecting" : ""}`}>
+              <button type="button" className="workspace-tree-main" onClick={() => toggleWorkspace(workspace.workspace_id)} aria-expanded={workspaceExpanded}>
+                {workspaceExpanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+                <FolderGit2 size={14} />
+                <span><strong>{workspace.workspace_name}</strong><small>{workspace.sessions.length} 个会话</small></span>
+                {workspaceRunning && <ActiveAgentIndicator />}
+              </button>
+              <span className="workspace-tree-actions">
+                {workspace.active && !selecting && <button type="button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话"><Plus size={14} /></button>}
+                {workspace.active && !selecting && manageableCount > 0 && <button type="button" onClick={selectWorkspaceSessions} aria-label={`全选 ${workspace.workspace_name} 的会话`} title="全选会话"><CheckSquare2 size={14} /></button>}
+                {workspace.active && selecting && <span className="workspace-selection-count">已选择 {selected.size} 项</span>}
+                {workspace.active && selecting && <button type="button" className={confirming ? "danger confirming" : "danger"} onClick={requestBulkDelete} disabled={selected.size === 0 || removeMany.isPending} aria-label={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"} title={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"}><Trash2 size={14} /></button>}
+                {workspace.active && selecting && <button type="button" onClick={closeSelection} aria-label="退出选择" title="退出选择"><X size={14} /></button>}
+                {(tree.data?.length ?? 0) > 1 && !(workspace.active && selecting) && <button type="button" onClick={() => void closeWorkspace(workspace.workspace_id, workspace.workspace_name, workspace.active)} aria-label={`关闭工作区 ${workspace.workspace_name}`} title="关闭工作区"><X size={14} /></button>}
+              </span>
+            </div>
+            {workspaceExpanded && <div className="workspace-session-children">{workspace.sessions.map((session) => {
           const checked = selected.has(session.id);
+          const running = runningSessions.has(`${workspace.workspace_id}:${session.id}`);
           return (
-            <div className={`${session.active ? "session-row active" : "session-row"}${checked ? " selected" : ""}`} key={session.id}>
-              {selecting && (
+            <div className={`${session.active ? "session-row active" : "session-row"}${checked ? " selected" : ""}${running ? " running" : ""}`} key={session.id}>
+              {selecting && workspace.active && (
                 <button type="button" className="session-check" onClick={() => toggleSelected(session.id)} disabled={session.id === "default"} aria-label={`选择 ${session.title}`}>
                   {checked ? <CheckSquare2 size={15} /> : <Square size={15} />}
                 </button>
               )}
               {!selecting && renaming === session.id ? (
                 <div className="session-rename">
-                  <MessageSquare size={14} />
                   <input
                     autoFocus
                     value={renameDraft}
@@ -209,18 +281,17 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
                 </div>
               ) : (
                 <button type="button" className="session-main" onClick={() => {
-                  if (selecting) {
+                  if (selecting && workspace.active) {
                     if (session.id !== "default") toggleSelected(session.id);
                     return;
                   }
-                  if (!session.active) switchSession.mutate(session.id);
-                  onNavigate?.();
+                  void openSession(workspace.workspace_id, session.id, workspace.active, session.active);
                 }}>
-                  <MessageSquare size={14} />
                   <span><strong>{session.title}</strong><small>{new Date(session.updated_at).toLocaleString()}</small></span>
+                  {running && <ActiveAgentIndicator />}
                 </button>
               )}
-              {!selecting && renaming !== session.id && <button type="button" className="session-more" aria-label={`管理 ${session.title}`} onClick={() => setMenu((value) => value === session.id ? null : session.id)}><MoreHorizontal size={15} /></button>}
+              {!selecting && workspace.active && renaming !== session.id && <button type="button" className="session-more" aria-label={`管理 ${session.title}`} onClick={() => setMenu((value) => value === session.id ? null : session.id)}><MoreHorizontal size={15} /></button>}
               {!selecting && menu === session.id && (
                 <div className="session-menu" ref={menuRef}>
                   <button type="button" onClick={() => startRename(session.id, session.title)}><Pencil size={14} /> 重命名</button>
@@ -229,6 +300,8 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
               )}
             </div>
           );
+        })}</div>}
+          </div>;
         })}
       </div>
       {error && <p className="sidebar-error">{error.message}</p>}

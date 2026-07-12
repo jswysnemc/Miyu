@@ -78,7 +78,7 @@ export function WorkspaceSwitcher() {
  * @param confirm 全局确认对话框方法
  * @returns 是否完成切换
  */
-async function switchWithTerminalConfirm(
+export async function switchWithTerminalConfirm(
   id: string,
   confirm: (options: { title: string; description: string; confirmLabel?: string; danger?: boolean }) => Promise<boolean>
 ): Promise<boolean> {

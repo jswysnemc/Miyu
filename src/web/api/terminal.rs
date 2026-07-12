@@ -4,7 +4,7 @@ use super::super::terminal;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
 use axum::response::Response;
-use axum::routing::{delete, get};
+use axum::routing::{get, patch};
 use axum::{Json, Router};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -15,12 +15,38 @@ struct CreateTerminalRequest {
     rows: Option<u16>,
 }
 
+#[derive(Deserialize)]
+struct RenameTerminalRequest {
+    title: String,
+}
+
 /// 返回 PTY 终端路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/terminals", get(list).post(create))
-        .route("/api/terminals/:id", delete(remove))
+        .route("/api/terminals/:id", patch(rename).delete(remove))
         .route("/api/terminals/:id/socket", get(socket))
+}
+
+/// 更新终端标签标题。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `id`: 终端 ID
+/// - `request`: 新标题
+///
+/// 返回:
+/// - 更新后的终端摘要
+async fn rename(
+    State(state): State<WebAppState>,
+    Path(id): Path<String>,
+    Json(request): Json<RenameTerminalRequest>,
+) -> WebResult<Json<Value>> {
+    let terminal = state
+        .terminals
+        .rename(&id, &request.title)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(json!(terminal)))
 }
 
 /// 列出当前终端。

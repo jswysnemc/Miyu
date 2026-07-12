@@ -5,6 +5,21 @@
   min-height: 0;
 }
 
+.chat-page.empty-session {
+  grid-template-rows: auto minmax(0, 1fr);
+}
+
+.chat-page.empty-session .message-scroll-region {
+  display: none;
+}
+
+.chat-page.empty-session > .composer-shell {
+  align-self: center;
+  justify-self: center;
+  width: min(100%, 820px);
+  padding: 20px 18px;
+}
+
 .chat-header {
   display: flex;
   align-items: center;
@@ -133,38 +148,6 @@
 
 .live-message {
   min-height: 40px;
-}
-
-.empty-chat {
-  display: grid;
-  justify-items: center;
-  max-width: 480px;
-  margin: 16vh auto 0;
-  color: var(--ink-soft);
-  text-align: center;
-}
-
-.empty-chat h2 {
-  margin: 14px 0 5px;
-  color: var(--ink);
-  font-size: 22px;
-}
-
-.empty-chat p {
-  margin: 0;
-  line-height: 1.65;
-}
-
-.empty-mark {
-  display: grid;
-  width: 52px;
-  height: 52px;
-  place-items: center;
-  border: 1px solid var(--line);
-  border-radius: 15px;
-  background: var(--paper-raised);
-  color: var(--signal);
-  box-shadow: var(--shadow);
 }
 
 .tool-detail pre,

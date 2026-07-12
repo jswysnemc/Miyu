@@ -374,6 +374,50 @@ impl AppConfig {
         Ok(())
     }
 
+    /// 删除供应商并清理所有关联模型引用。
+    ///
+    /// 参数:
+    /// - `provider_id`: 要删除的供应商标识
+    ///
+    /// 返回:
+    /// - 被删除的供应商配置；供应商不存在或仅剩一个供应商时返回错误
+    pub fn remove_provider(&mut self, provider_id: &str) -> Result<ProviderConfig> {
+        if self.providers.len() <= 1 {
+            bail!("at least one provider is required");
+        }
+        let index = self
+            .providers
+            .iter()
+            .position(|provider| provider.id == provider_id)
+            .with_context(|| format!("provider not found: {provider_id}"))?;
+
+        // 1. 删除供应商并为主对话选择有效回退项
+        let removed = self.providers.remove(index);
+        if self.active_provider == removed.id {
+            self.active_provider = self
+                .providers
+                .first()
+                .map(|provider| provider.id.clone())
+                .unwrap_or_default();
+        }
+
+        // 2. 清理视觉、嵌入和子智能体的供应商及模型引用
+        if self.plugins.vision.vision_provider_id == removed.id {
+            self.plugins.vision.vision_provider_id.clear();
+            self.plugins.vision.vision_model.clear();
+        }
+        if self.plugins.knowledge_base.embedding_provider_id == removed.id {
+            self.plugins.knowledge_base.embedding_provider_id.clear();
+            self.plugins.knowledge_base.embedding_model.clear();
+        }
+        if self.subagent.provider_id == removed.id {
+            self.subagent.provider_id.clear();
+            self.subagent.model.clear();
+        }
+
+        Ok(removed)
+    }
+
     /// 按模型标签选择当前 provider 和模型。
     ///
     /// 参数:

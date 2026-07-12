@@ -39,6 +39,14 @@ export function useTerminalManager() {
     await queryClient.invalidateQueries({ queryKey: ["terminals"] });
   };
 
+  /** 更新终端标签标题。 */
+  const renameTerminal = async (id: string, title: string) => {
+    const terminal = await api.terminals.rename(id, title);
+    queryClient.setQueryData<{ terminals: TerminalInfo[] }>(["terminals"], (current) => ({
+      terminals: (current?.terminals ?? []).map((item) => item.id === id ? terminal : item)
+    }));
+  };
+
   return {
     terminals: terminals.data?.terminals ?? [],
     activeId,
@@ -46,7 +54,8 @@ export function useTerminalManager() {
     error: terminals.error as Error | null,
     setActiveId,
     createTerminal,
-    closeTerminal
+    closeTerminal,
+    renameTerminal
   };
 }
 

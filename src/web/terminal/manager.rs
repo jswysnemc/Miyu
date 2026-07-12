@@ -67,6 +67,18 @@ impl TerminalManager {
             .ok_or_else(|| anyhow::anyhow!("terminal not found: {id}"))
     }
 
+    /// 重命名指定终端标签。
+    ///
+    /// 参数:
+    /// - `id`: 终端 ID
+    /// - `title`: 新标题
+    ///
+    /// 返回:
+    /// - 更新后的终端摘要
+    pub(crate) fn rename(&self, id: &str, title: &str) -> Result<TerminalInfo> {
+        self.get(id)?.rename(title)
+    }
+
     /// 终止并移除终端。
     ///
     /// 参数:

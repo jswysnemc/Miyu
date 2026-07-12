@@ -5,6 +5,7 @@ use axum::extract::{Path, Query, State};
 use axum::routing::{get, patch, post};
 use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
+use std::path::Path as FilePath;
 
 #[derive(Serialize)]
 struct SessionResponse {
@@ -13,6 +14,15 @@ struct SessionResponse {
     created_at: String,
     updated_at: String,
     active: bool,
+}
+
+#[derive(Serialize)]
+struct WorkspaceSessionsResponse {
+    workspace_id: String,
+    workspace_name: String,
+    workspace_path: String,
+    active: bool,
+    sessions: Vec<SessionResponse>,
 }
 
 #[derive(Deserialize)]
@@ -59,12 +69,50 @@ struct CompactSessionResponse {
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/sessions", get(list).post(create))
+        .route("/api/sessions/tree", get(tree))
         .route("/api/sessions/bulk-delete", post(remove_many))
         .route("/api/sessions/:id", patch(rename).delete(remove))
         .route("/api/sessions/:id/switch", post(switch))
         .route("/api/sessions/:id/messages", get(messages))
         .route("/api/sessions/:id/timeline", get(timeline))
         .route("/api/sessions/:id/compact", post(compact))
+}
+
+/// 返回按工作区分组的全部会话。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+///
+/// 返回:
+/// - 工作区及其会话树
+async fn tree(State(state): State<WebAppState>) -> WebResult<Json<Vec<WorkspaceSessionsResponse>>> {
+    let active_workspace = state.workspaces.active().map_err(WebError::from)?;
+    let workspaces = state.workspaces.list().map_err(WebError::from)?;
+    let mut result = Vec::with_capacity(workspaces.len());
+    for workspace in workspaces {
+        let path = FilePath::new(&workspace.path);
+        let active_session_id = crate::state::active_session_id_for_workspace(&state.paths, path)
+            .map_err(WebError::from)?;
+        let sessions = crate::state::list_sessions_for_workspace(&state.paths, path)
+            .map_err(WebError::from)?
+            .into_iter()
+            .map(|session| SessionResponse {
+                active: workspace.id == active_workspace.id && session.id == active_session_id,
+                id: session.id,
+                title: session.title,
+                created_at: session.created_at,
+                updated_at: session.updated_at,
+            })
+            .collect();
+        result.push(WorkspaceSessionsResponse {
+            active: workspace.id == active_workspace.id,
+            workspace_id: workspace.id,
+            workspace_name: workspace.name,
+            workspace_path: workspace.path,
+            sessions,
+        });
+    }
+    Ok(Json(result))
 }
 
 /// 手动压缩指定会话的旧轮次。

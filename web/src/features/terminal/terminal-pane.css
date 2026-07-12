@@ -52,6 +52,24 @@
   background: var(--terminal-surface);
 }
 
+.terminal-dock.tabs-collapsed {
+  grid-template-columns: 38px minmax(0, 1fr);
+}
+
+.terminal-dock.tabs-collapsed .terminal-sidebar {
+  grid-template-rows: 36px minmax(0, 1fr) 34px;
+}
+
+.terminal-dock.tabs-collapsed .terminal-list {
+  display: none;
+}
+
+.terminal-dock.tabs-collapsed .terminal-dock-nav,
+.terminal-dock.tabs-collapsed .terminal-dock-close {
+  justify-content: center;
+  padding: 0 !important;
+}
+
 .terminal-sidebar {
   display: grid;
   grid-template-rows: 36px minmax(0, 1fr) 34px;
@@ -71,9 +89,9 @@
 }
 
 .terminal-dock-nav { gap: 2px; padding: 4px !important; }
-.terminal-dock-nav > button { display: inline-flex !important; width: auto !important; min-width: 0; gap: 4px; padding: 0 5px; }
+.terminal-dock-nav > button { display: inline-flex !important; width: auto !important; min-width: 24px; flex: none; gap: 4px; padding: 0 5px; }
 .terminal-dock-nav > button.active { background: var(--terminal-selection); color: var(--terminal-text); }
-.terminal-dock-nav > button:last-child { margin-left: auto; }
+.terminal-dock-nav > button:nth-last-child(2) { margin-left: auto; }
 .terminal-dock-nav span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .terminal-dock-nav b { min-width: 15px; padding: 1px 4px; border-radius: 8px; background: var(--signal); color: var(--paper); font-size: 8px; text-align: center; }
 .terminal-list.tasks-view { display: grid; place-items: center; }
@@ -132,6 +150,20 @@
   display: grid;
   place-items: center;
   opacity: 0;
+}
+
+.terminal-title-input {
+  width: calc(100% - 4px);
+  min-width: 0;
+  height: 25px;
+  margin: 3px 2px;
+  padding: 0 6px;
+  border: 1px solid var(--signal);
+  border-radius: 4px;
+  outline: 0;
+  background: var(--terminal-surface);
+  color: var(--terminal-text);
+  font: 400 10px var(--font-code);
 }
 
 .terminal-list-item:hover button:last-child {

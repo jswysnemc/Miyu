@@ -1,5 +1,5 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { ArrowDown, WandSparkles } from "lucide-react";
+import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { useChatAgentContext } from "../agents/chat-agent-context";
@@ -110,8 +110,9 @@ export function ChatPage() {
   };
   const lastTurnId = timeline.data?.at(-1)?.turn_id;
   const historyRetry = run.states.length === 0 && !running ? () => void retry() : undefined;
+  const emptySession = !timeline.isLoading && timeline.data?.length === 0 && run.states.length === 0;
   return (
-    <div className="chat-page">
+    <div className={emptySession ? "chat-page empty-session" : "chat-page"}>
       <header className="chat-header">
         <h1>{activeSession?.title ?? "选择会话"}</h1>
       </header>
@@ -119,13 +120,6 @@ export function ChatPage() {
         <div className="message-scroll" ref={scrollRef}>
           <div className="message-column">
             {timeline.isLoading && <div className="empty-chat">正在读取会话历史</div>}
-            {timeline.data?.length === 0 && run.states.length === 0 && (
-              <div className="empty-chat">
-                <span className="empty-mark"><WandSparkles size={23} /></span>
-                <h2>从工作区开始</h2>
-                <p>描述需要完成的代码任务，Miyu 会在当前工作区中分析、调用工具并实时汇报进度。</p>
-              </div>
-            )}
             {timeline.data?.map((turn) => (
               <section className="conversation-turn" data-overview-id={`turn-${turn.turn_id}`} key={turn.turn_id}>
                 <HistoryTurn turn={turn} onRetry={turn.turn_id === lastTurnId ? historyRetry : undefined} />

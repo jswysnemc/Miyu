@@ -31,6 +31,14 @@ export type Session = {
   active: boolean;
 };
 
+export type WorkspaceSessions = {
+  workspace_id: string;
+  workspace_name: string;
+  workspace_path: string;
+  active: boolean;
+  sessions: Session[];
+};
+
 export type HistoryEntry = {
   timestamp: string;
   role: string;

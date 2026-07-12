@@ -31,7 +31,8 @@ import type {
   Subagent,
   SubagentDetail,
   Workspace,
-  WorkspaceList
+  WorkspaceList,
+  WorkspaceSessions
 } from "./contracts";
 
 /** 使用 URL 启动令牌建立同源会话。 */
@@ -90,6 +91,7 @@ export const api = {
   },
   sessions: {
     list: () => apiRequest<Session[]>("/api/sessions"),
+    tree: () => apiRequest<WorkspaceSessions[]>("/api/sessions/tree"),
     create: (title?: string) =>
       apiRequest<Session>("/api/sessions", { method: "POST", body: JSON.stringify({ title }) }),
     switch: (id: string) => apiRequest<Session>(`/api/sessions/${id}/switch`, { method: "POST" }),
@@ -223,6 +225,8 @@ export const api = {
     list: () => apiRequest<{ terminals: TerminalInfo[] }>("/api/terminals"),
     create: (cols: number, rows: number) =>
       apiRequest<TerminalInfo>("/api/terminals", { method: "POST", body: JSON.stringify({ cols, rows }) }),
+    rename: (id: string, title: string) =>
+      apiRequest<TerminalInfo>(`/api/terminals/${encodeURIComponent(id)}`, { method: "PATCH", body: JSON.stringify({ title }) }),
     remove: (id: string) => apiRequest<{ removed: boolean }>(`/api/terminals/${id}`, { method: "DELETE" })
   },
   backgroundTasks: {

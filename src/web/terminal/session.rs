@@ -13,7 +13,7 @@ const TERMINAL_REPLAY_BYTES: usize = 1024 * 1024;
 /// 单个 PTY 会话及其输入输出通道。
 pub(crate) struct TerminalSession {
     id: String,
-    title: String,
+    title: Mutex<String>,
     size: Arc<RwLock<(u16, u16)>>,
     master: Mutex<Box<dyn MasterPty + Send>>,
     writer: Mutex<Box<dyn Write + Send>>,
@@ -61,11 +61,12 @@ impl TerminalSession {
             .name(format!("miyu-terminal-{id}"))
             .spawn(move || read_terminal_output(&mut reader, &output_thread, &replay_thread))?;
         Ok(Self {
-            title: cwd
-                .file_name()
-                .and_then(|value| value.to_str())
-                .unwrap_or("terminal")
-                .to_string(),
+            title: Mutex::new(
+                cwd.file_name()
+                    .and_then(|value| value.to_str())
+                    .unwrap_or("terminal")
+                    .to_string(),
+            ),
             id,
             size: Arc::new(RwLock::new((cols, rows))),
             master: Mutex::new(pair.master),
@@ -81,10 +82,33 @@ impl TerminalSession {
         let (cols, rows) = self.size.read().map(|size| *size).unwrap_or((80, 24));
         TerminalInfo {
             id: self.id.clone(),
-            title: self.title.clone(),
+            title: self
+                .title
+                .lock()
+                .map(|title| title.clone())
+                .unwrap_or_else(|_| "terminal".to_string()),
             cols,
             rows,
         }
+    }
+
+    /// 更新终端标签标题。
+    ///
+    /// 参数:
+    /// - `title`: 新标题
+    ///
+    /// 返回:
+    /// - 更新后的终端摘要
+    pub(super) fn rename(&self, title: &str) -> Result<TerminalInfo> {
+        let title = title.trim();
+        if title.is_empty() {
+            anyhow::bail!("terminal title cannot be empty");
+        }
+        *self
+            .title
+            .lock()
+            .map_err(|_| anyhow::anyhow!("terminal title lock is poisoned"))? = title.to_string();
+        Ok(self.info())
     }
 
     /// 订阅终端输出。

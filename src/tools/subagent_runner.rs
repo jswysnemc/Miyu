@@ -66,14 +66,14 @@ impl SubagentProgress {
         }
     }
 
-    /// 上报子代理轮间正文文本。
+    /// 上报子智能体正文流分片。
     ///
     /// 参数:
-    /// - `text`: 一轮工具调用前模型输出的正文
+    /// - `text`: 模型实时返回的正文分片
     ///
     /// 返回:
     /// - 无
-    pub(crate) fn round_text(&self, text: &str) {
+    pub(crate) fn content(&self, text: &str) {
         if self.enabled && self.mode == ProgressMode::Full && !text.is_empty() {
             self.progress.report(format!("__subagent_text__{}", text));
         }
@@ -429,8 +429,9 @@ impl SubagentRunner {
                 let result = self
                     .client
                     .chat_stream(messages, Vec::new(), |chunk: ChatStreamChunk| {
-                        if chunk.kind == ChatStreamKind::Reasoning {
-                            self.progress.reasoning(&chunk.text);
+                        match chunk.kind {
+                            ChatStreamKind::Reasoning => self.progress.reasoning(&chunk.text),
+                            ChatStreamKind::Content => self.progress.content(&chunk.text),
                         }
                         Ok(())
                     })
@@ -444,8 +445,9 @@ impl SubagentRunner {
                     messages.clone(),
                     definitions.clone(),
                     |chunk: ChatStreamChunk| {
-                        if chunk.kind == ChatStreamKind::Reasoning {
-                            self.progress.reasoning(&chunk.text);
+                        match chunk.kind {
+                            ChatStreamKind::Reasoning => self.progress.reasoning(&chunk.text),
+                            ChatStreamKind::Content => self.progress.content(&chunk.text),
                         }
                         Ok(())
                     },
@@ -455,8 +457,6 @@ impl SubagentRunner {
             if result.tool_calls.is_empty() {
                 return Ok(result);
             }
-            // 1. 把本轮工具调用前的正文上报,详情时间线可流式跟随
-            self.progress.round_text(&result.content);
             messages.push(ChatMessage::assistant(
                 result.content.clone(),
                 Some(result.tool_calls.clone()),
@@ -510,6 +510,7 @@ impl SubagentRunner {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tokio::sync::mpsc;
 
     #[test]
     fn estimates_tokens_from_chars() {
@@ -522,5 +523,17 @@ mod tests {
     fn formats_token_counts_without_unicode_prefix() {
         assert_eq!(format_token_count(999, false), "999");
         assert_eq!(format_token_count(1_500, true), "~1.5K");
+    }
+
+    #[test]
+    fn full_progress_forwards_content_chunks_immediately() {
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let progress = SubagentProgress::new(ToolProgress::new(sender), ProgressMode::Full, true);
+
+        progress.content("first");
+        progress.content(" second");
+
+        assert_eq!(receiver.try_recv().unwrap(), "__subagent_text__first");
+        assert_eq!(receiver.try_recv().unwrap(), "__subagent_text__ second");
     }
 }

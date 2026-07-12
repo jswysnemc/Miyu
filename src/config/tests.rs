@@ -114,6 +114,59 @@ fn remove_active_provider_model_clears_last_current_model() {
 }
 
 #[test]
+fn remove_provider_clears_all_associated_model_references() {
+    let mut config = AppConfig::default();
+    let removed_id = config.providers[0].id.clone();
+    config.active_provider = removed_id.clone();
+    config.plugins.vision.vision_provider_id = removed_id.clone();
+    config.plugins.vision.vision_model = "vision-model".to_string();
+    config.plugins.knowledge_base.embedding_provider_id = removed_id.clone();
+    config.plugins.knowledge_base.embedding_model = "embedding-model".to_string();
+    config.subagent.provider_id = removed_id.clone();
+    config.subagent.model = "subagent-model".to_string();
+
+    let removed = config.remove_provider(&removed_id).unwrap();
+
+    assert_eq!(removed.id, removed_id);
+    assert_ne!(config.active_provider, removed_id);
+    assert!(config.plugins.vision.vision_provider_id.is_empty());
+    assert!(config.plugins.vision.vision_model.is_empty());
+    assert!(config
+        .plugins
+        .knowledge_base
+        .embedding_provider_id
+        .is_empty());
+    assert!(config.plugins.knowledge_base.embedding_model.is_empty());
+    assert!(config.subagent.provider_id.is_empty());
+    assert!(config.subagent.model.is_empty());
+    assert!(config.validate().is_ok());
+}
+
+#[test]
+fn remove_provider_preserves_unrelated_model_references() {
+    let mut config = AppConfig::default();
+    let removed_id = config.providers[0].id.clone();
+    let retained_id = config.providers[1].id.clone();
+    config.plugins.vision.vision_provider_id = retained_id.clone();
+    config.plugins.vision.vision_model = "vision-model".to_string();
+
+    config.remove_provider(&removed_id).unwrap();
+
+    assert_eq!(config.plugins.vision.vision_provider_id, retained_id);
+    assert_eq!(config.plugins.vision.vision_model, "vision-model");
+}
+
+#[test]
+fn remove_provider_rejects_deleting_last_provider() {
+    let mut config = AppConfig::default();
+    config.providers.truncate(1);
+    let provider_id = config.providers[0].id.clone();
+
+    assert!(config.remove_provider(&provider_id).is_err());
+    assert_eq!(config.providers.len(), 1);
+}
+
+#[test]
 fn validate_rejects_invalid_temperature_and_timeout() {
     let mut config = AppConfig::default();
     config.providers[0].temperature = 3.0;

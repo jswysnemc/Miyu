@@ -256,14 +256,10 @@ impl<'a> ProviderBrowser<'a> {
         if self.config.providers.is_empty() {
             return;
         }
-        let removed = self.config.providers.remove(self.provider_idx);
-        if self.config.active_provider == removed.id {
-            self.config.active_provider = self
-                .config
-                .providers
-                .first()
-                .map(|provider| provider.id.clone())
-                .unwrap_or_default();
+        let provider_id = self.config.providers[self.provider_idx].id.clone();
+        if let Err(error) = self.config.remove_provider(&provider_id) {
+            self.status = error.to_string();
+            return;
         }
         self.provider_idx = self
             .provider_idx
