@@ -88,7 +88,7 @@ pub(super) fn start_background_task(
         .and_then(Value::as_str)
         .filter(|value| !value.trim().is_empty())
         .map(expand_path)
-        .unwrap_or(std::env::current_dir()?);
+        .unwrap_or(crate::runtime_cwd::current_dir()?);
     if !cwd.is_dir() {
         bail!(
             "{}: {}",
@@ -450,7 +450,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }

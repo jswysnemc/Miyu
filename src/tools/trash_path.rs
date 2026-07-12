@@ -77,7 +77,7 @@ fn resolve_existing_path_without_following_leaf(path: &Path) -> Result<PathBuf> 
 /// 返回:
 /// - 安全时返回成功
 fn ensure_safe_trash_target(path: &Path) -> Result<()> {
-    let cwd = std::env::current_dir()?.canonicalize()?;
+    let cwd = crate::runtime_cwd::current_dir()?.canonicalize()?;
     let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
     let dangerous = [
         Path::new("/"),
@@ -230,7 +230,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
@@ -263,13 +263,13 @@ mod tests {
 
     #[test]
     fn trash_path_rejects_workspace_root() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         assert!(ensure_safe_trash_target(&cwd).is_err());
     }
 
     #[test]
     fn trash_path_moves_file_to_trash() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let path = temp.path().join("delete-me.txt");
         std::fs::write(&path, "bye").unwrap();
@@ -281,7 +281,7 @@ mod tests {
 
     #[test]
     fn trash_path_moves_directory_to_trash() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let path = temp.path().join("delete-dir");
         std::fs::create_dir(&path).unwrap();

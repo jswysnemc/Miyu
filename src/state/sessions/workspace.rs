@@ -16,7 +16,7 @@ pub struct WorkspaceScope {
 /// 返回:
 /// - 当前工作区作用域
 pub fn current_workspace_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
-    let cwd = std::env::current_dir()?;
+    let cwd = crate::runtime_cwd::current_dir()?;
     Ok(workspace_scope_for_path(paths, &cwd))
 }
 

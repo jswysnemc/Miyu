@@ -1,5 +1,7 @@
 use super::subagent_runner::{ProgressMode, SubagentProgress, SubagentRunner, SubagentStats};
-use super::{subagent_feed, subagent_runtime, subagent_state, ToolProgress, ToolRegistry, ToolSpec};
+use super::{
+    subagent_feed, subagent_runtime, subagent_state, ToolProgress, ToolRegistry, ToolSpec,
+};
 use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::llm::OpenAiCompatibleClient;
@@ -61,6 +63,8 @@ struct SubagentContext {
     config: AppConfig,
     paths: MiyuPaths,
     tools: ToolRegistry,
+    owner_key: String,
+    session_id: String,
 }
 
 /// 注册交互式会话子智能体工具。
@@ -78,11 +82,15 @@ pub(crate) fn register(
     config: AppConfig,
     paths: MiyuPaths,
     tools: ToolRegistry,
+    owner_key: String,
+    session_id: String,
 ) {
     let context = SubagentContext {
         config,
         paths,
         tools,
+        owner_key,
+        session_id,
     };
     registry.register(ToolSpec::new_with_progress(
         "subagent",
@@ -149,12 +157,12 @@ async fn run_subagent_action(
 ) -> Result<String> {
     let action = optional_string_arg(&args, "action")?.unwrap_or_else(|| "start".to_string());
     match action.as_str() {
-        "start" => start_subagent(args, context).await,
-        "status" => subagent_status(args),
-        "result" => subagent_result(args),
-        "wait" => wait_subagent(args, progress).await,
-        "list" => subagent_list(),
-        "cancel" => subagent_cancel(args),
+        "start" => start_subagent(args, context.clone()).await,
+        "status" => subagent_status(args, &context.owner_key),
+        "result" => subagent_result(args, &context.owner_key),
+        "wait" => wait_subagent(args, progress, &context.owner_key).await,
+        "list" => subagent_list(&context.owner_key),
+        "cancel" => subagent_cancel(args, &context.owner_key),
         _ => bail!("unsupported subagent action: {action}"),
     }
 }
@@ -183,12 +191,23 @@ async fn start_subagent(args: Value, context: SubagentContext) -> Result<String>
         .map(|value| value as usize)
         .unwrap_or(DEFAULT_MAX_STEPS)
         .clamp(1, MAX_MAX_STEPS);
-    let (subagent, cancel_rx) =
-        subagent_state::create_subagent(description, subagent_type, max_steps);
-    let _ = subagent_runtime::record_subagent_started(&context.paths, &subagent);
+    let (subagent, cancel_rx) = subagent_state::create_subagent_for_owner(
+        &context.owner_key,
+        description,
+        subagent_type,
+        max_steps,
+    );
+    let _ =
+        subagent_runtime::record_subagent_started(&context.paths, &context.session_id, &subagent);
     let subagent_id = subagent.id.clone();
+    let runtime_cwd =
+        crate::runtime_cwd::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
     tokio::spawn(async move {
-        execute_subagent(subagent_id, prompt, context, cancel_rx).await;
+        crate::runtime_cwd::scope(
+            runtime_cwd,
+            execute_subagent(subagent_id, prompt, context, cancel_rx),
+        )
+        .await;
     });
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
@@ -203,15 +222,16 @@ async fn start_subagent(args: Value, context: SubagentContext) -> Result<String>
 /// 阻塞等待子智能体进入终态。
 ///
 /// 指定 subagent_id 时等待该子智能体;未指定时等待任意一个新完成的子智能体。
-/// 返回时把对应完成事件标记为已通知,避免再触发一次系统提醒。
+/// 返回结果后仍由主模型请求确认投递，避免请求失败时丢失通知。
 ///
 /// 参数:
 /// - `args`: 等待参数
 /// - `progress`: 主对话工具进度上报器
+/// - `owner_key`: 父会话稳定作用域键
 ///
 /// 返回:
 /// - 完成子智能体的快照,或超时说明
-async fn wait_subagent(args: Value, progress: ToolProgress) -> Result<String> {
+async fn wait_subagent(args: Value, progress: ToolProgress, owner_key: &str) -> Result<String> {
     let subagent_id = optional_string_arg(&args, "subagent_id")?.filter(|id| !id.is_empty());
     let timeout = args
         .get("timeout_seconds")
@@ -223,9 +243,8 @@ async fn wait_subagent(args: Value, progress: ToolProgress) -> Result<String> {
     loop {
         // 1. 指定 id:该子智能体进入终态即返回
         if let Some(id) = &subagent_id {
-            let snapshot = subagent_state::subagent_snapshot(id)?;
+            let snapshot = subagent_state::subagent_snapshot_for_owner(owner_key, id)?;
             if snapshot.status != "running" {
-                subagent_state::mark_finish_notified(id);
                 return Ok(serde_json::to_string_pretty(&json!({
                     "ok": snapshot.status == "completed",
                     "subagent": snapshot
@@ -233,7 +252,7 @@ async fn wait_subagent(args: Value, progress: ToolProgress) -> Result<String> {
             }
         } else {
             // 2. 未指定 id:任意新完成的子智能体即返回,并消费其通知事件
-            let notices = subagent_state::take_finished_notices();
+            let notices = subagent_state::pending_finished_notices(owner_key);
             if !notices.is_empty() {
                 let finished = notices
                     .iter()
@@ -244,8 +263,11 @@ async fn wait_subagent(args: Value, progress: ToolProgress) -> Result<String> {
                     "finished": finished
                 }))?);
             }
-            let subagents = subagent_state::list_subagents();
-            if subagents.iter().all(|snapshot| snapshot.status != "running") {
+            let subagents = subagent_state::list_subagents_for_owner(owner_key);
+            if subagents
+                .iter()
+                .all(|snapshot| snapshot.status != "running")
+            {
                 return Ok(serde_json::to_string_pretty(&json!({
                     "ok": true,
                     "message": t(
@@ -297,6 +319,7 @@ async fn execute_subagent(
     mut cancel_rx: tokio::sync::oneshot::Receiver<()>,
 ) {
     let paths = context.paths.clone();
+    let session_id = context.session_id.clone();
     let subagent = match subagent_state::subagent_snapshot(&subagent_id) {
         Ok(subagent) => subagent,
         Err(err) => {
@@ -307,13 +330,13 @@ async fn execute_subagent(
                 Some(err.to_string()),
                 None,
             );
-            record_finished_runtime_subagent(&paths, &subagent_id);
+            record_finished_runtime_subagent(&paths, &session_id, &subagent_id);
             return;
         }
     };
     // 1. 起进度 channel，进度消息由 feed 解析写入时间线与快照，供前端实时渲染
     let (progress_tx, progress_rx) = tokio::sync::mpsc::unbounded_channel::<String>();
-    let progress_task = tokio::spawn(subagent_feed::consume_progress(
+    let mut progress_task = tokio::spawn(subagent_feed::consume_progress(
         subagent_id.clone(),
         progress_rx,
     ));
@@ -328,8 +351,13 @@ async fn execute_subagent(
             progress,
         ) => result,
     };
-    // 2. 关闭 sender 后等待消费任务收尾，确保进度写入不丢
-    progress_task.abort();
+    // 2. 运行结束会释放全部 sender，等待消费任务排空尾部流事件
+    if tokio::time::timeout(Duration::from_secs(2), &mut progress_task)
+        .await
+        .is_err()
+    {
+        progress_task.abort();
+    }
     match result {
         Ok((content, stats)) => {
             subagent_state::finish_subagent(
@@ -339,7 +367,7 @@ async fn execute_subagent(
                 None,
                 Some(stats),
             );
-            record_finished_runtime_subagent(&paths, &subagent_id);
+            record_finished_runtime_subagent(&paths, &session_id, &subagent_id);
         }
         Err(err) if err.to_string() == "cancelled" => {
             subagent_state::finish_subagent(
@@ -349,7 +377,7 @@ async fn execute_subagent(
                 Some("cancelled".to_string()),
                 None,
             );
-            record_finished_runtime_subagent(&paths, &subagent_id);
+            record_finished_runtime_subagent(&paths, &session_id, &subagent_id);
         }
         Err(err) => {
             subagent_state::finish_subagent(
@@ -359,7 +387,7 @@ async fn execute_subagent(
                 Some(err.to_string()),
                 None,
             );
-            record_finished_runtime_subagent(&paths, &subagent_id);
+            record_finished_runtime_subagent(&paths, &session_id, &subagent_id);
         }
     }
 }
@@ -372,9 +400,9 @@ async fn execute_subagent(
 ///
 /// 返回:
 /// - 无
-fn record_finished_runtime_subagent(paths: &MiyuPaths, subagent_id: &str) {
+fn record_finished_runtime_subagent(paths: &MiyuPaths, session_id: &str, subagent_id: &str) {
     if let Ok(subagent) = subagent_state::subagent_snapshot(subagent_id) {
-        let _ = subagent_runtime::record_subagent_finished(paths, &subagent);
+        let _ = subagent_runtime::record_subagent_finished(paths, session_id, &subagent);
     }
 }
 
@@ -420,6 +448,9 @@ async fn run_subagent(
     .await
     .map_err(|_| anyhow::anyhow!("subagent timed out after {SUBAGENT_TIMEOUT_SECONDS}s"))??;
     let (chat_result, stats) = result;
+    if chat_result.content.trim().is_empty() {
+        bail!("subagent returned an empty result");
+    }
     Ok((chat_result.content, stats_json(&stats)))
 }
 
@@ -479,9 +510,9 @@ fn stats_json(stats: &SubagentStats) -> Value {
 ///
 /// 返回:
 /// - 子智能体快照
-fn subagent_status(args: Value) -> Result<String> {
+fn subagent_status(args: Value, owner_key: &str) -> Result<String> {
     let subagent_id = string_arg(&args, "subagent_id")?;
-    let subagent = subagent_state::subagent_snapshot(&subagent_id)?;
+    let subagent = subagent_state::subagent_snapshot_for_owner(owner_key, &subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "subagent": subagent
@@ -495,9 +526,9 @@ fn subagent_status(args: Value) -> Result<String> {
 ///
 /// 返回:
 /// - 子智能体结果或当前状态
-fn subagent_result(args: Value) -> Result<String> {
+fn subagent_result(args: Value, owner_key: &str) -> Result<String> {
     let subagent_id = string_arg(&args, "subagent_id")?;
-    let subagent = subagent_state::subagent_snapshot(&subagent_id)?;
+    let subagent = subagent_state::subagent_snapshot_for_owner(owner_key, &subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": subagent.status == "completed",
         "subagent": subagent
@@ -511,10 +542,10 @@ fn subagent_result(args: Value) -> Result<String> {
 ///
 /// 返回:
 /// - 子智能体列表
-fn subagent_list() -> Result<String> {
+fn subagent_list(owner_key: &str) -> Result<String> {
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
-        "subagents": subagent_state::list_subagents()
+        "subagents": subagent_state::list_subagents_for_owner(owner_key)
     }))?)
 }
 
@@ -525,9 +556,9 @@ fn subagent_list() -> Result<String> {
 ///
 /// 返回:
 /// - 取消后的子智能体快照
-fn subagent_cancel(args: Value) -> Result<String> {
+fn subagent_cancel(args: Value, owner_key: &str) -> Result<String> {
     let subagent_id = string_arg(&args, "subagent_id")?;
-    let subagent = subagent_state::cancel_subagent(&subagent_id)?;
+    let subagent = subagent_state::cancel_subagent_for_owner(owner_key, &subagent_id)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "subagent": subagent
@@ -633,12 +664,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn wait_returns_finished_subagent_and_marks_notice_consumed() {
-        let (subagent, _cancel) = subagent_state::create_subagent(
-            "wait target".to_string(),
-            "general".to_string(),
-            5,
-        );
+    async fn wait_returns_finished_subagent_without_acknowledging_delivery() {
+        let (subagent, _cancel) =
+            subagent_state::create_subagent("wait target".to_string(), "general".to_string(), 5);
         subagent_state::finish_subagent(
             &subagent.id,
             "completed",
@@ -651,6 +679,7 @@ mod tests {
         let result = wait_subagent(
             json!({"subagent_id": subagent.id, "timeout_seconds": 5}),
             ToolProgress::new(progress_tx),
+            "default",
         )
         .await
         .unwrap();
@@ -658,8 +687,8 @@ mod tests {
         let value = serde_json::from_str::<Value>(&result).unwrap();
         assert_eq!(value["ok"], true);
         assert_eq!(value["subagent"]["status"], "completed");
-        // 该完成事件已被 wait 消费,不应再次进入系统提醒
-        let notices = subagent_state::take_finished_notices();
-        assert!(notices.iter().all(|notice| notice.id != subagent.id));
+        // wait 只返回查询结果,完成通知必须等到主模型请求成功后再确认
+        let notices = subagent_state::pending_finished_notices("default");
+        assert!(notices.iter().any(|notice| notice.id == subagent.id));
     }
 }

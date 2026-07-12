@@ -2,10 +2,10 @@ import { describe, expect, it } from "vitest";
 import { resolveComposerAvailability } from "./composer-availability";
 
 describe("composer availability", () => {
-  it.each(["waiting_response", "thinking", "working"] as const)("运行阶段 %s 允许编辑但禁止发送", (runStatus) => {
+  it.each(["queued", "waiting_response", "thinking", "working"] as const)("运行阶段 %s 允许继续提交到会话队列", (runStatus) => {
     expect(resolveComposerAvailability({ sessionAvailable: true, runActive: true, runStatus, hasDraft: true })).toEqual({
       inputDisabled: false,
-      sendDisabled: true,
+      sendDisabled: false,
       showStop: true
     });
   });
@@ -26,7 +26,7 @@ describe("composer availability", () => {
     });
   });
 
-  it("运行状态已到达但运行标记尚未同步时仍禁止发送", () => {
-    expect(resolveComposerAvailability({ sessionAvailable: true, runActive: false, runStatus: "thinking", hasDraft: true }).sendDisabled).toBe(true);
+  it("运行状态已到达但运行标记尚未同步时仍允许排队", () => {
+    expect(resolveComposerAvailability({ sessionAvailable: true, runActive: false, runStatus: "thinking", hasDraft: true }).sendDisabled).toBe(false);
   });
 });

@@ -1,5 +1,5 @@
-import { useQuery } from "@tanstack/react-query";
-import { Activity, Cpu, Gauge, HardDrive, TerminalSquare } from "lucide-react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Activity, Archive, Cpu, Gauge, HardDrive, TerminalSquare } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../api/client";
@@ -15,6 +15,7 @@ import "./system-usage.css";
  * @returns 系统用量组件
  */
 export function SystemUsage() {
+  const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -23,6 +24,16 @@ export function SystemUsage() {
     queryKey: ["system-usage"],
     queryFn: api.system.usage,
     refetchInterval: 5_000
+  });
+  const compact = useMutation({
+    mutationFn: () => api.sessions.compact(usage.data!.session.id),
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["system-usage"] }),
+        queryClient.invalidateQueries({ queryKey: ["timeline", usage.data?.session.id] }),
+        queryClient.invalidateQueries({ queryKey: ["sessions"] })
+      ]);
+    }
   });
   const contextPercent = Math.round(Math.min(1, Math.max(0, usage.data?.session.context_token_ratio ?? 0)) * 100);
   const popoverStyle = useAnchoredPopover({ open, anchorRef: triggerRef, preferredWidth: 390, minimumWidth: 300, align: "right", maxHeight: 620 });
@@ -55,6 +66,15 @@ export function SystemUsage() {
                 <div className="context-usage-head"><span>上下文占用</span><strong>{contextPercent}%</strong></div>
                 <div className="context-usage-track"><span style={{ width: `${contextPercent}%` }} /></div>
                 <small>{formatTokenCount(usage.data.session.context_prompt_tokens)} / {formatTokenCount(usage.data.session.context_window_tokens)} token</small>
+                <div className="context-compaction-actions">
+                  <span>{usage.data.session.checkpoint_count > 0 ? `已压缩 ${usage.data.session.compacted_turns} 轮` : "尚未压缩"}</span>
+                  <button type="button" onClick={() => compact.mutate()} disabled={compact.isPending || usage.data.runtime.active_run}>
+                    <Archive size={13} />
+                    {compact.isPending ? "正在压缩" : "手动压缩"}
+                  </button>
+                </div>
+                {compact.data && <p className="context-compaction-result">{compact.data.message}</p>}
+                {compact.error && <p className="usage-error">{compact.error.message}</p>}
               </section>
               <div className="usage-metric-grid">
                 <UsageMetric icon={<Activity size={14} />} label="累计 Token" value={formatTokenCount(usage.data.session.total_tokens)} detail={`${usage.data.session.requests} 次请求`} />

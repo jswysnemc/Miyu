@@ -15,13 +15,16 @@ pub(crate) fn preview_from_arguments(arguments: &str) -> Result<AppliedPatch> {
         Ok(value) => value,
         Err(err) => {
             if let Some(patch) = string_field_from_partial(arguments, "patch") {
-                return crate::tools::edit_patch::preview_patch(&patch, &std::env::current_dir()?);
+                return crate::tools::edit_patch::preview_patch(
+                    &patch,
+                    &crate::runtime_cwd::current_dir()?,
+                );
             }
             return Err(err.into());
         }
     };
     if let Some(patch) = value.get("patch").and_then(Value::as_str) {
-        return crate::tools::edit_patch::preview_patch(patch, &std::env::current_dir()?);
+        return crate::tools::edit_patch::preview_patch(patch, &crate::runtime_cwd::current_dir()?);
     }
     if value.get("content").is_some() {
         return preview_full_file_edit(&value);
@@ -277,7 +280,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }

@@ -8,7 +8,7 @@ function event(type: string, payload: Record<string, unknown>): WebEvent {
 
 describe("runEventReducer", () => {
   it("streams reasoning and content independently", () => {
-    const started = runEventReducer(initialRunState, { type: "start", runId: "run", userInput: "hello" });
+    const started = runEventReducer(initialRunState, { type: "start", runId: "run", sessionId: "session", userInput: "hello" });
     const reasoning = runEventReducer(started, { type: "event", event: event("message.reasoning.delta", { text: "think" }) });
     const content = runEventReducer(reasoning, { type: "event", event: event("message.content.delta", { text: "answer" }) });
     expect(content.reasoning).toBe("think");
@@ -33,5 +33,14 @@ describe("runEventReducer", () => {
     const after = runEventReducer(tool, { type: "event", event: event("message.content.delta", { text: "after" }) });
     const completed = runEventReducer(after, { type: "event", event: event("tool.result", { tool_id: "tool", name: "run_command", ok: true, output: "ok" }) });
     expect(completed.parts.map((part) => part.type)).toEqual(["text", "tool", "text"]);
+  });
+
+  it("shows compaction progress in the live message timeline", () => {
+    const started = runEventReducer(initialRunState, { type: "event", event: event("compaction.started", { turn_count: 8 }) });
+    const finished = runEventReducer(started, { type: "event", event: event("compaction.finished", { applied: true }) });
+
+    expect(finished.parts).toEqual([
+      expect.objectContaining({ type: "compaction", status: "completed", turnCount: 8, applied: true })
+    ]);
   });
 });

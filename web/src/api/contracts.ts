@@ -254,6 +254,14 @@ export type RunInfo = {
   run_id: string;
   workspace_id: string;
   session_id: string;
+  input?: string;
+  image_urls?: string[];
+  status?: "queued" | "running" | "completed" | "interrupted" | "failed";
+};
+
+export type ActiveRunsResponse = {
+  run?: RunInfo | null;
+  runs: RunInfo[];
 };
 
 export type WebEvent = {
@@ -322,6 +330,9 @@ export type SystemUsage = {
     context_window_tokens: number;
     context_token_ratio: number;
     tool_calls: number;
+    checkpoint_count: number;
+    compacted_turns: number;
+    latest_checkpoint_at?: string | null;
   };
   process: {
     pid: number;

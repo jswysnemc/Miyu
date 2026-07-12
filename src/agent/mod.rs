@@ -346,7 +346,7 @@ impl Agent {
         let mut subagent_reminder = self
             .tools
             .contains("subagent")
-            .then(tools::SubagentReminder::new);
+            .then(|| tools::SubagentReminder::new(self.state.state_dir().display().to_string()));
         // 1. 上一轮结束后才完成的子智能体,在本轮首次请求前先补一次通知
         if let Some(reminder) = subagent_reminder.as_mut() {
             if let Some(content) = reminder.after_tool_round() {
@@ -416,6 +416,9 @@ impl Agent {
                     }
                 })
                 .await?;
+            if let Some(reminder) = subagent_reminder.as_mut() {
+                reminder.acknowledge_delivered();
+            }
             perf.mark(&format!("round {tool_round} model request done"));
             if result.tool_calls.is_empty() || !self.tools_enabled {
                 return Ok(result);

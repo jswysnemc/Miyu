@@ -233,3 +233,8 @@
     display: none;
   }
 }
+.context-compaction-actions { display:flex; align-items:center; justify-content:space-between; gap:10px; margin-top:9px; padding-top:8px; border-top:1px solid var(--line); }
+.context-compaction-actions > span { color:var(--ink-muted); font-size:11px; }
+.context-compaction-actions button { display:inline-flex; align-items:center; gap:5px; min-height:27px; padding:4px 8px; border:1px solid var(--line); border-radius:7px; background:var(--paper); color:var(--ink); font-size:11px; }
+.context-compaction-actions button:disabled { opacity:.5; cursor:not-allowed; }
+.context-compaction-result { margin:7px 0 0; color:var(--ink-muted); font-size:11px; }

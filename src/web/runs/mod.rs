@@ -1,5 +1,6 @@
 mod agent_override;
 mod assembler;
+mod checkpoint;
 mod event;
 mod journal;
 mod manager;

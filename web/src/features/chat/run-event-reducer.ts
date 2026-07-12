@@ -13,11 +13,13 @@ export type ToolLifecycle = {
 export type LiveMessagePart =
   | { id: string; type: "reasoning"; source: string; startedAt: string; endedAt?: string }
   | { id: string; type: "text"; source: string }
-  | { id: string; type: "tool"; tool: ToolLifecycle };
+  | { id: string; type: "tool"; tool: ToolLifecycle }
+  | { id: string; type: "compaction"; status: "running" | "completed"; turnCount: number; applied?: boolean };
 
 export type LiveRunState = {
   runId: string | null;
-  status: "idle" | "waiting_response" | "thinking" | "working";
+  sessionId: string | null;
+  status: "idle" | "queued" | "waiting_response" | "thinking" | "working";
   userInput: string;
   imageUrls: string[];
   content: string;
@@ -29,12 +31,14 @@ export type LiveRunState = {
 };
 
 export type RunAction =
-  | { type: "start"; runId: string; userInput: string; imageUrls?: string[] }
+  | { type: "start"; runId: string; sessionId: string; userInput: string; imageUrls?: string[] }
+  | { type: "attach"; runId: string; sessionId: string; userInput: string; imageUrls?: string[] }
   | { type: "event"; event: WebEvent }
   | { type: "reset" };
 
 export const initialRunState: LiveRunState = {
   runId: null,
+  sessionId: null,
   status: "idle",
   userInput: "",
   imageUrls: [],
@@ -49,14 +53,19 @@ export const initialRunState: LiveRunState = {
 /** 将后端事件归并为单轮聊天与工具生命周期状态。 */
 export function runEventReducer(state: LiveRunState, action: RunAction): LiveRunState {
   if (action.type === "reset") return initialRunState;
-  if (action.type === "start") {
-    return { ...initialRunState, runId: action.runId, userInput: action.userInput, imageUrls: action.imageUrls ?? [], status: "waiting_response" };
+  if (action.type === "start" || action.type === "attach") {
+    return { ...initialRunState, runId: action.runId, sessionId: action.sessionId, userInput: action.userInput, imageUrls: action.imageUrls ?? [], status: "waiting_response" };
   }
   const { event } = action;
   const payload = event.payload;
   switch (event.type) {
     case "status.changed":
       return { ...state, status: String(payload.status) as LiveRunState["status"] };
+    case "run.queued":
+      return { ...state, status: "queued" };
+    case "run.dequeued":
+    case "run.started":
+      return { ...state, status: "waiting_response" };
     case "message.content.delta":
       return appendTextPart(closeActiveReasoning(state, event.timestamp), event.sequence, String(payload.text ?? ""));
     case "message.reasoning.delta":
@@ -86,6 +95,18 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
         output: String(payload.output ?? ""),
         status: payload.ok === false ? "failed" : "completed"
       });
+    case "compaction.started":
+      return {
+        ...closeActiveReasoning(state, event.timestamp),
+        parts: [...state.parts, {
+          id: `compaction-${event.sequence}`,
+          type: "compaction",
+          status: "running",
+          turnCount: Number(payload.turn_count ?? 0)
+        }]
+      };
+    case "compaction.finished":
+      return finishCompaction(state, Boolean(payload.applied));
     case "run.failed":
       return { ...closeActiveReasoning(state, event.timestamp), error: String(payload.message ?? "运行失败"), status: "idle", completed: true };
     case "run.interrupted":
@@ -95,6 +116,27 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
     default:
       return state;
   }
+}
+
+/**
+ * 完成最近一项运行中的上下文压缩部件。
+ *
+ * @param state 当前运行状态
+ * @param applied 是否应用了压缩结果
+ * @returns 更新后的运行状态
+ */
+function finishCompaction(state: LiveRunState, applied: boolean): LiveRunState {
+  for (let index = state.parts.length - 1; index >= 0; index -= 1) {
+    const part = state.parts[index];
+    if (part.type !== "compaction" || part.status !== "running") continue;
+    return {
+      ...state,
+      parts: state.parts.map((item, itemIndex) => itemIndex === index && item.type === "compaction"
+        ? { ...item, status: "completed", applied }
+        : item)
+    };
+  }
+  return state;
 }
 
 /**

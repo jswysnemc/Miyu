@@ -3,12 +3,12 @@ use super::{
     RunnerSubmissionKind, SessionOwner, SubmissionSource, TurnRunner, UserInputSubmission,
 };
 use crate::agent::{Agent, AgentMode};
-use crate::cli::{build_repl_tool_registry, build_tool_registry};
+use crate::cli::{build_repl_tool_registry_for_session, build_tool_registry};
 use crate::config::AppConfig;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::perf_trace::PerfTrace;
-use crate::state::{active_state_dir, StateStore};
+use crate::state::StateStore;
 use crate::tools::ToolRegistry;
 use anyhow::{bail, Result};
 use std::collections::BTreeSet;
@@ -135,15 +135,15 @@ impl<'paths> SessionRunner<'paths> {
         S: RunnerEventSink,
     {
         AppConfig::init_files(self.paths)?;
-        if let Some(session_id) = submission.session_id.as_deref() {
-            crate::state::switch_session(self.paths, session_id)?;
-        }
         let mut perf = PerfTrace::new("runner");
         perf.mark("start submission");
         let config = self.load_config()?;
         let context_limit_chars = config.active_context_chars()?;
-        let state = StateStore::new(self.paths)?;
-        let state_dir = active_state_dir(self.paths)?;
+        let state = match submission.session_id.as_deref() {
+            Some(session_id) => StateStore::for_session(self.paths, session_id)?,
+            None => StateStore::new(self.paths)?,
+        };
+        let state_dir = state.state_dir().to_path_buf();
         let _active_run = ActiveRunGuard::acquire_with_state_dir(
             state.session_id(),
             SessionOwner::from(submission.source),
@@ -151,8 +151,13 @@ impl<'paths> SessionRunner<'paths> {
         )?;
         state.init_files()?;
         let client = OpenAiCompatibleClient::from_config(&config, self.paths)?;
-        let registry =
-            self.load_tool_registry(&config, submission.source, input.mode, state.session_id())?;
+        let registry = self.load_tool_registry(
+            &config,
+            submission.source,
+            input.mode,
+            state.session_id(),
+            state.state_dir(),
+        )?;
         let mut agent = build_agent(
             config.clone(),
             self.paths,
@@ -218,7 +223,7 @@ impl<'paths> SessionRunner<'paths> {
         perf.mark("start reused-agent submission");
         let config = self.load_config()?;
         let context_limit_chars = config.active_context_chars()?;
-        let state_dir = active_state_dir(self.paths)?;
+        let state_dir = agent.state().state_dir().to_path_buf();
         // 1. 仍按轮获取运行所有权，避免并发会话互相踩
         let _active_run = ActiveRunGuard::acquire_with_state_dir(
             agent.session_id(),
@@ -273,6 +278,8 @@ impl<'paths> SessionRunner<'paths> {
     /// - `config`: 应用配置
     /// - `source`: submission 来源
     /// - `mode`: Agent 模式
+    /// - `session_id`: 会话 ID
+    /// - `state_dir`: 会话状态目录
     ///
     /// 返回:
     /// - 工具注册表
@@ -282,10 +289,13 @@ impl<'paths> SessionRunner<'paths> {
         source: SubmissionSource,
         mode: AgentMode,
         session_id: &str,
+        state_dir: &std::path::Path,
     ) -> Result<ToolRegistry> {
         let mut registry = match &self.tool_registry_override {
             Some(registry) => Ok(registry.clone()),
-            None => build_submission_tool_registry(config, self.paths, source, mode, session_id),
+            None => build_submission_tool_registry(
+                config, self.paths, source, mode, session_id, state_dir,
+            ),
         }?;
         if mode == AgentMode::Yolo && source == SubmissionSource::Gateway {
             crate::cron::register_tool(&mut registry, self.paths.clone(), session_id.to_string());
@@ -329,10 +339,11 @@ fn build_submission_tool_registry(
     source: SubmissionSource,
     mode: AgentMode,
     session_id: &str,
+    state_dir: &std::path::Path,
 ) -> Result<ToolRegistry> {
     let mut registry = match source {
         SubmissionSource::Repl | SubmissionSource::Web => {
-            build_repl_tool_registry(config, paths, mode)
+            build_repl_tool_registry_for_session(config, paths, mode, session_id, state_dir)
         }
         SubmissionSource::Command
         | SubmissionSource::Gateway
@@ -555,6 +566,7 @@ mod tests {
                 source,
                 AgentMode::Yolo,
                 "interactive-session",
+                std::path::Path::new("."),
             )
             .unwrap();
             assert!(registry.contains("subagent"), "source: {source:?}");
@@ -569,6 +581,7 @@ mod tests {
                 source,
                 AgentMode::Yolo,
                 "non-interactive-session",
+                std::path::Path::new("."),
             )
             .unwrap();
             assert!(!registry.contains("subagent"), "source: {source:?}");
@@ -599,7 +612,13 @@ mod tests {
 
         for source in sources {
             let registry = runner
-                .load_tool_registry(&config, source, AgentMode::Yolo, "cron-session")
+                .load_tool_registry(
+                    &config,
+                    source,
+                    AgentMode::Yolo,
+                    "cron-session",
+                    std::path::Path::new("."),
+                )
                 .unwrap();
             assert_eq!(
                 registry.contains("cron"),
@@ -623,7 +642,13 @@ mod tests {
 
         for source in [SubmissionSource::Repl, SubmissionSource::Web] {
             let registry = runner
-                .load_tool_registry(&config, source, AgentMode::Yolo, "interactive")
+                .load_tool_registry(
+                    &config,
+                    source,
+                    AgentMode::Yolo,
+                    "interactive",
+                    std::path::Path::new("."),
+                )
                 .unwrap();
             assert!(registry.contains("subagent"));
             assert!(registry.contains("todo"));
@@ -634,6 +659,7 @@ mod tests {
                 SubmissionSource::Gateway,
                 AgentMode::Yolo,
                 "gateway",
+                std::path::Path::new("."),
             )
             .unwrap();
         assert!(gateway.contains("cron"));
@@ -658,6 +684,7 @@ mod tests {
             SubmissionSource::Command,
             AgentMode::Yolo,
             state.session_id(),
+            state.state_dir(),
         )
         .unwrap();
 

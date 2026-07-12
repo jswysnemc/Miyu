@@ -249,6 +249,7 @@ function historyStatusLabel(status: SessionTimelineTurn["status"]): string {
  * @returns 中文状态标签
  */
 function liveStatusLabel(state: LiveRunState): string {
+  if (state.status === "queued") return "排队中";
   if (state.error) return "运行失败";
   if (state.completed) return "已完成";
   if (state.status === "waiting_response") return "等待响应";

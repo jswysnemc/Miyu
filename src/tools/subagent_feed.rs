@@ -176,8 +176,7 @@ mod tests {
 
     #[test]
     fn structured_messages_feed_timeline_and_snapshot() {
-        let (subagent, _cancel) =
-            create_subagent("feed".to_string(), "explore".to_string(), 5);
+        let (subagent, _cancel) = create_subagent("feed".to_string(), "explore".to_string(), 5);
 
         dispatch_message(
             &subagent.id,

@@ -6,7 +6,7 @@ import { useChatAgentContext } from "../agents/chat-agent-context";
 import { ChatComposer } from "./chat-composer";
 import { HistoryTurn, LiveRunMessage } from "./chat-message";
 import { MessageOverviewRail } from "./message-overview-rail";
-import { createTimelineOverviewItems } from "./message-overview-utils";
+import { createLiveOverviewItem, createTimelineOverviewItems } from "./message-overview-utils";
 import { useComposerAttachments } from "./composer/use-composer-attachments";
 import { useChatModel } from "./use-chat-model";
 import { useRunStream } from "./use-run-stream";
@@ -22,6 +22,7 @@ import "./chat-page.css";
 export function ChatPage() {
   const queryClient = useQueryClient();
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions.list });
+  const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
   const activeSession = sessions.data?.find((session) => session.active);
   const timeline = useQuery({
     queryKey: ["timeline", activeSession?.id],
@@ -41,7 +42,7 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["workspace-diff"] })
     ]);
   }, [queryClient]);
-  const run = useRunStream(onSettled, onWorkspaceChanged);
+  const run = useRunStream(workspaces.data?.active_id, activeSession?.id, onSettled, onWorkspaceChanged);
   const chatModel = useChatModel();
   const chatAgent = useChatAgentContext();
   const thinking = useThinkingLevel();
@@ -49,7 +50,7 @@ export function ChatPage() {
   const [mode, setMode] = useState<"plan" | "yolo">("yolo");
   const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const scrollContentSignal = useMemo(() => [timeline.data, run.state], [timeline.data, run.state]);
+  const scrollContentSignal = useMemo(() => [timeline.data, run.states], [timeline.data, run.states]);
   const { showJump, jumpToBottom, pauseFollowing } = useFollowOutputScroll(scrollRef, scrollContentSignal, activeSession?.id);
 
   useEffect(() => {
@@ -61,7 +62,7 @@ export function ChatPage() {
   /** 提交当前输入内容和模型选择。 */
   const submit = async () => {
     const value = input.trim();
-    if ((!value && composerAttachments.attachments.length === 0) || !activeSession || (run.state.runId && !run.state.completed)) return;
+    if ((!value && composerAttachments.attachments.length === 0) || !activeSession) return;
     await queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] });
     const originalInput = input;
     const currentAttachments = composerAttachments.attachments;
@@ -82,27 +83,33 @@ export function ChatPage() {
     });
   };
 
-  const running = Boolean(run.state.runId && !run.state.completed);
+  const runningStates = run.states.filter((state) => !state.completed);
+  const activeRun = runningStates.find((state) => state.status !== "queued") ?? runningStates[0];
+  const running = runningStates.length > 0;
   const historyEntries = timeline.data?.map((turn) => turn.user.content) ?? [];
   const overviewItems = useMemo(
-    () => createTimelineOverviewItems(timeline.data ?? [], run.state.runId ? run.state : undefined),
-    [timeline.data, run.state]
+    () => [
+      ...createTimelineOverviewItems(timeline.data ?? []),
+      ...run.states.map(createLiveOverviewItem).filter((item) => item !== null)
+    ],
+    [timeline.data, run.states]
   );
 
   /** 用最后一轮的用户输入重新发起运行，实时轮存在时携带其图片附件。 */
   const retry = async () => {
     if (!activeSession || running) return;
     // 1. 优先取实时运行的输入，否则回退到最后一条历史轮次
-    const liveInput = run.state.runId ? run.state.userInput : "";
+    const latestRun = run.states.at(-1);
+    const liveInput = latestRun?.userInput ?? "";
     const content = liveInput || timeline.data?.at(-1)?.user.content || "";
-    const liveImages = run.state.runId ? run.state.imageUrls : undefined;
+    const liveImages = latestRun?.imageUrls;
     if (!content.trim() && !(liveImages && liveImages.length > 0)) return;
     // 2. 复用当前模式、模型与思考等级重新提交
     await queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] });
     await run.start(activeSession.id, content, mode, chatModel.selection ?? undefined, liveImages, thinking.thinkingLevel, chatAgent.selection?.id);
   };
   const lastTurnId = timeline.data?.at(-1)?.turn_id;
-  const historyRetry = !run.state.runId && !running ? () => void retry() : undefined;
+  const historyRetry = run.states.length === 0 && !running ? () => void retry() : undefined;
   return (
     <div className="chat-page">
       <header className="chat-header">
@@ -112,7 +119,7 @@ export function ChatPage() {
         <div className="message-scroll" ref={scrollRef}>
           <div className="message-column">
             {timeline.isLoading && <div className="empty-chat">正在读取会话历史</div>}
-            {timeline.data?.length === 0 && !run.state.runId && (
+            {timeline.data?.length === 0 && run.states.length === 0 && (
               <div className="empty-chat">
                 <span className="empty-mark"><WandSparkles size={23} /></span>
                 <h2>从工作区开始</h2>
@@ -124,11 +131,15 @@ export function ChatPage() {
                 <HistoryTurn turn={turn} onRetry={turn.turn_id === lastTurnId ? historyRetry : undefined} />
               </section>
             ))}
-            {run.state.runId && (
-              <section className="conversation-turn" data-overview-id={`live-${run.state.runId}`}>
-                <LiveRunMessage state={run.state} running={running} onRetry={running ? undefined : () => void retry()} />
+            {run.states.map((state) => (
+              <section className="conversation-turn" data-overview-id={`live-${state.runId}`} key={state.runId}>
+                <LiveRunMessage
+                  state={state}
+                  running={!state.completed}
+                  onRetry={!running && state.completed ? () => void retry() : undefined}
+                />
               </section>
-            )}
+            ))}
             {timeline.error && <div className="run-error">{timeline.error.message}</div>}
             {chatModel.error && <div className="run-error">{chatModel.error.message}</div>}
           </div>
@@ -154,7 +165,7 @@ export function ChatPage() {
         selection={chatModel.selection}
         modelLoading={chatModel.isLoading}
         running={running}
-        runStatus={run.state.status}
+        runStatus={activeRun?.status ?? "idle"}
         sessionAvailable={Boolean(activeSession)}
         agentChoices={chatAgent.choices}
         agentSelection={chatAgent.selection}
@@ -167,7 +178,7 @@ export function ChatPage() {
         onRemoveAttachment={composerAttachments.removeAttachment}
         onModelSelect={chatModel.selectModel}
         onSubmit={() => void submit()}
-        onStop={() => void run.stop()}
+        onStop={() => activeRun?.runId && void run.stop(activeRun.runId)}
         onAgentSelect={chatAgent.selectAgent}
       />
     </div>

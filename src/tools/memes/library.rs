@@ -330,7 +330,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
@@ -353,4 +353,3 @@ fn image_ext(path: &Path) -> Result<&'static str> {
         }
     }
 }
-

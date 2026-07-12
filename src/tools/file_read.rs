@@ -415,7 +415,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
@@ -446,7 +446,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_paginates_text() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let paths = test_paths(temp.path());
         let path = temp.path().join("sample.txt");
@@ -471,7 +471,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_reads_multiple_files() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let paths = test_paths(temp.path());
         let first = temp.path().join("first.txt");
@@ -500,7 +500,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_batch_keeps_item_errors_local() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let paths = test_paths(temp.path());
         let text = temp.path().join("sample.txt");
@@ -530,7 +530,7 @@ mod tests {
 
     #[tokio::test]
     async fn read_file_rejects_binary() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let paths = test_paths(temp.path());
         let path = temp.path().join("sample.bin");

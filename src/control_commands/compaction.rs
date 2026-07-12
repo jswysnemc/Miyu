@@ -66,6 +66,36 @@ pub async fn compact_conversation_from_paths(
     .await
 }
 
+/// 从配置创建依赖并压缩指定会话，不切换全局当前会话。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `session_id`: 会话 ID
+/// - `keep_tail_turns`: 保留的最近非运行轮次数量
+///
+/// 返回:
+/// - 压缩结果文本
+pub async fn compact_session_from_paths(
+    paths: &MiyuPaths,
+    session_id: &str,
+    keep_tail_turns: usize,
+) -> Result<String> {
+    AppConfig::init_files(paths)?;
+    let config = AppConfig::load_or_default(paths)?;
+    let state = StateStore::for_session(paths, session_id)?;
+    state.init_files()?;
+    let client = OpenAiCompatibleClient::from_config(&config, paths)?;
+    compact_conversation_with_agent(
+        &config,
+        paths,
+        &state,
+        &client,
+        AgentMode::Yolo,
+        keep_tail_turns,
+    )
+    .await
+}
+
 /// 格式化压缩结果。
 ///
 /// 参数:

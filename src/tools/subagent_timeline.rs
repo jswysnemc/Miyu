@@ -1,4 +1,4 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 /// 单条时间线条目的文本长度上限。
 const TEXT_ENTRY_LIMIT: usize = 4000;
@@ -10,7 +10,7 @@ const OUTPUT_PREVIEW_LIMIT: usize = 600;
 const MAX_ENTRIES: usize = 240;
 
 /// 子智能体执行时间线中的一个条目。
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub(crate) enum SubagentTimelineEntry {
     /// 一次子工具调用,ok 为空表示仍在运行。
@@ -35,6 +35,30 @@ pub(crate) struct SubagentTimeline {
 }
 
 impl SubagentTimeline {
+    /// 从持久化条目恢复时间线。
+    ///
+    /// 参数:
+    /// - `entries`: 已保存的时间线条目
+    ///
+    /// 返回:
+    /// - 恢复后的时间线
+    pub(crate) fn from_entries(entries: Vec<SubagentTimelineEntry>) -> Self {
+        let tool_count = entries
+            .iter()
+            .filter_map(|entry| match entry {
+                SubagentTimelineEntry::Tool { step, .. } => Some(*step),
+                SubagentTimelineEntry::Text { .. } | SubagentTimelineEntry::Reasoning { .. } => {
+                    None
+                }
+            })
+            .max()
+            .unwrap_or_default();
+        Self {
+            entries,
+            tool_count,
+        }
+    }
+
     /// 记录一次子工具调用开始。
     ///
     /// 参数:
@@ -187,7 +211,10 @@ mod tests {
 
         let entries = timeline.entries();
         assert_eq!(entries.len(), 2);
-        let SubagentTimelineEntry::Tool { ok, output_preview, .. } = &entries[0] else {
+        let SubagentTimelineEntry::Tool {
+            ok, output_preview, ..
+        } = &entries[0]
+        else {
             panic!("expected tool entry");
         };
         assert_eq!(*ok, Some(false));
@@ -205,8 +232,12 @@ mod tests {
 
         let entries = timeline.entries();
         assert_eq!(entries.len(), 3);
-        assert!(matches!(&entries[0], SubagentTimelineEntry::Reasoning { text } if text == "先看目录"));
-        assert!(matches!(&entries[1], SubagentTimelineEntry::Text { text } if text == "# 结论\n一切正常"));
+        assert!(
+            matches!(&entries[0], SubagentTimelineEntry::Reasoning { text } if text == "先看目录")
+        );
+        assert!(
+            matches!(&entries[1], SubagentTimelineEntry::Text { text } if text == "# 结论\n一切正常")
+        );
     }
 
     #[test]
@@ -227,7 +258,12 @@ mod tests {
         timeline.complete_tool("t", true, &"b".repeat(2000));
 
         let entries = timeline.entries();
-        let SubagentTimelineEntry::Tool { args_preview, output_preview, .. } = &entries[0] else {
+        let SubagentTimelineEntry::Tool {
+            args_preview,
+            output_preview,
+            ..
+        } = &entries[0]
+        else {
             panic!("expected tool entry");
         };
         assert_eq!(args_preview.chars().count(), 241);

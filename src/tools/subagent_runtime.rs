@@ -17,9 +17,10 @@ use anyhow::Result;
 /// - 记录是否成功
 pub(crate) fn record_subagent_started(
     paths: &MiyuPaths,
+    session_id: &str,
     subagent: &SubagentSnapshot,
 ) -> Result<()> {
-    let state = StateStore::new(paths)?;
+    let state = StateStore::for_session(paths, session_id)?;
     state.record_runtime_process(runtime_process(
         state.session_id(),
         subagent,
@@ -45,9 +46,10 @@ pub(crate) fn record_subagent_started(
 /// - 记录是否成功
 pub(crate) fn record_subagent_finished(
     paths: &MiyuPaths,
+    session_id: &str,
     subagent: &SubagentSnapshot,
 ) -> Result<()> {
-    let state = StateStore::new(paths)?;
+    let state = StateStore::for_session(paths, session_id)?;
     let status = runtime_status_from_subagent(&subagent.status);
     let seq = state.append_runtime_process_event(NewRuntimeProcessEventInput {
         process_id: runtime_process_id(&subagent.id),
@@ -82,7 +84,7 @@ fn runtime_process(
         owner_id: subagent.id.clone(),
         process_kind: ProcessKind::Subagent,
         command: subagent.description.clone(),
-        cwd: std::env::current_dir()
+        cwd: crate::runtime_cwd::current_dir()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|_| ".".to_string()),
         pid: Some(i64::from(std::process::id())),
@@ -183,7 +185,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let paths = test_paths(temp.path().to_path_buf());
 
-        record_subagent_started(&paths, &subagent("running")).unwrap();
+        record_subagent_started(&paths, "default", &subagent("running")).unwrap();
 
         let db_path = crate::state::active_state_dir(&paths)
             .unwrap()

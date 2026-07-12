@@ -26,6 +26,9 @@ struct SessionUsageResponse {
     context_window_tokens: usize,
     context_token_ratio: f32,
     tool_calls: usize,
+    checkpoint_count: usize,
+    compacted_turns: usize,
+    latest_checkpoint_at: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -66,7 +69,11 @@ async fn usage(State(state): State<WebAppState>) -> WebResult<Json<SystemUsageRe
         .map_err(WebError::from)?;
     let process = state.system_monitor.snapshot();
     let terminal_count = state.terminals.list().map_err(WebError::from)?.len();
-    let active_run = state.runs.is_active().await;
+    let workspace = state.workspaces.active().map_err(WebError::from)?;
+    let active_run = state
+        .runs
+        .is_session_active(&workspace.id, &snapshot.session_id)
+        .await;
     Ok(Json(SystemUsageResponse {
         session: SessionUsageResponse {
             id: snapshot.session_id,
@@ -79,6 +86,9 @@ async fn usage(State(state): State<WebAppState>) -> WebResult<Json<SystemUsageRe
             context_window_tokens: snapshot.context_window_tokens,
             context_token_ratio: snapshot.context_token_ratio,
             tool_calls: snapshot.tool_history.call_count,
+            checkpoint_count: snapshot.checkpoint_count,
+            compacted_turns: snapshot.checkpoint_covered_turns,
+            latest_checkpoint_at: snapshot.latest_checkpoint_at,
         },
         process: ProcessUsageResponse {
             pid: process.pid,

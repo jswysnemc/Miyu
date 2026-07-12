@@ -20,10 +20,9 @@ export type ComposerAvailability = {
  * @returns 输入、发送和停止按钮的可用状态
  */
 export function resolveComposerAvailability(input: ComposerAvailabilityInput): ComposerAvailability {
-  const runInProgress = input.runActive || input.runStatus !== "idle";
   return {
     inputDisabled: !input.sessionAvailable,
-    sendDisabled: !input.sessionAvailable || runInProgress || !input.hasDraft,
+    sendDisabled: !input.sessionAvailable || !input.hasDraft,
     showStop: input.runActive
   };
 }

@@ -18,6 +18,7 @@ import type {
   RunModelSelection,
   ThinkingLevel,
   RunInfo,
+  ActiveRunsResponse,
   SessionTimelineTurn,
   SystemUsage,
   Session,
@@ -101,9 +102,15 @@ export const api = {
         body: JSON.stringify({ ids })
       }),
     messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`),
-    timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`)
+    timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`),
+    compact: (id: string, keepTailTurns = 3) =>
+      apiRequest<{ message: string }>(`/api/sessions/${id}/compact`, {
+        method: "POST",
+        body: JSON.stringify({ keep_tail_turns: keepTailTurns })
+      })
   },
   runs: {
+    active: () => apiRequest<ActiveRunsResponse>("/api/runs/active"),
     start: (
       sessionId: string,
       input: string,

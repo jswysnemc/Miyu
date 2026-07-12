@@ -53,7 +53,7 @@ pub(super) fn system_messages_first(messages: Vec<ChatMessage>) -> Vec<ChatMessa
 /// 返回:
 /// - 当前轮运行时上下文
 pub(super) fn runtime_context_message() -> String {
-    let cwd = std::env::current_dir()
+    let cwd = crate::runtime_cwd::current_dir()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|_| "unknown".to_string());
     let runtime = terminal_runtime_context();

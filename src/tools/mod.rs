@@ -28,7 +28,9 @@ mod protondb_query;
 mod registry;
 mod skills;
 mod subagent;
+pub(crate) mod subagent_event;
 mod subagent_feed;
+mod subagent_persistence;
 mod subagent_reminder;
 mod subagent_runner;
 mod subagent_runtime;
@@ -280,12 +282,22 @@ pub(crate) fn register_interactive_tools(
     registry: &mut ToolRegistry,
     config: &AppConfig,
     paths: &MiyuPaths,
+    owner_key: String,
+    session_id: String,
 ) {
     let subagent_tools = registry.clone();
-    subagent::register(registry, config.clone(), paths.clone(), subagent_tools);
-    if let Ok(state_dir) = crate::state::active_state_dir(paths) {
-        todo::register(registry, state_dir.join("todos.json"));
-    }
+    subagent::register(
+        registry,
+        config.clone(),
+        paths.clone(),
+        subagent_tools,
+        owner_key.clone(),
+        session_id,
+    );
+    todo::register(
+        registry,
+        std::path::PathBuf::from(owner_key).join("todos.json"),
+    );
 }
 
 pub fn readonly_registry(config: &AppConfig, paths: &MiyuPaths) -> ToolRegistry {

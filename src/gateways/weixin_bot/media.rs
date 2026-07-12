@@ -86,7 +86,7 @@ fn validate_media_file(path: &Path, kind: WeixinOutboundMediaKind) -> Result<Pat
     let path = if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()?.join(path)
+        crate::runtime_cwd::current_dir()?.join(path)
     };
     let metadata =
         std::fs::metadata(&path).with_context(|| format!("媒体文件不存在: {}", path.display()))?;

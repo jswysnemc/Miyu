@@ -1,5 +1,5 @@
 use super::model::{SessionInfo, DEFAULT_SESSION_ID};
-use super::workspace::{current_workspace_scope, WorkspaceScope};
+use super::workspace::{current_workspace_scope, workspace_scope_for_path, WorkspaceScope};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
@@ -182,6 +182,52 @@ pub fn active_state_dir(paths: &MiyuPaths) -> Result<PathBuf> {
     let scope = current_session_scope(paths)?;
     let session = ensure_active_session(paths)?;
     Ok(session_state_dir(&scope.state_dir, &session.id))
+}
+
+/// 返回指定会话的状态目录，并校验会话存在。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `session_id`: 会话 ID
+///
+/// 返回:
+/// - 指定会话状态目录
+pub fn state_dir_for_session(paths: &MiyuPaths, session_id: &str) -> Result<PathBuf> {
+    let scope = current_session_scope(paths)?;
+    let session_id = session_id.trim();
+    ensure_default_session_for_base(&scope.state_dir)?
+        .into_iter()
+        .find(|session| session.id == session_id)
+        .with_context(|| format!("session not found: {session_id}"))?;
+    let state_dir = session_state_dir(&scope.state_dir, session_id);
+    std::fs::create_dir_all(&state_dir)?;
+    Ok(state_dir)
+}
+
+/// 返回指定工作区和会话的状态目录。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 工作区目录
+/// - `session_id`: 会话 ID
+///
+/// 返回:
+/// - 指定会话状态目录
+pub fn state_dir_for_workspace_session(
+    paths: &MiyuPaths,
+    workspace_path: &Path,
+    session_id: &str,
+) -> Result<(PathBuf, PathBuf)> {
+    let scope = workspace_scope_for_path(paths, workspace_path);
+    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
+    let session_id = session_id.trim();
+    ensure_default_session_for_base(&scope.state_dir)?
+        .into_iter()
+        .find(|session| session.id == session_id)
+        .with_context(|| format!("session not found: {session_id}"))?;
+    let state_dir = session_state_dir(&scope.state_dir, session_id);
+    std::fs::create_dir_all(&state_dir)?;
+    Ok((scope.state_dir, state_dir))
 }
 
 /// 返回当前工作区会话作用域目录。

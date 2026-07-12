@@ -177,7 +177,7 @@ fn plist_value(raw: &str, key: &str) -> Option<String> {
 }
 
 async fn glob_files(args: Value) -> Result<String> {
-    let path = optional_path(&args).unwrap_or(std::env::current_dir()?);
+    let path = optional_path(&args).unwrap_or(crate::runtime_cwd::current_dir()?);
     let search_path = prepare_search_path(&path)?;
     let pattern = required(&args, "pattern")?;
     let max_results = max_results(&args);
@@ -200,7 +200,7 @@ async fn glob_files(args: Value) -> Result<String> {
 }
 
 async fn grep_text(args: Value) -> Result<String> {
-    let path = optional_path(&args).unwrap_or(std::env::current_dir()?);
+    let path = optional_path(&args).unwrap_or(crate::runtime_cwd::current_dir()?);
     let is_file = path.is_file();
     let search_root = if is_file {
         path.parent()
@@ -358,7 +358,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
@@ -383,7 +383,7 @@ mod tests {
 
     #[tokio::test]
     async fn glob_files_matches_filename_case_insensitively() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let path = temp.path().join("ai测试题.txt");
         std::fs::write(&path, "content").unwrap();
@@ -400,7 +400,7 @@ mod tests {
 
     #[tokio::test]
     async fn grep_no_matches_is_successful_empty_result() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         std::fs::write(temp.path().join("sample.txt"), "hello").unwrap();
         let result = grep_text(json!({

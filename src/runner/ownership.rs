@@ -90,6 +90,7 @@ impl ActiveRunLockRecord {
 
 /// active run guard。
 pub(crate) struct ActiveRunGuard {
+    registry_key: String,
     session_id: String,
     owner: String,
     lock_path: Option<PathBuf>,
@@ -146,12 +147,15 @@ impl ActiveRunGuard {
             bail!("active run guard requires a session id");
         }
         let record = ActiveRunLockRecord::current(session_id, owner);
-        insert_process_run(session_id, owner)?;
+        let registry_key = state_dir
+            .map(|path| path.to_string_lossy().into_owned())
+            .unwrap_or_else(|| session_id.to_string());
+        insert_process_run(&registry_key, owner)?;
         let lock_path = match state_dir {
             Some(state_dir) => {
                 let path = state_dir.join(ACTIVE_RUN_LOCK_FILE);
                 if let Err(error) = acquire_durable_lock(&path, &record, owner) {
-                    release_process_run(session_id);
+                    release_process_run(&registry_key);
                     return Err(error);
                 }
                 Some(path)
@@ -159,6 +163,7 @@ impl ActiveRunGuard {
             None => None,
         };
         Ok(Self {
+            registry_key,
             session_id: session_id.to_string(),
             owner: record.owner,
             lock_path,
@@ -197,7 +202,7 @@ impl Drop for ActiveRunGuard {
     /// 返回:
     /// - 无
     fn drop(&mut self) {
-        release_process_run(&self.session_id);
+        release_process_run(&self.registry_key);
         if let Some(lock_path) = &self.lock_path {
             release_durable_lock(lock_path, &self.session_id, self.pid);
         }
@@ -524,5 +529,27 @@ mod tests {
         assert!(lock_path.exists());
         drop(guard);
         assert!(!lock_path.exists());
+    }
+
+    /// 验证不同工作区中同名会话可以并行获取运行所有权。
+    #[test]
+    fn same_session_id_in_different_state_directories_can_run_in_parallel() {
+        let first_dir = tempfile::tempdir().unwrap();
+        let second_dir = tempfile::tempdir().unwrap();
+        let session_id = unique_session_id();
+        let first = ActiveRunGuard::acquire_with_state_dir(
+            &session_id,
+            SessionOwner::Web,
+            first_dir.path(),
+        )
+        .unwrap();
+        let second = ActiveRunGuard::acquire_with_state_dir(
+            &session_id,
+            SessionOwner::Web,
+            second_dir.path(),
+        );
+
+        assert!(second.is_ok());
+        drop(first);
     }
 }

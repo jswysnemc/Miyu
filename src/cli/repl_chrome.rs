@@ -38,7 +38,7 @@ impl ReplChrome {
             .map(|provider| provider.thinking_level.trim().to_string())
             .filter(|level| !level.is_empty())
             .unwrap_or_else(|| "auto".to_string());
-        let directory = std::env::current_dir()
+        let directory = crate::runtime_cwd::current_dir()
             .map(|path| path.display().to_string())
             .unwrap_or_else(|_| "?".to_string());
         Self {

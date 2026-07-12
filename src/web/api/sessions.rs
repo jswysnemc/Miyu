@@ -31,6 +31,11 @@ struct BulkDeleteSessionsRequest {
 }
 
 #[derive(Deserialize)]
+struct CompactSessionRequest {
+    keep_tail_turns: Option<usize>,
+}
+
+#[derive(Deserialize)]
 struct HistoryQuery {
     limit: Option<usize>,
 }
@@ -45,6 +50,11 @@ struct BulkDeleteResponse {
     deleted_ids: Vec<String>,
 }
 
+#[derive(Serialize)]
+struct CompactSessionResponse {
+    message: String,
+}
+
 /// 返回会话管理路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
@@ -54,6 +64,32 @@ pub(super) fn routes() -> Router<WebAppState> {
         .route("/api/sessions/:id/switch", post(switch))
         .route("/api/sessions/:id/messages", get(messages))
         .route("/api/sessions/:id/timeline", get(timeline))
+        .route("/api/sessions/:id/compact", post(compact))
+}
+
+/// 手动压缩指定会话的旧轮次。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `id`: 会话 ID
+/// - `request`: 需要保留的尾部轮次数量
+///
+/// 返回:
+/// - 压缩结果说明
+async fn compact(
+    State(state): State<WebAppState>,
+    Path(id): Path<String>,
+    Json(request): Json<CompactSessionRequest>,
+) -> WebResult<Json<CompactSessionResponse>> {
+    reject_session_run(&state, &id).await?;
+    let message = crate::control_commands::compact_session_from_paths(
+        &state.paths,
+        &id,
+        request.keep_tail_turns.unwrap_or(3).min(100),
+    )
+    .await
+    .map_err(WebError::from)?;
+    Ok(Json(CompactSessionResponse { message }))
 }
 
 /// 列出当前工作区会话。
@@ -79,7 +115,6 @@ async fn create(
     State(state): State<WebAppState>,
     Json(request): Json<CreateSessionRequest>,
 ) -> WebResult<Json<SessionResponse>> {
-    reject_during_run(&state).await?;
     let session = crate::state::create_session(&state.paths, request.title.as_deref())
         .map_err(WebError::from)?;
     Ok(Json(SessionResponse {
@@ -96,7 +131,6 @@ async fn switch(
     State(state): State<WebAppState>,
     Path(id): Path<String>,
 ) -> WebResult<Json<SessionResponse>> {
-    reject_during_run(&state).await?;
     let session = crate::state::switch_session(&state.paths, &id)
         .map_err(|error| WebError::not_found(error.to_string()))?;
     Ok(Json(SessionResponse {
@@ -131,7 +165,7 @@ async fn remove(
     State(state): State<WebAppState>,
     Path(id): Path<String>,
 ) -> WebResult<Json<DeleteResponse>> {
-    reject_during_run(&state).await?;
+    reject_session_run(&state, &id).await?;
     let deleted = crate::state::delete_session(&state.paths, &id)
         .map_err(|error| WebError::bad_request(error.to_string()))?;
     Ok(Json(DeleteResponse { deleted }))
@@ -149,7 +183,9 @@ async fn remove_many(
     State(state): State<WebAppState>,
     Json(request): Json<BulkDeleteSessionsRequest>,
 ) -> WebResult<Json<BulkDeleteResponse>> {
-    reject_during_run(&state).await?;
+    for id in &request.ids {
+        reject_session_run(&state, id).await?;
+    }
     if request.ids.is_empty() {
         return Err(WebError::bad_request("session ids cannot be empty"));
     }
@@ -164,10 +200,8 @@ async fn messages(
     Path(id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> WebResult<Json<Vec<crate::state::StoredConversationEntry>>> {
-    reject_during_run(&state).await?;
-    crate::state::switch_session(&state.paths, &id)
+    let store = StateStore::for_session(&state.paths, &id)
         .map_err(|error| WebError::not_found(error.to_string()))?;
-    let store = StateStore::new(&state.paths).map_err(WebError::from)?;
     let history = store
         .history(query.limit.unwrap_or(200).clamp(1, 2000))
         .map_err(WebError::from)?;
@@ -188,21 +222,24 @@ async fn timeline(
     Path(id): Path<String>,
     Query(query): Query<HistoryQuery>,
 ) -> WebResult<Json<Vec<crate::state::SessionTimelineTurn>>> {
-    reject_during_run(&state).await?;
-    crate::state::switch_session(&state.paths, &id)
+    let store = StateStore::for_session(&state.paths, &id)
         .map_err(|error| WebError::not_found(error.to_string()))?;
-    let store = StateStore::new(&state.paths).map_err(WebError::from)?;
     let timeline = store
         .session_timeline(query.limit.unwrap_or(200).clamp(1, 2000))
         .map_err(WebError::from)?;
     Ok(Json(timeline))
 }
 
-/// 活动运行期间禁止切换会话状态。
-async fn reject_during_run(state: &WebAppState) -> WebResult<()> {
-    if state.runs.is_active().await {
+/// 活动运行期间仅禁止删除对应会话。
+async fn reject_session_run(state: &WebAppState, session_id: &str) -> WebResult<()> {
+    let workspace = state.workspaces.active().map_err(WebError::from)?;
+    if state
+        .runs
+        .is_session_active(&workspace.id, session_id)
+        .await
+    {
         return Err(WebError::conflict(
-            "stop the active agent run before changing session",
+            "stop the session run before deleting it",
         ));
     }
     Ok(())

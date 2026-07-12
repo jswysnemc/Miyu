@@ -4,6 +4,7 @@ import { ReasoningBlock } from "../reasoning-block";
 import { ToolLifecycleCard } from "../tool-lifecycle-card";
 import { ToolCallGroup } from "./tool-call-group";
 import { groupCompletedToolCalls } from "./tool-call-grouping";
+import { ContextCompactionPart } from "./context-compaction-part";
 
 /**
  * 按消息部件顺序渲染思考、正文和工具调用。
@@ -22,6 +23,7 @@ export function MessageParts({ parts, live }: { parts: LiveMessagePart[]; live?:
           return <ReasoningBlock key={item.id} source={part.source} live={live && !part.endedAt} startedAt={part.startedAt} endedAt={part.endedAt} />;
         }
         if (part.type === "tool") return <ToolLifecycleCard key={item.id} tool={part.tool} />;
+        if (part.type === "compaction") return <ContextCompactionPart key={item.id} part={part} />;
         return <MarkdownRenderer key={item.id} source={part.source} />;
       })}
     </div>

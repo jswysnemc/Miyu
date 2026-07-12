@@ -1,5 +1,7 @@
 use super::WebEvent;
 use std::collections::VecDeque;
+use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tokio::sync::broadcast;
 
@@ -11,6 +13,7 @@ const EVENT_BROADCAST_CAPACITY: usize = 512;
 pub(crate) struct EventJournal {
     inner: Arc<Mutex<JournalInner>>,
     sender: broadcast::Sender<WebEvent>,
+    path: Option<PathBuf>,
 }
 
 struct JournalInner {
@@ -31,6 +34,36 @@ impl EventJournal {
                 events: VecDeque::new(),
             })),
             sender,
+            path: None,
+        }
+    }
+
+    /// 从持久化事件文件创建日志。
+    ///
+    /// 参数:
+    /// - `path`: JSONL 事件文件
+    ///
+    /// 返回:
+    /// - 已恢复历史事件的日志
+    pub(crate) fn persistent(path: PathBuf) -> Self {
+        let journal = Self::new();
+        let events = std::fs::read_to_string(&path)
+            .ok()
+            .into_iter()
+            .flat_map(|content| content.lines().map(str::to_string).collect::<Vec<_>>())
+            .filter_map(|line| serde_json::from_str::<WebEvent>(&line).ok())
+            .collect::<Vec<_>>();
+        {
+            let mut inner = journal
+                .inner
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            inner.next_sequence = events.last().map(|event| event.sequence + 1).unwrap_or(1);
+            inner.events = events.into_iter().collect();
+        }
+        Self {
+            path: Some(path),
+            ..journal
         }
     }
 
@@ -50,6 +83,22 @@ impl EventJournal {
             inner.events.pop_front();
         }
         drop(inner);
+        if let Some(path) = &self.path {
+            if let Some(parent) = path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            if let Ok(mut file) = std::fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(path)
+            {
+                let _ = writeln!(
+                    file,
+                    "{}",
+                    serde_json::to_string(&event).unwrap_or_default()
+                );
+            }
+        }
         let _ = self.sender.send(event.clone());
         event
     }
@@ -77,5 +126,33 @@ impl EventJournal {
     /// - 广播接收器
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<WebEvent> {
         self.sender.subscribe()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    /// 验证事件日志在重新打开后仍能按序号补发。
+    #[test]
+    fn persistent_journal_replays_after_restart() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("run.jsonl");
+        let journal = EventJournal::persistent(path.clone());
+        journal.publish(WebEvent::new(
+            "run",
+            "workspace",
+            "session",
+            "message.content.delta",
+            json!({ "text": "hello" }),
+        ));
+
+        let reopened = EventJournal::persistent(path);
+        let events = reopened.events_after(0);
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].kind, "message.content.delta");
+        assert_eq!(events[0].payload["text"], "hello");
     }
 }

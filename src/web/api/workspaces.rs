@@ -130,12 +130,7 @@ async fn switch(
     Path(id): Path<String>,
     Query(query): Query<SwitchWorkspaceQuery>,
 ) -> WebResult<Json<WorkspaceInfo>> {
-    // 1. 有活动 run 时始终拒绝切换
-    if state.runs.is_active().await {
-        return Err(WebError::conflict(
-            "stop the active agent run before switching workspace",
-        ));
-    }
+    // 1. Agent 运行已经绑定启动时工作目录，切换不会改变旧运行作用域
     // 2. 按请求先关闭全部终端，否则有终端时拒绝
     if query.close_terminals.unwrap_or(false) {
         close_all_terminals(&state)?;
@@ -156,11 +151,6 @@ async fn switch(
 /// 返回:
 /// - 允许切换时返回成功
 async fn ensure_workspace_switch_allowed(state: &WebAppState) -> WebResult<()> {
-    if state.runs.is_active().await {
-        return Err(WebError::conflict(
-            "stop the active agent run before switching workspace",
-        ));
-    }
     if state.terminals.has_sessions().map_err(WebError::from)? {
         return Err(WebError::conflict(
             "close active terminals before switching workspace",

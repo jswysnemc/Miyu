@@ -77,6 +77,65 @@ impl StateStore {
         Ok(store)
     }
 
+    /// 创建绑定到指定会话的状态存储，不修改全局当前会话。
+    ///
+    /// 参数:
+    /// - `paths`: Miyu 路径集合
+    /// - `session_id`: 会话 ID
+    ///
+    /// 返回:
+    /// - 指定会话状态存储
+    pub fn for_session(paths: &MiyuPaths, session_id: &str) -> Result<Self> {
+        let base_state_dir = sessions::session_scope_dir(paths)?;
+        let state_dir = sessions::state_dir_for_session(paths, session_id)?;
+        let conv_db = Arc::new(ConversationDb::open(&state_dir)?);
+        let store = Self {
+            base_state_dir,
+            session_id: session_id.trim().to_string(),
+            state_dir,
+            conv_db,
+        };
+        store.migrate_from_jsonl()?;
+        checkpoints::migrate_legacy_compaction_summary(&store)?;
+        Ok(store)
+    }
+
+    /// 创建绑定到指定工作区和会话的状态存储。
+    ///
+    /// 参数:
+    /// - `paths`: Miyu 路径集合
+    /// - `workspace_path`: 工作区目录
+    /// - `session_id`: 会话 ID
+    ///
+    /// 返回:
+    /// - 指定会话状态存储
+    pub fn for_workspace_session(
+        paths: &MiyuPaths,
+        workspace_path: &std::path::Path,
+        session_id: &str,
+    ) -> Result<Self> {
+        let (base_state_dir, state_dir) =
+            sessions::state_dir_for_workspace_session(paths, workspace_path, session_id)?;
+        let conv_db = Arc::new(ConversationDb::open(&state_dir)?);
+        let store = Self {
+            base_state_dir,
+            session_id: session_id.trim().to_string(),
+            state_dir,
+            conv_db,
+        };
+        store.migrate_from_jsonl()?;
+        checkpoints::migrate_legacy_compaction_summary(&store)?;
+        Ok(store)
+    }
+
+    /// 返回当前会话状态目录。
+    ///
+    /// 返回:
+    /// - 状态目录路径
+    pub(crate) fn state_dir(&self) -> &std::path::Path {
+        &self.state_dir
+    }
+
     /// 初始化状态文件。
     ///
     /// 返回:

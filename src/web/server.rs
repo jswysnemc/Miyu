@@ -27,14 +27,16 @@ use std::sync::Arc;
 pub(super) async fn run(paths: &MiyuPaths, args: WebArgs) -> Result<()> {
     AppConfig::init_files(paths)?;
     let token = generate_token();
+    let runs = RunManager::new(paths)?;
     let state = WebAppState {
         paths: paths.clone(),
         auth_token: Arc::from(token.as_str()),
         workspaces: WorkspaceManager::new(paths)?,
-        runs: RunManager::new(),
+        runs: runs.clone(),
         terminals: TerminalManager::new(),
         system_monitor: SystemMonitor::new(),
     };
+    runs.resume_queued().await;
     let app = Router::new()
         .merge(api::router(state.clone()))
         .fallback(assets::serve)

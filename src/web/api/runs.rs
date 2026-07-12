@@ -45,7 +45,7 @@ async fn start(
     let workspace = state.workspaces.active().map_err(WebError::from)?;
     let info = state
         .runs
-        .start(state.paths.clone(), workspace, request)
+        .start(workspace, request)
         .await
         .map_err(|error| WebError::conflict(error.to_string()))?;
     Ok(Json(json!(info)))
@@ -53,7 +53,8 @@ async fn start(
 
 /// 返回当前活动运行。
 async fn active(State(state): State<WebAppState>) -> Json<Value> {
-    Json(json!({ "run": state.runs.active().await }))
+    let runs = state.runs.active_runs().await;
+    Json(json!({ "run": runs.first(), "runs": runs }))
 }
 
 /// 中断指定运行。

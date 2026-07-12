@@ -85,7 +85,7 @@ fn edit_file_parameters() -> Value {
 /// - JSON 格式编辑结果
 fn edit_file(args: Value) -> Result<String> {
     if let Some(patch) = args.get("patch").and_then(Value::as_str) {
-        let cwd = std::env::current_dir()?;
+        let cwd = crate::runtime_cwd::current_dir()?;
         let applied = apply_patch(patch, &cwd)?;
         return Ok(serde_json::to_string_pretty(&json!({
             "ok": true,
@@ -260,7 +260,7 @@ fn expand_path(value: &str) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
-        std::env::current_dir()
+        crate::runtime_cwd::current_dir()
             .unwrap_or_else(|_| PathBuf::from("."))
             .join(path)
     }
@@ -315,7 +315,7 @@ mod tests {
 
     #[test]
     fn edit_file_replaces_lines() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let path = temp.path().join("sample.txt");
         std::fs::write(&path, "one\ntwo\nthree\n").unwrap();
@@ -334,7 +334,7 @@ mod tests {
 
     #[test]
     fn edit_file_applies_patch() {
-        let cwd = std::env::current_dir().unwrap();
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
         let temp = tempfile::tempdir_in(cwd).unwrap();
         let path = temp.path().join("sample.txt");
         std::fs::write(&path, "one\ntwo\n").unwrap();

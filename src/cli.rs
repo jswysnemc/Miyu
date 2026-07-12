@@ -243,9 +243,37 @@ pub(crate) fn build_repl_tool_registry(
     paths: &MiyuPaths,
     mode: AgentMode,
 ) -> Result<tools::ToolRegistry> {
+    let state = crate::state::StateStore::new(paths)?;
+    build_repl_tool_registry_for_session(config, paths, mode, state.session_id(), state.state_dir())
+}
+
+/// 构造绑定到指定会话的交互式工具注册表。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `paths`: Miyu 路径
+/// - `mode`: Agent 模式
+/// - `session_id`: 会话 ID
+/// - `state_dir`: 会话状态目录
+///
+/// 返回:
+/// - 工具注册表
+pub(crate) fn build_repl_tool_registry_for_session(
+    config: &AppConfig,
+    paths: &MiyuPaths,
+    mode: AgentMode,
+    session_id: &str,
+    state_dir: &std::path::Path,
+) -> Result<tools::ToolRegistry> {
     let mut registry = build_tool_registry(config, paths, mode)?;
     if mode == AgentMode::Yolo && config.tools.enabled {
-        tools::register_interactive_tools(&mut registry, config, paths);
+        tools::register_interactive_tools(
+            &mut registry,
+            config,
+            paths,
+            state_dir.display().to_string(),
+            session_id.to_string(),
+        );
     }
     Ok(registry)
 }

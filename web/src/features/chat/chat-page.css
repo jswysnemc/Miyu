@@ -333,3 +333,5 @@
 .message-copy:hover {
   color: var(--ink);
 }
+.context-compaction-part { display:flex; align-items:center; gap:7px; width:max-content; max-width:100%; margin:7px 0; padding:5px 9px; border:1px solid var(--line); border-radius:8px; color:var(--ink-muted); background:var(--control-surface); font-size:12px; }
+.context-compaction-part.running { color:var(--signal); border-color:color-mix(in srgb, var(--signal) 30%, var(--line)); }
