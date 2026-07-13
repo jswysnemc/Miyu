@@ -129,7 +129,18 @@ pub fn stop_process(pid: u32) -> Result<()> {
     Ok(())
 }
 
-#[cfg(not(unix))]
+#[cfg(windows)]
+pub fn stop_process(pid: u32) -> Result<()> {
+    let status = std::process::Command::new("taskkill")
+        .args(["/PID", &pid.to_string(), "/T"])
+        .status()?;
+    if !status.success() && process_exists(pid) {
+        bail!("failed to stop alarm process {pid}")
+    }
+    Ok(())
+}
+
+#[cfg(not(any(unix, windows)))]
 pub fn stop_process(pid: u32) -> Result<()> {
     let _ = pid;
     bail!("alarm cancellation is not supported on this platform")
@@ -140,10 +151,18 @@ pub fn process_exists(pid: u32) -> bool {
     {
         unsafe { libc::kill(pid as libc::pid_t, 0) == 0 }
     }
-    #[cfg(not(unix))]
+    #[cfg(windows)]
+    {
+        std::process::Command::new("tasklist")
+            .args(["/FI", &format!("PID eq {pid}"), "/NH"])
+            .output()
+            .map(|output| String::from_utf8_lossy(&output.stdout).contains(&pid.to_string()))
+            .unwrap_or(false)
+    }
+    #[cfg(not(any(unix, windows)))]
     {
         let _ = pid;
-        true
+        false
     }
 }
 

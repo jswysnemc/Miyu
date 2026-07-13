@@ -123,8 +123,9 @@ mod tests {
 
     #[test]
     fn rejects_parent_and_absolute_paths() {
+        let absolute = std::env::temp_dir().join("miyu-absolute-test");
         assert!(validate_relative("../secret").is_err());
-        assert!(validate_relative("/etc/passwd").is_err());
+        assert!(validate_relative(absolute.to_str().unwrap()).is_err());
         assert!(validate_relative("src/main.rs").is_ok());
     }
 
@@ -137,12 +138,13 @@ mod tests {
     #[test]
     fn resolves_absolute_path_inside_root() {
         let temp = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
         let root = temp.path().canonicalize().unwrap();
         std::fs::write(root.join("main.rs"), "fn main() {}").unwrap();
         let inside = root.join("main.rs");
         // 1. 工作区内的绝对路径应被接受并解析
         assert!(existing_path(temp.path(), inside.to_str().unwrap()).is_ok());
         // 2. 工作区外的绝对路径应被拒绝
-        assert!(existing_path(temp.path(), "/etc/passwd").is_err());
+        assert!(existing_path(temp.path(), outside.path().to_str().unwrap()).is_err());
     }
 }

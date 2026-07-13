@@ -1,5 +1,4 @@
 use anyhow::{bail, Context, Result};
-use std::path::PathBuf;
 use tokio::process::Command;
 
 const OUTPUT_LIMIT: usize = 20_000;
@@ -23,16 +22,20 @@ pub(super) async fn execute_repl_shell(command: &str) -> Result<ReplShellResult>
     if command.is_empty() {
         bail!("请在 ! 后输入 Shell 命令")
     }
-    let shell = shell_path();
+    let invocation = crate::platform::shell::command_invocation(command);
     let cwd = crate::runtime_cwd::current_dir()?;
     // 1. 使用当前用户 Shell 在 REPL 工作目录中执行命令
-    let result = Command::new(&shell)
-        .arg("-lc")
-        .arg(command)
+    let result = Command::new(&invocation.program)
+        .args(&invocation.args)
         .current_dir(cwd)
         .output()
         .await
-        .with_context(|| format!("Shell 命令执行失败: {}", shell.display()))?;
+        .with_context(|| {
+            format!(
+                "Shell 命令执行失败: {}",
+                invocation.program.to_string_lossy()
+            )
+        })?;
     // 2. 按标准输出、标准错误顺序合并可见结果
     let mut output = String::from_utf8_lossy(&result.stdout).to_string();
     let stderr = String::from_utf8_lossy(&result.stderr);
@@ -47,24 +50,6 @@ pub(super) async fn execute_repl_shell(command: &str) -> Result<ReplShellResult>
         output: truncate_output(&output),
         exit_code: result.status.code(),
     })
-}
-
-/// 返回当前环境的 Shell 路径。
-///
-/// 返回:
-/// - `$SHELL` 或系统 zsh/sh
-fn shell_path() -> PathBuf {
-    std::env::var_os("SHELL")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .filter(|path| path.exists())
-        .unwrap_or_else(|| {
-            if PathBuf::from("/bin/zsh").exists() {
-                PathBuf::from("/bin/zsh")
-            } else {
-                PathBuf::from("/bin/sh")
-            }
-        })
 }
 
 /// 限制 Shell 输出进入 transcript 的字符数。
@@ -89,9 +74,13 @@ mod tests {
 
     #[tokio::test]
     async fn executes_shell_command_and_captures_output() {
-        let result = execute_repl_shell("printf shell-test").await.unwrap();
+        #[cfg(windows)]
+        let command = "Write-Output shell-test";
+        #[cfg(not(windows))]
+        let command = "printf shell-test";
+        let result = execute_repl_shell(command).await.unwrap();
 
-        assert_eq!(result.command, "printf shell-test");
+        assert_eq!(result.command, command);
         assert_eq!(result.output, "shell-test");
         assert_eq!(result.exit_code, Some(0));
     }

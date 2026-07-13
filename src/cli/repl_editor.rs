@@ -1,7 +1,6 @@
 use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 /// 使用用户配置的编辑器编辑 REPL 输入缓冲区。
@@ -20,14 +19,10 @@ pub(super) fn edit_input_buffer(input: &str) -> Result<String> {
                 .ok()
                 .filter(|value| !value.trim().is_empty())
         })
-        .unwrap_or_else(|| "vi".to_string());
+        .unwrap_or_else(|| crate::platform::shell::default_editor().to_string());
     let path = temporary_buffer_path();
     fs::write(&path, input).with_context(|| format!("failed to write {}", path.display()))?;
-    let status = Command::new("sh")
-        .arg("-c")
-        .arg(format!("{} \"$1\"", editor))
-        .arg("miyu-editor")
-        .arg(&path)
+    let status = crate::platform::shell::editor_command(&editor, &path)
         .status()
         .with_context(|| format!("failed to launch editor: {editor}"))?;
     if !status.success() {

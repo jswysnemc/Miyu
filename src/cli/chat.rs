@@ -66,6 +66,7 @@ fn shell_intercept_chat_options(message: String, clipb: bool, web_search: bool) 
 ///
 /// 返回:
 /// - 无
+#[cfg(unix)]
 pub(super) fn drain_stdin() {
     use std::os::fd::AsRawFd;
 
@@ -95,6 +96,30 @@ pub(super) fn drain_stdin() {
 
     let _ = unsafe { libc::fcntl(fd, libc::F_SETFL, flags) };
 }
+
+/// 清理 Windows 控制台标准输入中残留的按键事件。
+///
+/// 返回:
+/// - 无
+#[cfg(windows)]
+pub(super) fn drain_stdin() {
+    if !io::stdin().is_terminal() {
+        return;
+    }
+    // 1. 只读取已经进入控制台队列的事件，避免等待新输入
+    while event::poll(Duration::ZERO).unwrap_or(false) {
+        if event::read().is_err() {
+            break;
+        }
+    }
+}
+
+/// 非 Unix 和 Windows 平台不执行终端输入清理。
+///
+/// 返回:
+/// - 无
+#[cfg(not(any(unix, windows)))]
+pub(super) fn drain_stdin() {}
 
 /// 单次命令聊天执行选项。
 pub(super) struct ChatRunOptions {

@@ -110,6 +110,8 @@ fn select_shell_hook() -> Result<Option<&'static str>> {
         ("powershell", Some("powershell")),
     ];
     let detected = shell::current_parent_shell();
+    #[cfg(windows)]
+    let detected = detected.or_else(|| Some("powershell".to_string()));
     let mut selected = detected
         .as_deref()
         .and_then(|shell| options.iter().position(|(_, value)| *value == Some(shell)))

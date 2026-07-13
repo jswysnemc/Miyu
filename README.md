@@ -97,13 +97,34 @@ miyu
 yay -S miyu
 ```
 
-### 从源码构建
+### Windows 10/11
 
-需要 **Rust 1.96+**（或当前稳定版）、C 工具链、`pkg-config`、ALSA 开发库。
+需要 Rust MSVC 工具链、Visual Studio Build Tools 的“使用 C++ 的桌面开发”组件，以及 Node.js 22+。在 PowerShell 中执行：
+
+```powershell
+git clone https://github.com/SHORiN-KiWATA/Miyu.git
+Set-Location Miyu\web
+npm ci
+npm run build
+Set-Location ..
+cargo build --release --locked
+.\target\release\miyu.exe --version
+.\target\release\miyu.exe init
+```
+
+Windows 支持 PowerShell 命令未找到拦截、CLI、Web 工作台、Web 终端、剪贴板、音频闹钟和命令执行。审计模式的 Shell 沙盒依赖 Linux bubblewrap，在 Windows 上不启用；`check_issue` 系统诊断目前只支持 Linux 和 macOS。文件搜索工具需要单独安装 `rg`，工作区 Git 功能需要 `git`。
+
+### Linux 从源码构建
+
+需要 **Rust 1.96+**（或当前稳定版）、Node.js 22+、C 工具链、`pkg-config`、ALSA 开发库。
 
 ```bash
 git clone https://github.com/SHORiN-KiWATA/Miyu.git
 cd Miyu
+cd web
+npm ci
+npm run build
+cd ..
 cargo build --release --locked
 ./target/release/miyu --version
 ```

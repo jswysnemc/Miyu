@@ -74,6 +74,7 @@ impl SystemMonitor {
 ///
 /// 返回:
 /// - 用户态和内核态 CPU 秒数之和
+#[cfg(unix)]
 fn process_cpu_seconds() -> f64 {
     let mut usage = std::mem::MaybeUninit::<libc::rusage>::uninit();
     let status = unsafe { libc::getrusage(libc::RUSAGE_SELF, usage.as_mut_ptr()) };
@@ -91,8 +92,58 @@ fn process_cpu_seconds() -> f64 {
 ///
 /// 返回:
 /// - 浮点秒数
+#[cfg(unix)]
 fn timeval_seconds(value: libc::timeval) -> f64 {
     value.tv_sec as f64 + value.tv_usec as f64 / 1_000_000.0
+}
+
+/// 读取 Windows 当前进程累计 CPU 秒数。
+///
+/// 返回:
+/// - 用户态和内核态 CPU 秒数之和
+#[cfg(windows)]
+fn process_cpu_seconds() -> f64 {
+    use windows_sys::Win32::Foundation::FILETIME;
+    use windows_sys::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+
+    let mut creation = FILETIME::default();
+    let mut exit = FILETIME::default();
+    let mut kernel = FILETIME::default();
+    let mut user = FILETIME::default();
+    let status = unsafe {
+        GetProcessTimes(
+            GetCurrentProcess(),
+            &mut creation,
+            &mut exit,
+            &mut kernel,
+            &mut user,
+        )
+    };
+    if status == 0 {
+        return 0.0;
+    }
+    (filetime_ticks(kernel) + filetime_ticks(user)) as f64 / 10_000_000.0
+}
+
+/// 将 Windows FILETIME 转换为 100 纳秒计数。
+///
+/// 参数:
+/// - `value`: Windows 文件时间
+///
+/// 返回:
+/// - 100 纳秒计数
+#[cfg(windows)]
+fn filetime_ticks(value: windows_sys::Win32::Foundation::FILETIME) -> u64 {
+    (u64::from(value.dwHighDateTime) << 32) | u64::from(value.dwLowDateTime)
+}
+
+/// 不支持进程 CPU 统计的平台返回零值。
+///
+/// 返回:
+/// - 零
+#[cfg(not(any(unix, windows)))]
+fn process_cpu_seconds() -> f64 {
+    0.0
 }
 
 /// 读取 Linux 当前进程常驻内存。
@@ -107,11 +158,32 @@ fn process_rss_bytes() -> Option<u64> {
     Some(kib * 1024)
 }
 
-/// 非 Linux 平台暂不提供常驻内存。
+/// 读取 Windows 当前进程常驻内存。
+///
+/// 返回:
+/// - 工作集字节数，读取失败时返回空值
+#[cfg(windows)]
+fn process_rss_bytes() -> Option<u64> {
+    use windows_sys::Win32::System::ProcessStatus::{
+        K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
+    };
+    use windows_sys::Win32::System::Threading::GetCurrentProcess;
+
+    let mut counters = PROCESS_MEMORY_COUNTERS {
+        cb: std::mem::size_of::<PROCESS_MEMORY_COUNTERS>() as u32,
+        ..Default::default()
+    };
+    let counter_size = counters.cb;
+    let status =
+        unsafe { K32GetProcessMemoryInfo(GetCurrentProcess(), &mut counters, counter_size) };
+    (status != 0).then_some(counters.WorkingSetSize as u64)
+}
+
+/// 其他平台暂不提供常驻内存。
 ///
 /// 返回:
 /// - 空值
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", windows)))]
 fn process_rss_bytes() -> Option<u64> {
     None
 }
@@ -126,7 +198,7 @@ mod tests {
         let snapshot = monitor.snapshot();
         assert_eq!(snapshot.pid, std::process::id());
         assert!(snapshot.cpu_percent >= 0.0);
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", windows))]
         assert!(snapshot.rss_bytes.unwrap_or_default() > 0);
     }
 }

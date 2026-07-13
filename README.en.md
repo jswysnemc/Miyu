@@ -97,13 +97,34 @@ Files land under `$XDG_CACHE_HOME/miyu/debug-http/<session_id>/...` (secrets in 
 yay -S miyu
 ```
 
-### Build from source
+### Windows 10/11
 
-Requires **Rust 1.96+** (or current stable), a C toolchain, `pkg-config`, and ALSA development headers.
+Install the Rust MSVC toolchain, the Visual Studio Build Tools "Desktop development with C++" workload, and Node.js 22+. Then run in PowerShell:
+
+```powershell
+git clone https://github.com/SHORiN-KiWATA/Miyu.git
+Set-Location Miyu\web
+npm ci
+npm run build
+Set-Location ..
+cargo build --release --locked
+.\target\release\miyu.exe --version
+.\target\release\miyu.exe init
+```
+
+Windows supports the PowerShell command-not-found hook, CLI, web workbench, web terminal, clipboard, audio alarms, and command execution. Audited shell sandboxing depends on Linux bubblewrap and is unavailable on Windows. The `check_issue` diagnostics tool currently supports Linux and macOS only. File search tools require a separate `rg` installation, and workspace Git features require `git`.
+
+### Build from source on Linux
+
+Requires **Rust 1.96+** (or current stable), Node.js 22+, a C toolchain, `pkg-config`, and ALSA development headers.
 
 ```bash
 git clone https://github.com/SHORiN-KiWATA/Miyu.git
 cd Miyu
+cd web
+npm ci
+npm run build
+cd ..
 cargo build --release --locked
 ./target/release/miyu --version
 ```

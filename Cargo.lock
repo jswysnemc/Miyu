@@ -2217,6 +2217,7 @@ dependencies = [
  "unicode-width",
  "urlencoding",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

@@ -40,16 +40,15 @@ impl TerminalSession {
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/sh".to_string());
+        let shell = crate::platform::shell::interactive_shell_program();
         let mut command = CommandBuilder::new(&shell);
         command.cwd(cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "Miyu Web");
-        let child = pair
-            .slave
-            .spawn_command(command)
-            .with_context(|| format!("failed to start terminal shell {shell}"))?;
+        let child = pair.slave.spawn_command(command).with_context(|| {
+            format!("failed to start terminal shell {}", shell.to_string_lossy())
+        })?;
         drop(pair.slave);
         let mut reader = pair.master.try_clone_reader()?;
         let writer = pair.master.take_writer()?;

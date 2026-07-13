@@ -51,6 +51,13 @@ fn check_os_info() -> Result<String> {
         "DESKTOP_SESSION",
         "WAYLAND_DISPLAY",
         "DISPLAY",
+        "COMSPEC",
+        "USERPROFILE",
+        "USERNAME",
+        "COMPUTERNAME",
+        "OS",
+        "PROCESSOR_ARCHITECTURE",
+        "WT_SESSION",
     ] {
         if let Ok(value) = std::env::var(key) {
             if !value.trim().is_empty() {
@@ -87,7 +94,9 @@ fn check_os_info() -> Result<String> {
         "os": std::env::consts::OS,
         "family": std::env::consts::FAMILY,
         "username": std::env::var("USER").ok().or_else(|| std::env::var("USERNAME").ok()),
-        "hostname": read_small_file("/etc/hostname").map(|value| value.trim().to_string()),
+        "hostname": read_small_file("/etc/hostname")
+            .map(|value| value.trim().to_string())
+            .or_else(|| std::env::var("COMPUTERNAME").ok()),
         "env": env,
         "package_manager_guess": package_manager_guess,
         "notes": [
