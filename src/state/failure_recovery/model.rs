@@ -4,6 +4,7 @@ pub enum FailureKind {
     CompactionLlmFailed,
     EmptySummary,
     CompactionOverBudget,
+    CompactionMirrorFailed,
     ProviderOverflow,
     OverflowRetryFailed,
     StaleRunningTurn,
@@ -32,6 +33,7 @@ impl FailureKind {
             Self::CompactionLlmFailed => "compaction_llm_failed",
             Self::EmptySummary => "empty_summary",
             Self::CompactionOverBudget => "compaction_over_budget",
+            Self::CompactionMirrorFailed => "compaction_mirror_failed",
             Self::ProviderOverflow => "provider_overflow",
             Self::OverflowRetryFailed => "overflow_retry_failed",
             Self::StaleRunningTurn => "stale_running_turn",
@@ -59,6 +61,7 @@ impl FailureKind {
         match value {
             "empty_summary" => Self::EmptySummary,
             "compaction_over_budget" => Self::CompactionOverBudget,
+            "compaction_mirror_failed" => Self::CompactionMirrorFailed,
             "provider_overflow" => Self::ProviderOverflow,
             "overflow_retry_failed" => Self::OverflowRetryFailed,
             "stale_running_turn" => Self::StaleRunningTurn,

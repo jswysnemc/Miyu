@@ -63,3 +63,29 @@ impl Agent {
         )
     }
 }
+
+/// 提取需要跨轮保留的工具最终报告。
+///
+/// 参数:
+/// - `tool_name`: 工具名称
+/// - `output`: 工具 JSON 输出
+///
+/// 返回:
+/// - 可持久化最终报告
+pub(super) fn extract_persistable_tool_report(tool_name: &str, output: &str) -> Option<String> {
+    let field = match tool_name {
+        "linux_game_compatibility" => "final_report",
+        "linux_input_method_diagnose" | "deep_diagnose" | "deep_research" => "final_answer",
+        _ => return None,
+    };
+    serde_json::from_str::<serde_json::Value>(output)
+        .ok()
+        .and_then(|value| {
+            value
+                .get(field)
+                .and_then(serde_json::Value::as_str)
+                .map(str::trim)
+                .map(str::to_string)
+        })
+        .filter(|report| !report.is_empty())
+}

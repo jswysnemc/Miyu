@@ -113,6 +113,70 @@ impl TranscriptStore {
         self.push_cell(HistoryCell::meta(text));
     }
 
+    /// 记录等待用户选择的权限事件。
+    ///
+    /// 参数:
+    /// - `request`: 权限请求
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn push_permission_request(
+        &mut self,
+        request: crate::permission::PermissionRequest,
+    ) {
+        self.push_cell(HistoryCell::permission(request));
+    }
+
+    /// 更新指定权限事件的最终决定。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `decision`: 用户决定
+    ///
+    /// 返回:
+    /// - 是否找到并更新了权限事件
+    pub(crate) fn resolve_permission(
+        &mut self,
+        request_id: &str,
+        decision: crate::permission::PermissionDecision,
+    ) -> bool {
+        for cell in self.cells.iter_mut().rev() {
+            let HistoryCell::Permission(cell) = cell else {
+                continue;
+            };
+            if cell.request.id == request_id {
+                cell.resolve(decision);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// 更新指定权限事件的拒绝回复草稿。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `draft`: 回复草稿；空值表示返回权限选择
+    ///
+    /// 返回:
+    /// - 是否找到并更新了权限事件
+    pub(crate) fn set_permission_reply_draft(
+        &mut self,
+        request_id: &str,
+        draft: Option<String>,
+    ) -> bool {
+        for cell in self.cells.iter_mut().rev() {
+            let HistoryCell::Permission(cell) = cell else {
+                continue;
+            };
+            if cell.request.id == request_id {
+                cell.set_reply_draft(draft);
+                return true;
+            }
+        }
+        false
+    }
+
     /// 记录 REPL 本地 Shell 命令与输出。
     ///
     /// 参数:

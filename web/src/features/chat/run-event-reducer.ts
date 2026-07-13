@@ -1,4 +1,4 @@
-import type { WebEvent } from "../../api/contracts";
+import type { PermissionDecision, PermissionRequest, WebEvent } from "../../api/contracts";
 
 export type ToolLifecycle = {
   id: string;
@@ -14,12 +14,13 @@ export type LiveMessagePart =
   | { id: string; type: "reasoning"; source: string; startedAt: string; endedAt?: string }
   | { id: string; type: "text"; source: string }
   | { id: string; type: "tool"; tool: ToolLifecycle }
+  | { id: string; type: "permission"; request: PermissionRequest; decision?: PermissionDecision }
   | { id: string; type: "compaction"; status: "running" | "completed"; turnCount: number; applied?: boolean };
 
 export type LiveRunState = {
   runId: string | null;
   sessionId: string | null;
-  status: "idle" | "queued" | "waiting_response" | "thinking" | "working";
+  status: "idle" | "queued" | "waiting_response" | "waiting_permission" | "thinking" | "working";
   userInput: string;
   imageUrls: string[];
   content: string;
@@ -95,6 +96,17 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
         output: String(payload.output ?? ""),
         status: payload.ok === false ? "failed" : "completed"
       });
+    case "permission.requested":
+      return upsertPermissionPart({
+        ...closeActiveReasoning(state, event.timestamp),
+        status: "waiting_permission"
+      }, payload as unknown as PermissionRequest);
+    case "permission.resolved":
+      return resolvePermissionPart(
+        { ...state, status: "working" },
+        String(payload.request_id),
+        payload.decision as unknown as PermissionDecision
+      );
     case "compaction.started":
       return {
         ...closeActiveReasoning(state, event.timestamp),
@@ -116,6 +128,40 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
     default:
       return state;
   }
+}
+
+/**
+ * 更新消息流中指定权限卡片的最终决定。
+ *
+ * @param state 当前运行状态
+ * @param requestId 权限请求标识
+ * @param decision 用户决定
+ * @returns 更新后的运行状态
+ */
+function resolvePermissionPart(state: LiveRunState, requestId: string, decision: PermissionDecision): LiveRunState {
+  return {
+    ...state,
+    parts: state.parts.map((part) => part.type === "permission" && part.request.id === requestId
+      ? { ...part, decision }
+      : part)
+  };
+}
+
+/**
+ * 在消息流中插入权限卡片，并避免 SSE 重连产生重复卡片。
+ *
+ * @param state 当前运行状态
+ * @param request 权限请求
+ * @returns 更新后的运行状态
+ */
+function upsertPermissionPart(state: LiveRunState, request: PermissionRequest): LiveRunState {
+  const id = `permission-${request.id}`;
+  const existing = state.parts.findIndex((part) => part.type === "permission" && part.request.id === request.id);
+  if (existing === -1) return { ...state, parts: [...state.parts, { id, type: "permission", request }] };
+  return {
+    ...state,
+    parts: state.parts.map((part, index) => index === existing ? { id, type: "permission" as const, request } : part)
+  };
 }
 
 /**

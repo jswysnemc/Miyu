@@ -99,6 +99,10 @@ impl Agent {
                 &mut messages,
                 &mut used_tools,
                 &mut persisted_tool_reports,
+                &input,
+                &image_urls,
+                association_prompt.as_deref(),
+                auto_meme_reminder,
                 &mut on_event,
                 &mut perf,
             )
@@ -106,10 +110,6 @@ impl Agent {
         {
             Ok(result) => result,
             Err(err) if is_context_overflow_error(&err) => {
-                if !used_tools.is_empty() || !persisted_tool_reports.is_empty() {
-                    self.record_overflow_retry_failed(&turn_id, &messages, &err)?;
-                    return Err(err);
-                }
                 if !self
                     .recover_after_provider_overflow(
                         &turn_id,
@@ -131,12 +131,19 @@ impl Agent {
                     association_prompt.as_deref(),
                     auto_meme_reminder,
                 )?;
+                if !used_tools.is_empty() {
+                    messages.extend(self.state.project_running_turn_tool_messages(&turn_id)?);
+                }
                 match self
                     .chat_with_tools(
                         &turn_id,
                         &mut messages,
                         &mut used_tools,
                         &mut persisted_tool_reports,
+                        &input,
+                        &image_urls,
+                        association_prompt.as_deref(),
+                        auto_meme_reminder,
                         &mut on_event,
                         &mut perf,
                     )

@@ -2,8 +2,6 @@ use super::model::CompactionRequest;
 use super::{estimate_turn_context_chars, should_compact_for_context_chars};
 use crate::state::turns::{Turn, TurnStatus};
 
-const DEFAULT_TAIL_TURNS: usize = 2;
-
 /// 当前请求上下文已经达到阈值后选择旧轮次进行压缩。
 ///
 /// 参数:
@@ -36,19 +34,26 @@ pub fn select_compaction_after_context_trigger(
     if non_running_indexes.is_empty() {
         return None;
     }
+    if non_running_indexes.len() <= 2 {
+        return None;
+    }
 
     let tail_start = recent_tail_start(turns, &non_running_indexes, preserve_recent_chars);
-    let selected = non_running_indexes
-        .into_iter()
-        .filter(|index| tail_start.map(|start| *index < start).unwrap_or(true))
-        .map(|index| turns[index].clone())
+    let mut selected = non_running_indexes
+        .iter()
+        .filter(|index| tail_start.map(|start| **index < start).unwrap_or(true))
+        .map(|index| turns[*index].clone())
         .collect::<Vec<_>>();
 
-    if selected.is_empty() {
-        None
-    } else {
-        Some(CompactionRequest::new(selected, previous_summary))
+    // 1. 已触发压缩时至少收敛两个旧轮次，避免极小 tail 让压缩无法释放有效空间
+    if selected.len() < 2 {
+        selected = non_running_indexes
+            .iter()
+            .take(2)
+            .map(|index| turns[*index].clone())
+            .collect();
     }
+    Some(CompactionRequest::new(selected, previous_summary))
 }
 
 /// 按最近上下文预算返回 tail 起始轮次下标。
@@ -70,7 +75,7 @@ fn recent_tail_start(
     }
     let mut total = 0usize;
     let mut keep_start = None;
-    for index in non_running_indexes.iter().rev().take(DEFAULT_TAIL_TURNS) {
+    for index in non_running_indexes.iter().rev() {
         let size = estimate_turn_context_chars(&turns[*index]);
         if total.saturating_add(size) <= preserve_recent_chars || keep_start.is_none() {
             total = total.saturating_add(size);
@@ -153,6 +158,25 @@ mod tests {
                 "turn_2".to_string(),
                 "turn_3".to_string()
             ]
+        );
+    }
+
+    #[test]
+    fn preserves_every_recent_turn_that_fits_the_budget() {
+        let turns = vec![
+            completed_turn(1, 100),
+            completed_turn(2, 100),
+            completed_turn(3, 100),
+            completed_turn(4, 100),
+            completed_turn(5, 100),
+        ];
+
+        let request = select_compaction_after_context_trigger(&turns, None, 1_000, 1_000, 0.5, 600)
+            .expect("compaction request");
+
+        assert_eq!(
+            request.compact_turn_ids,
+            vec!["turn_1".to_string(), "turn_2".to_string()]
         );
     }
 }

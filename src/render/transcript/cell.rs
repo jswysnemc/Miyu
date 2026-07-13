@@ -2,6 +2,7 @@ use super::diff_cell::{self, DiffCell};
 use super::line::AnsiLine;
 use super::markdown_cell::{self, MarkdownCell};
 use super::meta_cell::{self, MetaCell};
+use super::permission_cell::{self, PermissionCell};
 use super::reasoning_cell::{self, ReasoningCell};
 use super::shell_cell::{self, ShellCell};
 use super::tool_cell::{self, ToolCell};
@@ -26,6 +27,7 @@ pub(crate) enum HistoryCell {
     Tool(ToolCell),
     Diff(DiffCell),
     Meta(MetaCell),
+    Permission(PermissionCell),
     Welcome(WelcomeCell),
 }
 
@@ -54,6 +56,7 @@ impl HistoryCell {
             Self::Tool(cell) => tool_cell::render(cell, options.tool_call_mode),
             Self::Diff(cell) => diff_cell::render(cell),
             Self::Meta(cell) => meta_cell::render(cell),
+            Self::Permission(cell) => permission_cell::render(cell),
             Self::Welcome(_) => unreachable!("welcome cell is handled before plain rendering"),
         };
         if rendered.is_empty() {
@@ -134,6 +137,17 @@ impl HistoryCell {
     /// - 元信息 cell
     pub(crate) fn meta(text: String) -> Self {
         Self::Meta(MetaCell { text })
+    }
+
+    /// 构造等待用户选择的权限事件 cell。
+    ///
+    /// 参数:
+    /// - `request`: 权限请求
+    ///
+    /// 返回:
+    /// - 权限事件 cell
+    pub(crate) fn permission(request: crate::permission::PermissionRequest) -> Self {
+        Self::Permission(PermissionCell::pending(request))
     }
 
     /// 构造 REPL 启动信息 cell。

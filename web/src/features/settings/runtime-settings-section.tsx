@@ -1,6 +1,7 @@
 import type { AppConfig } from "../../api/contracts";
 import { SettingsGroup } from "./editor-layout";
 import { StructuredConfigFields } from "./structured-config-fields";
+import { PermissionDefaultSettings } from "./runtime/permission-default-settings";
 
 type RuntimeSettingsSectionProps = {
   config: AppConfig;
@@ -22,6 +23,7 @@ export function RuntimeSettingsSection({ config, onConfigChange }: RuntimeSettin
   ] as const;
   return (
     <div className="runtime-groups">
+      <PermissionDefaultSettings config={config} onConfigChange={onConfigChange} />
       {groups.map(([key, title, description]) => (
         <SettingsGroup title={title} description={description} key={key}>
           <StructuredConfigFields

@@ -230,6 +230,51 @@ fn row_cap_trims_prewrapped_rows_not_source_cells() {
     assert!(lines[1].as_str().contains("third"));
 }
 
+/// 验证权限 cell 在完成选择后保留语义详情和决定。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
+#[test]
+fn permission_cell_keeps_semantic_details_and_decision() {
+    let mut store = TranscriptStore::new(100);
+    store.push_permission_request(crate::permission::PermissionRequest {
+        id: "permission".to_string(),
+        session_id: "session".to_string(),
+        tool: "run_command".to_string(),
+        arguments: r#"{"command":"cargo test","cwd":"/workspace"}"#.to_string(),
+    });
+    let pending = store
+        .display_tail(100, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+    assert!(pending.contains("1."));
+    assert!(pending.contains("允许一次"));
+    assert!(!pending.contains("已允许一次"));
+    assert!(store.set_permission_reply_draft("permission", Some("请改为只读检查".to_string())));
+    let reply = store
+        .display_tail(100, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+    assert!(reply.contains("请改为只读检查"));
+    assert!(reply.contains("Enter 提交"));
+    assert!(store.resolve_permission("permission", crate::permission::PermissionDecision::Allow));
+
+    let rendered = store
+        .display_tail(100, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+
+    assert!(rendered.contains("cargo test"));
+    assert!(rendered.contains("已允许一次"));
+    assert!(!rendered.contains(r#"{"command""#));
+}
+
 #[test]
 fn diff_fill_is_reapplied_to_each_prewrapped_row() {
     let lines = AnsiLine::wrap_block("\x1b[48;5;22mabcdef\x1b[K\x1b[0m", 3);

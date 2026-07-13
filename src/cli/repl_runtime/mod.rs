@@ -250,6 +250,56 @@ impl ReplRuntime {
         self.sync_transcript(false)
     }
 
+    /// 记录等待用户处理的权限事件。
+    ///
+    /// 参数:
+    /// - `request`: 权限请求
+    ///
+    /// 返回:
+    /// - transcript 同步结果
+    pub(super) fn record_permission_request(
+        &mut self,
+        request: crate::permission::PermissionRequest,
+    ) -> Result<()> {
+        self.transcript.push_permission_request(request);
+        self.sync_transcript(false)
+    }
+
+    /// 更新 transcript 中权限事件的最终决定。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `decision`: 用户决定
+    ///
+    /// 返回:
+    /// - transcript 同步结果
+    pub(super) fn resolve_permission(
+        &mut self,
+        request_id: &str,
+        decision: crate::permission::PermissionDecision,
+    ) -> Result<()> {
+        self.transcript.resolve_permission(request_id, decision);
+        self.sync_transcript(false)
+    }
+
+    /// 更新权限事件中的内联拒绝回复草稿。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `draft`: 回复草稿；空值表示返回权限选择
+    ///
+    /// 返回:
+    /// - transcript 同步结果
+    pub(super) fn update_permission_reply(
+        &mut self,
+        request_id: &str,
+        draft: Option<String>,
+    ) -> Result<()> {
+        self.transcript
+            .set_permission_reply_draft(request_id, draft);
+        self.sync_transcript(false)
+    }
+
     /// 记录本地 Shell 命令与输出。
     ///
     /// 参数:
@@ -362,6 +412,18 @@ impl ReplRuntime {
                 self.transcript
                     .push_tool_progress(name.clone(), message.clone());
                 self.sync_transcript(true)
+            }
+            AgentEvent::PermissionRequested(request) => {
+                self.next_live_reasoning_refresh = None;
+                let _ = request;
+                Ok(())
+            }
+            AgentEvent::PermissionResolved {
+                request_id,
+                decision,
+            } => {
+                self.next_live_reasoning_refresh = None;
+                self.resolve_permission(request_id, decision.clone())
             }
             AgentEvent::CompactionStarted { turn_count } => {
                 self.next_live_reasoning_refresh = None;
@@ -549,6 +611,7 @@ impl ReplRuntime {
 fn transcript_mode(mode: AgentMode) -> TranscriptMode {
     match mode {
         AgentMode::Plan => TranscriptMode::Plan,
+        AgentMode::Audited => TranscriptMode::Yolo,
         AgentMode::Yolo => TranscriptMode::Yolo,
     }
 }

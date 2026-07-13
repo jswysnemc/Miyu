@@ -1,7 +1,7 @@
-import { ArrowRight, AtSign, Bot, BriefcaseBusiness, GitBranch, ListTree, Paperclip, Square, SquareTerminal } from "lucide-react";
+import { ArrowRight, AtSign, Bot, BriefcaseBusiness, GitBranch, ListTree, Paperclip, ShieldCheck, Square, SquareTerminal } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, FormEvent } from "react";
-import type { RunModelSelection, ThinkingLevel } from "../../api/contracts";
+import type { RunMode, RunModelSelection, ThinkingLevel } from "../../api/contracts";
 import type { ChatModelChoice } from "./chat-model-options";
 import { AttachmentStrip } from "./composer/attachment-strip";
 import { ComposerTextarea } from "./composer/composer-textarea";
@@ -18,11 +18,13 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "../../api/client";
 import { TodoMarkdownView } from "../todo/todo-markdown-view";
 import { useRuntimeActivity } from "../runtime-activity/use-runtime-activity";
+import { PermissionAuditDialog } from "../permission/permission-audit-dialog";
+import { Button } from "../../shared/ui/button/button";
 import "./chat-composer.css";
 
 type ChatComposerProps = {
   value: string;
-  mode: "plan" | "yolo";
+  mode: RunMode;
   attachments: ComposerAttachment[];
   historyEntries: string[];
   thinkingLevel: ThinkingLevel;
@@ -37,7 +39,7 @@ type ChatComposerProps = {
   agentLoading: boolean;
   sessionId?: string;
   onChange: (value: string) => void;
-  onModeChange: (mode: "plan" | "yolo") => void;
+  onModeChange: (mode: RunMode) => void;
   onThinkingLevelChange: (level: ThinkingLevel) => void;
   onAddImages: (files: File[], selectionStart: number, selectionEnd: number) => Promise<number | undefined>;
   onRemoveAttachment: (id: number) => void;
@@ -96,9 +98,11 @@ export function ChatComposer(props: ChatComposerProps) {
         <SystemUsage />
         <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
         <TodoMarkdownView sessionId={props.sessionId} compact />
+        <PermissionAuditDialog sessionId={props.sessionId} />
         <div className="composer-mode" aria-label="运行模式">
-          <button type="button" className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></button>
-          <button type="button" className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></button>
+          <Button className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></Button>
+          <Button className={props.mode === "audited" ? "active" : ""} onClick={() => props.onModeChange("audited")} disabled={props.running} title="权限审计与工作区沙盒"><ShieldCheck size={13} /><span>审计</span></Button>
+          <Button className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></Button>
         </div>
         <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
           <SquareTerminal size={14} />

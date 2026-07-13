@@ -4,6 +4,7 @@ import "./live-run-indicator.css";
 const labels: Record<Exclude<LiveRunState["status"], "idle">, string> = {
   queued: "已加入会话队列",
   waiting_response: "等待模型响应",
+  waiting_permission: "等待权限决定",
   thinking: "正在整理思路",
   working: "正在执行任务"
 };

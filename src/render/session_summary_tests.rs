@@ -16,6 +16,7 @@ fn renders_compact_session_summary_with_key_fields() {
         checkpoint_covered_turns: 0,
         tail_turns: 2,
         latest_checkpoint_at: None,
+        latest_checkpoint_reason: None,
         usage: UsageSnapshot {
             requests: 1,
             prompt_tokens: 8_000,

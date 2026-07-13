@@ -4,6 +4,7 @@ mod config;
 mod cron_jobs;
 mod gateways;
 mod health;
+mod permissions;
 mod prompts;
 mod providers;
 mod runs;
@@ -39,6 +40,7 @@ pub(super) fn router(state: WebAppState) -> Router<WebAppState> {
         .merge(cron_jobs::routes())
         .merge(providers::routes())
         .merge(prompts::routes())
+        .merge(permissions::routes())
         .merge(gateways::routes())
         .merge(sessions::routes())
         .merge(runs::routes())

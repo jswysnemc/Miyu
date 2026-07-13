@@ -65,7 +65,11 @@ async fn run_command(args: Value, allowed: bool, shell: String) -> Result<String
     let command = required(&args, "command")?;
     ensure_not_file_write_command(&command)?;
     let timeout = command_timeout(&args);
-    let output = run_shell_command(&command, timeout, shell.as_str()).await?;
+    let sandboxed = args
+        .get("_miyu_sandbox")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let output = run_shell_command(&command, timeout, shell.as_str(), sandboxed).await?;
     command_output(output)
 }
 
@@ -81,7 +85,7 @@ async fn run_readonly_command(args: Value, shell: String) -> Result<String> {
     let command = required(&args, "command")?;
     ensure_readonly_command(&command)?;
     let timeout = command_timeout(&args);
-    let output = run_shell_command(&command, timeout, shell.as_str()).await?;
+    let output = run_shell_command(&command, timeout, shell.as_str(), false).await?;
     command_output(output)
 }
 

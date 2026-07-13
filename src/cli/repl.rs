@@ -229,6 +229,11 @@ pub(super) async fn run_repl(
             runtime.record_meta(format!("{}: {}", t("mode", "模式"), mode.label()))?;
             continue;
         }
+        if input.eq_ignore_ascii_case("/audit") {
+            mode = AgentMode::Audited;
+            runtime.record_meta(format!("{}: {}", t("mode", "模式"), mode.label()))?;
+            continue;
+        }
         if input.eq_ignore_ascii_case("/yolo") {
             mode = AgentMode::Yolo;
             runtime.record_meta(format!("{}: {}", t("mode", "模式"), mode.label()))?;
@@ -344,6 +349,14 @@ pub(super) async fn run_repl(
             let runner = crate::runner::SessionRunner::new(paths).with_config(config.clone());
             let runtime = std::cell::RefCell::new(&mut runtime);
             let mut sink = |event: crate::runner::RunnerEvent| {
+                if let crate::runner::RunnerEvent::Agent(AgentEvent::PermissionRequested(request)) =
+                    &event
+                {
+                    runtime
+                        .borrow_mut()
+                        .record_permission_request(request.clone())?;
+                    prompt_permission_request_tui(request, &runtime)?;
+                }
                 runtime.borrow_mut().record_runner_event(&event)
             };
             let chat = runner.run_submission_with_agent(runner_submission, &mut agent, &mut sink);

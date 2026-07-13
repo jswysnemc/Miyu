@@ -99,11 +99,7 @@ const THINKING_LEVELS: &[&str] = &["auto", "none", "low", "medium", "high", "xhi
 pub async fn run(cli: Cli) -> Result<()> {
     let paths = MiyuPaths::new()?;
     let thinking_override = cli.thinking.clone();
-    let mode = if cli.plan {
-        AgentMode::Plan
-    } else {
-        AgentMode::Yolo
-    };
+    let mode_override = cli_mode_override(&cli);
 
     if cli.shell_intercept {
         let shell_name = cli.shell.as_deref().unwrap_or("fish");
@@ -124,9 +120,12 @@ pub async fn run(cli: Cli) -> Result<()> {
 
     match cli.command {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
-        Some(Command::Tool(args)) => run_tool(&paths, mode, args).await,
+        Some(Command::Tool(args)) => {
+            run_tool(&paths, resolve_agent_mode(&paths, mode_override)?, args).await
+        }
         Some(Command::Web(args)) => crate::web::run(&paths, args).await,
         Some(Command::Ask(args)) => {
+            let mode = resolve_agent_mode(&paths, mode_override)?;
             let input = parse_message_input_flags(args.message, args.clipb, args.web_search);
             run_chat_with_options(
                 &paths,
@@ -179,6 +178,7 @@ pub async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         None => {
+            let mode = resolve_agent_mode(&paths, mode_override)?;
             let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
             if input.message.is_empty() && !input.clipb && !input.web_search {
                 run_repl(&paths, mode, thinking_override.clone()).await
@@ -203,9 +203,56 @@ pub async fn run(cli: Cli) -> Result<()> {
     }
 }
 
+/// 读取命令行显式指定的权限模式。
+///
+/// 参数:
+/// - `cli`: 已解析的命令行参数
+///
+/// 返回:
+/// - 显式模式；未指定时返回空
+fn cli_mode_override(cli: &Cli) -> Option<AgentMode> {
+    if cli.plan {
+        Some(AgentMode::Plan)
+    } else if cli.audited {
+        Some(AgentMode::Audited)
+    } else if cli.yolo {
+        Some(AgentMode::Yolo)
+    } else {
+        None
+    }
+}
+
+/// 合并命令行覆盖与持久化默认权限模式。
+///
+/// 参数:
+/// - `paths`: Miyu 路径集合
+/// - `mode_override`: 命令行显式模式
+///
+/// 返回:
+/// - 当前 CLI 或 TUI 应采用的 Agent 模式
+fn resolve_agent_mode(paths: &MiyuPaths, mode_override: Option<AgentMode>) -> Result<AgentMode> {
+    if let Some(mode) = mode_override {
+        return Ok(mode);
+    }
+    let config = AppConfig::load_or_default(paths)?;
+    Ok(config.permission.default_mode.into())
+}
+
 async fn run_tool(paths: &MiyuPaths, mode: AgentMode, args: ToolArgs) -> Result<()> {
     let config = AppConfig::load_or_default(paths)?;
-    let registry = build_tool_registry(&config, paths, mode)?;
+    let mut registry = build_tool_registry(&config, paths, mode)?;
+    let profile_mode = mode.permission_profile_mode();
+    let audit = (mode != AgentMode::Yolo).then(|| {
+        crate::permission::PermissionAuditLog::new(
+            paths.data_dir.join("permission-audit-cli.jsonl"),
+            "cli-tool",
+        )
+    });
+    registry.set_permission_profile(crate::permission::PermissionProfile::new(
+        profile_mode,
+        crate::runtime_cwd::current_dir()?,
+        audit,
+    ));
     let output = registry
         .call(&args.name, args.arguments.as_deref().unwrap_or("{}"))
         .await?;
@@ -230,12 +277,13 @@ pub(crate) fn build_tool_registry(
     let mut registry = if config.tools.enabled {
         match mode {
             AgentMode::Yolo => tools::builtin_registry(config, paths),
+            AgentMode::Audited => tools::builtin_registry(config, paths),
             AgentMode::Plan => tools::readonly_registry(config, paths),
         }
     } else {
         tools::ToolRegistry::new()
     };
-    if mode == AgentMode::Yolo && config.tools.enabled && config.skills.enabled {
+    if mode != AgentMode::Plan && config.tools.enabled && config.skills.enabled {
         tools::register_skills(&mut registry, config, paths, true)?;
     }
     Ok(registry)
@@ -269,7 +317,7 @@ pub(crate) fn build_repl_tool_registry_for_session(
     state_dir: &std::path::Path,
 ) -> Result<tools::ToolRegistry> {
     let mut registry = build_tool_registry(config, paths, mode)?;
-    if mode == AgentMode::Yolo && config.tools.enabled {
+    if mode != AgentMode::Plan && config.tools.enabled {
         tools::register_interactive_tools(
             &mut registry,
             config,
@@ -281,6 +329,14 @@ pub(crate) fn build_repl_tool_registry_for_session(
     Ok(registry)
 }
 
+/// 将单次 CLI Agent 事件转发到流式渲染器或权限交互。
+///
+/// 参数:
+/// - `renderer`: CLI 流式渲染器
+/// - `event`: Agent 事件
+///
+/// 返回:
+/// - 事件处理结果
 fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) -> Result<()> {
     match event {
         AgentEvent::Chunk(chunk) => renderer.write_chunk(chunk),
@@ -290,6 +346,11 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
             renderer.write_tool_result(&name, ok, &output)
         }
         AgentEvent::ToolProgress { name, message } => renderer.write_tool_progress(&name, &message),
+        AgentEvent::PermissionRequested(request) => {
+            let _ = prompt_permission_request(&request)?;
+            Ok(())
+        }
+        AgentEvent::PermissionResolved { .. } => Ok(()),
         AgentEvent::CompactionStarted { turn_count } => {
             renderer.write_compaction_started(turn_count)
         }
@@ -297,4 +358,155 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
         AgentEvent::FlushContent => renderer.flush_content(),
         AgentEvent::ExternalOutput => renderer.prepare_for_external_output(),
     }
+}
+
+/// 在终端读取权限允许、拒绝或拒绝原因。
+///
+/// 参数:
+/// - `request`: 待处理权限请求
+///
+/// 返回:
+/// - 已提交给权限 Broker 的用户决定
+fn prompt_permission_request(
+    request: &crate::permission::PermissionRequest,
+) -> Result<crate::permission::PermissionDecision> {
+    let decision = read_permission_decision(request)?;
+    crate::permission::decide_permission(&request.id, decision.clone())?;
+    let status = match &decision {
+        crate::permission::PermissionDecision::Allow => "已允许一次",
+        crate::permission::PermissionDecision::Deny { .. } => "已拒绝",
+    };
+    eprintln!("\n{status}");
+    Ok(decision)
+}
+
+/// 在 TUI 原始模式中读取单键权限选择。
+///
+/// 参数:
+/// - `request`: 已经写入 transcript 的权限请求
+///
+/// 返回:
+/// - 权限决定提交结果
+fn prompt_permission_request_tui(
+    request: &crate::permission::PermissionRequest,
+    runtime: &std::cell::RefCell<&mut ReplRuntime>,
+) -> Result<()> {
+    let mut reply_draft: Option<String> = None;
+    loop {
+        let event = event::read()?;
+        if let Event::Resize(cols, rows) = event {
+            let mut runtime = runtime.borrow_mut();
+            runtime.observe_input_resize(cols, rows);
+            runtime.redraw()?;
+            continue;
+        }
+        if let Event::Paste(text) = event {
+            if let Some(draft) = reply_draft.as_mut() {
+                draft.push_str(&text);
+                runtime
+                    .borrow_mut()
+                    .update_permission_reply(&request.id, Some(draft.clone()))?;
+            }
+            continue;
+        }
+        let Event::Key(key) = event else { continue };
+        if key.kind == KeyEventKind::Release {
+            continue;
+        }
+        if let Some(draft) = reply_draft.as_mut() {
+            // 1. 回复编辑阶段直接在 transcript cell 中更新草稿
+            match key.code {
+                KeyCode::Enter => {
+                    let reply = (!draft.trim().is_empty()).then(|| draft.trim().to_string());
+                    return crate::permission::decide_permission(
+                        &request.id,
+                        crate::permission::PermissionDecision::Deny { reply },
+                    );
+                }
+                KeyCode::Esc => {
+                    reply_draft = None;
+                    runtime
+                        .borrow_mut()
+                        .update_permission_reply(&request.id, None)?;
+                }
+                KeyCode::Backspace => {
+                    draft.pop();
+                    runtime
+                        .borrow_mut()
+                        .update_permission_reply(&request.id, Some(draft.clone()))?;
+                }
+                KeyCode::Char(value) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    draft.push(value);
+                    runtime
+                        .borrow_mut()
+                        .update_permission_reply(&request.id, Some(draft.clone()))?;
+                }
+                _ => {}
+            }
+            continue;
+        }
+        // 1. 常用数字键和确认键直接提交决定
+        let decision = match key.code {
+            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                crate::permission::PermissionDecision::Allow
+            }
+            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                crate::permission::PermissionDecision::Deny { reply: None }
+            }
+            // 2. 需要回复时进入 transcript 内联编辑状态
+            KeyCode::Char('3') => {
+                reply_draft = Some(String::new());
+                runtime
+                    .borrow_mut()
+                    .update_permission_reply(&request.id, reply_draft.clone())?;
+                continue;
+            }
+            _ => continue,
+        };
+        // 3. Broker 接收决定后，Agent 会发送 permission.resolved 更新原 cell
+        return crate::permission::decide_permission(&request.id, decision);
+    }
+}
+
+/// 从标准输入读取权限决定和可选拒绝回复。
+///
+/// 参数:
+/// - `request`: 待处理权限请求
+///
+/// 返回:
+/// - 用户选择的权限决定
+fn read_permission_decision(
+    request: &crate::permission::PermissionRequest,
+) -> Result<crate::permission::PermissionDecision> {
+    // 1. 先输出语义化详情和三个稳定选择项
+    eprintln!("\n{}", crate::render::render_permission_prompt(request));
+    eprint!("选择 [1-3]，也可直接输入拒绝原因: ");
+    io::stderr().flush()?;
+    let mut answer = String::new();
+    io::stdin().read_line(&mut answer)?;
+    let answer = answer.trim();
+    // 2. 兼容编号、英文快捷键和直接输入拒绝原因
+    let decision = if answer == "1"
+        || answer.eq_ignore_ascii_case("y")
+        || answer.eq_ignore_ascii_case("yes")
+    {
+        crate::permission::PermissionDecision::Allow
+    } else if answer == "3" {
+        eprint!("告诉 Miyu 应如何调整: ");
+        io::stderr().flush()?;
+        let mut reply = String::new();
+        io::stdin().read_line(&mut reply)?;
+        crate::permission::PermissionDecision::Deny {
+            reply: (!reply.trim().is_empty()).then(|| reply.trim().to_string()),
+        }
+    } else {
+        crate::permission::PermissionDecision::Deny {
+            reply: (!answer.is_empty()
+                && answer != "2"
+                && !answer.eq_ignore_ascii_case("n")
+                && !answer.eq_ignore_ascii_case("no"))
+            .then(|| answer.to_string()),
+        }
+    };
+    Ok(decision)
 }

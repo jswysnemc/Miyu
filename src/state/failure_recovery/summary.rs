@@ -60,6 +60,7 @@ fn kind_label(kind: &FailureKind) -> &'static str {
         FailureKind::CompactionLlmFailed => "压缩模型失败",
         FailureKind::EmptySummary => "空压缩摘要",
         FailureKind::CompactionOverBudget => "压缩请求超预算",
+        FailureKind::CompactionMirrorFailed => "压缩兼容镜像写入失败",
         FailureKind::ProviderOverflow => "Provider 上下文溢出",
         FailureKind::OverflowRetryFailed => "溢出重试失败",
         FailureKind::StaleRunningTurn => "陈旧运行轮次",

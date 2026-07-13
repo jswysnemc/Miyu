@@ -9,6 +9,7 @@ pub const REPL_COMMANDS: &[&str] = &[
     "/config",
     "/ps",
     "/thinking",
+    "/audit",
     "/plan",
     "/yolo",
     "/undo",

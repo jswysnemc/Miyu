@@ -67,7 +67,7 @@ export function SystemUsage() {
                 <div className="context-usage-track"><span style={{ width: `${contextPercent}%` }} /></div>
                 <small>{formatTokenCount(usage.data.session.context_prompt_tokens)} / {formatTokenCount(usage.data.session.context_window_tokens)} token</small>
                 <div className="context-compaction-actions">
-                  <span>{usage.data.session.checkpoint_count > 0 ? `已压缩 ${usage.data.session.compacted_turns} 轮` : "尚未压缩"}</span>
+                  <span>{usage.data.session.checkpoint_count > 0 ? `已压缩 ${usage.data.session.compacted_turns} 轮 · ${formatCompactionReason(usage.data.session.latest_checkpoint_reason)}` : "尚未压缩"}</span>
                   <button type="button" onClick={() => compact.mutate()} disabled={compact.isPending || usage.data.runtime.active_run}>
                     <Archive size={13} />
                     {compact.isPending ? "正在压缩" : "手动压缩"}
@@ -75,6 +75,7 @@ export function SystemUsage() {
                 </div>
                 {compact.data && <p className="context-compaction-result">{compact.data.message}</p>}
                 {compact.error && <p className="usage-error">{compact.error.message}</p>}
+                {usage.data.session.compaction_warning && <p className="context-compaction-result">{usage.data.session.compaction_warning}</p>}
               </section>
               <div className="usage-metric-grid">
                 <UsageMetric icon={<Activity size={14} />} label="累计 Token" value={formatTokenCount(usage.data.session.total_tokens)} detail={`${usage.data.session.requests} 次请求`} />
@@ -122,6 +123,18 @@ export function formatTokenCount(value: number): string {
  */
 function stripTrailingZero(value: number): string {
   return value.toFixed(1).replace(/\.0$/, "");
+}
+
+/**
+ * 格式化最近一次压缩原因。
+ *
+ * @param reason 后端 checkpoint 原因
+ * @returns 中文原因标签
+ */
+function formatCompactionReason(reason?: "auto" | "manual" | "legacy" | null): string {
+  if (reason === "manual") return "手动";
+  if (reason === "legacy") return "旧记录迁移";
+  return "自动";
 }
 
 /**

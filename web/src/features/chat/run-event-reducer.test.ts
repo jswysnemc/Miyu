@@ -43,4 +43,68 @@ describe("runEventReducer", () => {
       expect.objectContaining({ type: "compaction", status: "completed", turnCount: 8, applied: true })
     ]);
   });
+
+  it("keeps a write tool paused until the user handles its permission request", () => {
+    const request = {
+      id: "permission",
+      session_id: "session",
+      tool: "edit_file",
+      arguments: "{\"path\":\"src/main.rs\"}"
+    };
+    const waiting = runEventReducer(initialRunState, {
+      type: "event",
+      event: event("permission.requested", request)
+    });
+
+    expect(waiting.status).toBe("waiting_permission");
+    expect(waiting.parts).toEqual([
+      expect.objectContaining({ type: "permission", request })
+    ]);
+  });
+
+  it("does not duplicate a permission card after an SSE replay", () => {
+    const request = {
+      id: "permission",
+      session_id: "session",
+      tool: "run_command",
+      arguments: "{\"command\":\"cargo test\"}"
+    };
+    const first = runEventReducer(initialRunState, {
+      type: "event",
+      event: event("permission.requested", request)
+    });
+    const replayed = runEventReducer(first, {
+      type: "event",
+      event: event("permission.requested", request)
+    });
+
+    expect(replayed.parts.filter((part) => part.type === "permission")).toHaveLength(1);
+  });
+
+  it("keeps a resolved permission decision after an SSE replay", () => {
+    const request = {
+      id: "permission",
+      session_id: "session",
+      tool: "edit_file",
+      arguments: "{\"path\":\"src/main.rs\"}"
+    };
+    const waiting = runEventReducer(initialRunState, {
+      type: "event",
+      event: event("permission.requested", request)
+    });
+    const resolved = runEventReducer(waiting, {
+      type: "event",
+      event: event("permission.resolved", {
+        request_id: request.id,
+        decision: { decision: "deny", reply: "保留该文件" }
+      })
+    });
+
+    expect(resolved.parts).toEqual([
+      expect.objectContaining({
+        type: "permission",
+        decision: { decision: "deny", reply: "保留该文件" }
+      })
+    ]);
+  });
 });

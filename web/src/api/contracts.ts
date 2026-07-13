@@ -1,3 +1,30 @@
+export type RunMode = "plan" | "audited" | "yolo";
+
+export type PermissionConfig = {
+  default_mode: RunMode;
+};
+
+export type PermissionAuditEvent = {
+  timestamp_ms: number;
+  session_id: string;
+  mode: RunMode;
+  tool: string;
+  decision: "requested" | "approved" | "allowed" | "denied" | "completed" | "failed";
+  arguments: Record<string, unknown>;
+  detail?: string | null;
+};
+
+export type PermissionRequest = {
+  id: string;
+  session_id: string;
+  tool: string;
+  arguments: string;
+};
+
+export type PermissionDecision =
+  | { decision: "allow" }
+  | { decision: "deny"; reply?: string | null };
+
 export type Workspace = {
   id: string;
   name: string;
@@ -64,6 +91,7 @@ export type TimelineToolEntry = {
   original_chars?: number | null;
   created_at: string;
   completed_at?: string | null;
+  permission?: PermissionDecision | null;
 };
 
 export type SessionTimelineTurn = {
@@ -208,6 +236,7 @@ export type GatewayConfig = {
 export type AppConfig = {
   active_provider: string;
   providers: ProviderConfig[];
+  permission?: PermissionConfig;
   gateways: GatewayConfig;
   agents?: AgentProfileConfig[];
   default_agent?: string | null;
@@ -342,6 +371,8 @@ export type SystemUsage = {
     checkpoint_count: number;
     compacted_turns: number;
     latest_checkpoint_at?: string | null;
+    latest_checkpoint_reason?: "auto" | "manual" | "legacy" | null;
+    compaction_warning?: string | null;
   };
   process: {
     pid: number;

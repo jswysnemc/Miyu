@@ -7,6 +7,7 @@ mod prompt;
 mod selector;
 mod storage;
 mod store;
+mod validation;
 
 pub use budget::should_compact_for_context_chars;
 pub use estimate::{estimate_chat_messages_chars, estimate_turn_context_chars};
@@ -16,3 +17,4 @@ pub use prompt::summary_context_message;
 pub use selector::select_compaction_after_context_trigger;
 pub use storage::{clear_summary, load_summary, save_summary};
 pub use store::CompactionApplyOutcome;
+pub(crate) use validation::{summary_char_limit, validate_summary};

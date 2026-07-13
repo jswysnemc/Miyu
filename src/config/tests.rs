@@ -8,6 +8,23 @@ fn provider_config_can_be_saved_without_active_model() {
     assert!(config.validate().is_ok());
 }
 
+/// 验证旧版应用配置会补齐终端权限默认值。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
+#[test]
+fn legacy_app_config_defaults_terminal_permission_mode_to_yolo() {
+    let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+    value.as_object_mut().unwrap().remove("permission");
+
+    let config: AppConfig = serde_json::from_value(value).unwrap();
+
+    assert_eq!(config.permission.default_mode, DefaultPermissionMode::Yolo);
+}
+
 #[test]
 fn provider_model_choices_ignore_unconfigured_models() {
     let mut config = AppConfig::default();

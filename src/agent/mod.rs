@@ -1,8 +1,11 @@
 mod compaction;
 mod conversation;
+mod event;
 mod message_context;
+mod mode;
 mod model_context;
 mod recovery;
+mod system_prompt;
 mod tool_history;
 mod tool_visibility;
 mod turn_orchestration;
@@ -10,7 +13,7 @@ mod turn_orchestration;
 use crate::config::AppConfig;
 use crate::llm::{
     ChatMessage, ChatResult, ChatStreamChunk, ChatStreamEvent, ChatStreamKind,
-    OpenAiCompatibleClient, ToolCallStreamProgress,
+    OpenAiCompatibleClient,
 };
 use crate::memory::MemoryStore;
 use crate::paths::MiyuPaths;
@@ -24,57 +27,13 @@ use crate::tools::{self, memes, ToolPermission, ToolRegistry};
 use anyhow::{bail, Result};
 use message_context::{runtime_context_message, system_messages_first};
 use model_context::selected_model_label;
+use system_prompt::build_base_system_prompt;
 use tokio::sync::mpsc;
+use tool_history::extract_persistable_tool_report;
 use tool_visibility::ToolVisibility;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-pub enum AgentMode {
-    Yolo,
-    Plan,
-}
-
-impl AgentMode {
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Yolo => "YOLO",
-            Self::Plan => "PLAN",
-        }
-    }
-
-    fn reminder(self) -> &'static str {
-        match self {
-            Self::Yolo => crate::prompts::YOLO_REMINDER,
-            Self::Plan => crate::prompts::PLAN_REMINDER,
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum AgentEvent {
-    Chunk(ChatStreamChunk),
-    ToolCall {
-        name: String,
-        arguments: String,
-    },
-    ToolCallProgress(ToolCallStreamProgress),
-    ToolResult {
-        name: String,
-        ok: bool,
-        output: String,
-    },
-    ToolProgress {
-        name: String,
-        message: String,
-    },
-    CompactionStarted {
-        turn_count: usize,
-    },
-    CompactionFinished {
-        applied: bool,
-    },
-    FlushContent,
-    ExternalOutput,
-}
+pub use event::AgentEvent;
+pub use mode::AgentMode;
 
 pub struct Agent {
     state: StateStore,
@@ -130,7 +89,7 @@ impl Agent {
         let tools_enabled = config.tools.enabled && config.active_model_tools_enabled()?;
         let base_system_prompt =
             build_base_system_prompt(&config, paths, tools_enabled, extra_system_prompt)?;
-        if mode == AgentMode::Yolo {
+        if mode != AgentMode::Plan {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
         }
@@ -211,7 +170,7 @@ impl Agent {
             self.config.tools.enabled && self.config.active_model_tools_enabled()?;
         self.base_system_prompt =
             build_base_system_prompt(&self.config, &self.paths, self.tools_enabled, None)?;
-        if self.mode == AgentMode::Yolo {
+        if self.mode != AgentMode::Plan {
             self.state
                 .reset_if_prompt_changed(&self.base_system_prompt)?;
             self.state.recover_stale_turns()?;
@@ -273,7 +232,7 @@ impl Agent {
             self.restore_loaded_tools(&loaded);
         }
         self.last_dynamic_sources.clear();
-        if self.mode == AgentMode::Yolo {
+        if self.mode != AgentMode::Plan {
             self.state
                 .reset_if_prompt_changed(&self.base_system_prompt)?;
             self.state.recover_stale_turns()?;
@@ -331,6 +290,10 @@ impl Agent {
         messages: &mut Vec<ChatMessage>,
         used_tools: &mut Vec<String>,
         persisted_tool_reports: &mut Vec<(String, String)>,
+        input: &str,
+        image_urls: &[String],
+        association_prompt: Option<&str>,
+        auto_meme_reminder: Option<&str>,
         on_event: &mut F,
         perf: &mut PerfTrace,
     ) -> Result<ChatResult>
@@ -338,7 +301,7 @@ impl Agent {
         F: FnMut(AgentEvent) -> Result<()>,
     {
         let mut tool_round = 0usize;
-        let mut tool_event_seq = 0usize;
+        let mut tool_event_seq = self.state.tool_call_count_for_turn(turn_id)?;
         let mut todo_reminder = self
             .tools
             .contains("todo")
@@ -371,6 +334,18 @@ impl Agent {
                 });
             }
             tool_round += 1;
+            self.compact_between_tool_rounds(
+                tool_round,
+                turn_id,
+                messages,
+                input,
+                image_urls,
+                association_prompt,
+                auto_meme_reminder,
+                on_event,
+                perf,
+            )
+            .await?;
             let definitions = if self.tools_enabled {
                 self.tool_visibility.definitions(&self.tools)
             } else {
@@ -448,6 +423,54 @@ impl Agent {
                         "Plan mode blocked non-read-only tool: {}",
                         call.function.name
                     );
+                }
+                if self.mode == AgentMode::Audited
+                    && self.tools.permission(&call.function.name)? == ToolPermission::Writes
+                {
+                    self.tools.record_permission_requested(
+                        &call.function.name,
+                        &call.function.arguments,
+                    )?;
+                    let (request, decision) = crate::permission::request_permission(
+                        self.session_id(),
+                        &call.function.name,
+                        &call.function.arguments,
+                    );
+                    let request_id = request.id.clone();
+                    on_event(AgentEvent::PermissionRequested(request))?;
+                    let decision = decision.await?;
+                    on_event(AgentEvent::PermissionResolved {
+                        request_id,
+                        decision: decision.clone(),
+                    })?;
+                    match decision {
+                        crate::permission::PermissionDecision::Allow => {
+                            self.tools.record_permission_approved(
+                                &call.function.name,
+                                &call.function.arguments,
+                            )?;
+                        }
+                        crate::permission::PermissionDecision::Deny { reply } => {
+                            self.tools.record_permission_denied(
+                                &call.function.name,
+                                &call.function.arguments,
+                                reply.as_deref(),
+                            )?;
+                            let output = reply
+                                .filter(|value| !value.trim().is_empty())
+                                .unwrap_or_else(|| "用户拒绝了此工具调用".to_string());
+                            self.record_tool_result_completed(
+                                turn_id, &call, false, &output, &output,
+                            )?;
+                            on_event(AgentEvent::ToolResult {
+                                name: call.function.name.clone(),
+                                ok: false,
+                                output: output.clone(),
+                            })?;
+                            messages.push(ChatMessage::tool(call.id, output));
+                            continue;
+                        }
+                    }
                 }
                 if self.tool_visibility.is_loader_call(&call.function.name) {
                     let output = match self.tool_visibility.load_from_arguments(
@@ -675,7 +698,7 @@ impl Agent {
         Ok(project_provider_base_context_projection(
             &epoch.baseline,
             Some(self.mode.reminder()),
-            self.selected_model_label()?.as_deref(),
+            selected_model_label(&self.config)?.as_deref(),
             loaded_tools_context.as_deref(),
             compaction_summary_context.as_deref(),
             projected_history.messages,
@@ -683,71 +706,4 @@ impl Agent {
             &runtime_context,
         ))
     }
-
-    /// 构造当前 provider/model 标签。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 当前 provider/model 标签
-    fn selected_model_label(&self) -> Result<Option<String>> {
-        selected_model_label(&self.config)
-    }
-}
-
-/// 组装基础系统提示（含 skills 目录与可选额外提示）。
-///
-/// 参数:
-/// - `config`: 应用配置
-/// - `paths`: Miyu 路径
-/// - `tools_enabled`: 是否启用工具（决定是否注入 skills 提示）
-/// - `extra_system_prompt`: 额外系统提示
-///
-/// 返回:
-/// - 基础系统提示文本
-fn build_base_system_prompt(
-    config: &AppConfig,
-    paths: &MiyuPaths,
-    tools_enabled: bool,
-    extra_system_prompt: Option<&str>,
-) -> Result<String> {
-    let mut base_system_prompt = config.system_prompt(paths)?;
-    if tools_enabled && config.skills.enabled {
-        let prompt = if config.tools.progressive_loading_enabled {
-            tools::skills_catalog_prompt(config, paths)?
-        } else {
-            tools::skills_prompt(config, paths)?
-        };
-        if !prompt.trim().is_empty() {
-            base_system_prompt.push_str("\n\n");
-            base_system_prompt.push_str(&prompt);
-        }
-    }
-    if let Some(prompt) = extra_system_prompt
-        .map(str::trim)
-        .filter(|prompt| !prompt.is_empty())
-    {
-        base_system_prompt.push_str("\n\n");
-        base_system_prompt.push_str(prompt);
-    }
-    Ok(base_system_prompt)
-}
-
-fn extract_persistable_tool_report(tool_name: &str, output: &str) -> Option<String> {
-    let field = match tool_name {
-        "linux_game_compatibility" => "final_report",
-        "linux_input_method_diagnose" | "deep_diagnose" | "deep_research" => "final_answer",
-        _ => return None,
-    };
-    serde_json::from_str::<serde_json::Value>(output)
-        .ok()
-        .and_then(|value| {
-            value
-                .get(field)
-                .and_then(serde_json::Value::as_str)
-                .map(str::trim)
-                .map(str::to_string)
-        })
-        .filter(|report| !report.is_empty())
 }

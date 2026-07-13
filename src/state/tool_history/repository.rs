@@ -11,6 +11,23 @@ use rusqlite::{params, OptionalExtension};
 use sha2::{Digest, Sha256};
 
 impl StateStore {
+    /// 返回指定轮次已经持久化的工具调用数量。
+    ///
+    /// 参数:
+    /// - `turn_id`: 轮次标识
+    ///
+    /// 返回:
+    /// - 已记录工具调用数量
+    pub(crate) fn tool_call_count_for_turn(&self, turn_id: &str) -> Result<usize> {
+        let conn = self.conv_db.conn.lock().unwrap();
+        let count: i64 = conn.query_row(
+            "SELECT COUNT(*) FROM tool_calls WHERE session_id = ?1 AND turn_id = ?2",
+            params![self.session_id, turn_id],
+            |row| row.get(0),
+        )?;
+        Ok(count as usize)
+    }
+
     /// 记录工具调用开始。
     ///
     /// 参数:

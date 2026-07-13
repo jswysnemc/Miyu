@@ -1,6 +1,7 @@
 use super::agents::SubagentConfig;
 use super::model::*;
 use super::paths::persona_scope_name;
+use super::permission::PermissionConfig;
 use crate::default_models::OPENCODE_PROVIDER_ID;
 use std::collections::HashMap;
 
@@ -9,6 +10,7 @@ impl Default for AppConfig {
         Self {
             active_provider: OPENCODE_PROVIDER_ID.to_string(),
             providers: ProviderConfig::default_templates(),
+            permission: PermissionConfig::default(),
             context: ContextConfig::default(),
             tools: ToolsConfig::default(),
             skills: SkillsConfig::default(),
@@ -35,43 +37,6 @@ impl Default for PromptConfig {
             user_identity_file: default_user_identity_file(),
             active_persona: String::new(),
             active_identity: String::new(),
-        }
-    }
-}
-
-impl Default for GatewayConfig {
-    fn default() -> Self {
-        Self {
-            qq: QqGatewayConfig::default(),
-            weixin: WeixinGatewayConfig::default(),
-        }
-    }
-}
-
-impl Default for QqGatewayConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            transport: default_qq_gateway_transport(),
-            listen: default_qq_gateway_listen(),
-            base_url: default_qq_gateway_base_url(),
-            token: String::new(),
-            app_id: String::new(),
-            client_secret: String::new(),
-        }
-    }
-}
-
-impl Default for WeixinGatewayConfig {
-    fn default() -> Self {
-        Self {
-            enabled: false,
-            base_url: default_weixin_gateway_base_url(),
-            cdn_base_url: default_weixin_gateway_cdn_base_url(),
-            bot_type: default_weixin_gateway_bot_type(),
-            token: String::new(),
-            account: String::new(),
-            bot_agent: String::new(),
         }
     }
 }

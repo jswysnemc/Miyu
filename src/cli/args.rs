@@ -9,6 +9,14 @@ pub struct Cli {
     #[arg(long)]
     pub plan: bool,
 
+    /// 启用带审计日志和工作区沙盒的执行模式
+    #[arg(long, conflicts_with_all = ["plan", "yolo"])]
+    pub audited: bool,
+
+    /// 显式启用不询问权限的执行模式
+    #[arg(long, conflicts_with_all = ["plan", "audited"])]
+    pub yolo: bool,
+
     #[arg(short = 'c', long = "clipb")]
     pub clipb: bool,
 
@@ -269,6 +277,36 @@ mod tests {
                 scope: None
             }))
         ));
+    }
+
+    /// 验证可以显式覆盖配置中的默认权限模式为 YOLO。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn parses_explicit_yolo_mode() {
+        let cli = Cli::try_parse_from(["miyu", "--yolo", "inspect"]).unwrap();
+
+        assert!(cli.yolo);
+        assert!(!cli.plan);
+        assert!(!cli.audited);
+    }
+
+    /// 验证权限模式覆盖参数互斥。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn rejects_conflicting_permission_mode_flags() {
+        let result = Cli::try_parse_from(["miyu", "--yolo", "--audited", "inspect"]);
+
+        assert!(result.is_err());
     }
 }
 

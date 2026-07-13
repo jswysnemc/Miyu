@@ -120,16 +120,6 @@ fn format_turn_for_summary(turn: &Turn) -> String {
         ),
         format!("<user>\n{}\n</user>", turn.user_content.trim()),
     ];
-    if let Some(reasoning) = turn
-        .assistant_reasoning
-        .as_deref()
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-    {
-        parts.push(format!(
-            "<assistant-reasoning>\n{reasoning}\n</assistant-reasoning>"
-        ));
-    }
     parts.push(format!(
         "<assistant>\n{}\n</assistant>",
         turn.assistant_content.trim()
@@ -205,5 +195,16 @@ mod tests {
         let prompt = build_summary_prompt(None, &[turn]);
 
         assert!(prompt.contains("status=\"running\""));
+    }
+
+    #[test]
+    fn prompt_excludes_private_reasoning_from_compaction_input() {
+        let mut turn = test_turn();
+        turn.assistant_reasoning = Some("private chain of thought".to_string());
+
+        let prompt = build_summary_prompt(None, &[turn]);
+
+        assert!(!prompt.contains("private chain of thought"));
+        assert!(!prompt.contains("assistant-reasoning"));
     }
 }

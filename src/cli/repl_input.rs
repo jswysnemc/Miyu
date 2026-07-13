@@ -144,10 +144,10 @@ pub(super) fn read_repl_input(
                             }
                             slash_selection = 0;
                         } else {
-                            mode = if mode == AgentMode::Yolo {
-                                AgentMode::Plan
-                            } else {
-                                AgentMode::Yolo
+                            mode = match mode {
+                                AgentMode::Yolo => AgentMode::Audited,
+                                AgentMode::Audited => AgentMode::Plan,
+                                AgentMode::Plan => AgentMode::Yolo,
                             };
                             chrome.set_mode(mode);
                         }

@@ -5,8 +5,21 @@ use std::io;
 
 use super::form::{parse_bool_field, run_form, Field};
 
+/// 编辑 CLI 与 TUI 共用的运行、权限和显示设置。
+///
+/// 参数:
+/// - `stdout`: 终端标准输出
+/// - `config`: 待更新应用配置
+///
+/// 返回:
+/// - 表单退出或保存结果
 pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> Result<()> {
     let mut fields = vec![
+        Field::new(
+            t("Default terminal permission mode", "终端默认权限模式"),
+            config.permission.default_mode.as_str().to_string(),
+        )
+        .choices(&["yolo", "audited", "plan"]),
         Field::boolean(t("Tools enabled", "工具启用"), config.tools.enabled),
         Field::new(
             t("Tool max rounds", "工具最大轮数"),
@@ -88,23 +101,33 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         t(" GLOBAL SETTINGS ", " 全局参数设置 "),
         &mut fields,
     )? {
-        config.tools.enabled = parse_bool_field(&fields[0].value)?;
-        config.tools.max_rounds = fields[1].value.trim().parse::<usize>()?;
-        config.tools.command_shell = fields[2].value.trim().to_string();
-        config.tools.progressive_loading_enabled = parse_bool_field(&fields[3].value)?;
-        config.tools.background_commands_enabled = parse_bool_field(&fields[4].value)?;
-        config.tools.background_command_timeout_seconds = fields[5].value.trim().parse::<u64>()?;
-        config.tools.background_command_log_max_bytes = fields[6].value.trim().parse::<u64>()?;
+        let [permission_mode, tools_enabled, tool_max_rounds, command_shell, progressive_loading, background_commands, background_timeout, background_log_max, background_stop_grace, skills_enabled, skill_commands, reasoning, tool_calls, readable_names, wait_model, wait_thinking, transcript_rows] =
+            fields.as_slice()
+        else {
+            unreachable!("global settings field layout must remain complete")
+        };
+        config.permission.default_mode =
+            crate::config::DefaultPermissionMode::parse_or_default(&permission_mode.value);
+        config.tools.enabled = parse_bool_field(&tools_enabled.value)?;
+        config.tools.max_rounds = tool_max_rounds.value.trim().parse::<usize>()?;
+        config.tools.command_shell = command_shell.value.trim().to_string();
+        config.tools.progressive_loading_enabled = parse_bool_field(&progressive_loading.value)?;
+        config.tools.background_commands_enabled = parse_bool_field(&background_commands.value)?;
+        config.tools.background_command_timeout_seconds =
+            background_timeout.value.trim().parse::<u64>()?;
+        config.tools.background_command_log_max_bytes =
+            background_log_max.value.trim().parse::<u64>()?;
         config.tools.background_command_stop_grace_seconds =
-            fields[7].value.trim().parse::<u64>()?;
-        config.skills.enabled = parse_bool_field(&fields[8].value)?;
-        config.skills.allow_command_execution = parse_bool_field(&fields[9].value)?;
-        config.display.reasoning = fields[10].value.trim().to_string();
-        config.display.tool_calls = fields[11].value.trim().to_string();
-        config.display.readable_tool_names = parse_bool_field(&fields[12].value)?;
-        config.display.wait_show_model = parse_bool_field(&fields[13].value)?;
-        config.display.wait_show_thinking_level = parse_bool_field(&fields[14].value)?;
-        config.display.repl_transcript_row_cap = fields[15].value.trim().parse::<usize>()?.max(1);
+            background_stop_grace.value.trim().parse::<u64>()?;
+        config.skills.enabled = parse_bool_field(&skills_enabled.value)?;
+        config.skills.allow_command_execution = parse_bool_field(&skill_commands.value)?;
+        config.display.reasoning = reasoning.value.trim().to_string();
+        config.display.tool_calls = tool_calls.value.trim().to_string();
+        config.display.readable_tool_names = parse_bool_field(&readable_names.value)?;
+        config.display.wait_show_model = parse_bool_field(&wait_model.value)?;
+        config.display.wait_show_thinking_level = parse_bool_field(&wait_thinking.value)?;
+        config.display.repl_transcript_row_cap =
+            transcript_rows.value.trim().parse::<usize>()?.max(1);
     }
     Ok(())
 }

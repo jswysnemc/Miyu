@@ -7,6 +7,8 @@ use axum::{Json, Router};
 use serde::{Deserialize, Serialize};
 use std::path::Path as FilePath;
 
+mod permission_timeline;
+
 #[derive(Serialize)]
 struct SessionResponse {
     id: String,
@@ -75,7 +77,40 @@ pub(super) fn routes() -> Router<WebAppState> {
         .route("/api/sessions/:id/switch", post(switch))
         .route("/api/sessions/:id/messages", get(messages))
         .route("/api/sessions/:id/timeline", get(timeline))
+        .route("/api/sessions/:id/permission-audit", get(permission_audit))
         .route("/api/sessions/:id/compact", post(compact))
+}
+
+/// 返回会话最近的权限审计事件。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `id`: 会话标识
+/// - `query`: 复用历史记录数量限制
+///
+/// 返回:
+/// - JSON 审计事件列表
+async fn permission_audit(
+    State(state): State<WebAppState>,
+    Path(id): Path<String>,
+    Query(query): Query<HistoryQuery>,
+) -> WebResult<Json<Vec<serde_json::Value>>> {
+    let store = StateStore::for_session(&state.paths, &id).map_err(WebError::from)?;
+    let path = store.state_dir().join("permission-audit.jsonl");
+    if !path.exists() {
+        return Ok(Json(Vec::new()));
+    }
+    let content = std::fs::read_to_string(path)
+        .map_err(anyhow::Error::from)
+        .map_err(WebError::from)?;
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    let events = content
+        .lines()
+        .rev()
+        .take(limit)
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .collect::<Vec<_>>();
+    Ok(Json(events))
 }
 
 /// 返回按工作区分组的全部会话。
@@ -272,8 +307,10 @@ async fn timeline(
 ) -> WebResult<Json<Vec<crate::state::SessionTimelineTurn>>> {
     let store = StateStore::for_session(&state.paths, &id)
         .map_err(|error| WebError::not_found(error.to_string()))?;
-    let timeline = store
+    let mut timeline = store
         .session_timeline(query.limit.unwrap_or(200).clamp(1, 2000))
+        .map_err(WebError::from)?;
+    permission_timeline::attach_permission_decisions(&store, &mut timeline)
         .map_err(WebError::from)?;
     Ok(Json(timeline))
 }

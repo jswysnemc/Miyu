@@ -26,6 +26,15 @@ pub struct TimelineToolEntry {
     pub original_chars: Option<usize>,
     pub created_at: String,
     pub completed_at: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub permission: Option<TimelinePermissionDecision>,
+}
+
+/// 历史工具调用对应的权限决定。
+#[derive(Debug, Clone, Serialize)]
+pub struct TimelinePermissionDecision {
+    pub decision: String,
+    pub reply: Option<String>,
 }
 
 /// 按轮次组织的会话时间线。
@@ -83,6 +92,7 @@ impl StateStore {
                             .map(|result| result.original_chars),
                         created_at: exchange.call.created_at,
                         completed_at: exchange.result.map(|result| result.completed_at),
+                        permission: None,
                     })
                     .collect();
                 Ok(SessionTimelineTurn {

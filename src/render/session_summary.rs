@@ -25,7 +25,7 @@ pub fn print_session_summary(snapshot: &SessionSnapshot) -> Result<()> {
 /// - 仅包含关键上下文和会话标识的摘要
 pub fn render_session_summary(snapshot: &SessionSnapshot) -> String {
     observe_non_display_fields(snapshot);
-    format!(
+    let mut output = format!(
         "▸ {}: {} / {} {} ({:.1}%) · {}: {}",
         t("Context", "上下文"),
         format_k(snapshot.context_prompt_tokens),
@@ -34,7 +34,31 @@ pub fn render_session_summary(snapshot: &SessionSnapshot) -> String {
         snapshot.context_token_ratio * 100.0,
         t("Session ID", "会话 ID"),
         snapshot.session_id
-    )
+    );
+    if snapshot.checkpoint_count > 0 {
+        let reason = match snapshot.latest_checkpoint_reason.as_deref() {
+            Some("manual") => t("manual", "手动"),
+            Some("legacy") => t("legacy migration", "旧记录迁移"),
+            _ => t("automatic", "自动"),
+        };
+        output.push_str(&format!(
+            " · {}: {} {} / {} checkpoint ({reason})",
+            t("Compaction", "压缩"),
+            snapshot.checkpoint_covered_turns,
+            t("turns", "轮"),
+            snapshot.checkpoint_count,
+        ));
+    }
+    if snapshot.checkpoint_count >= 2 {
+        output.push_str(&format!(
+            "\n  {}",
+            t(
+                "This thread has been compacted multiple times; start a new focused thread if details become inaccurate.",
+                "当前会话已经多次压缩；如果细节开始失真，请新建聚焦会话继续。"
+            )
+        ));
+    }
+    output
 }
 
 /// 读取快照中当前不展示的诊断字段。
@@ -57,6 +81,7 @@ fn observe_non_display_fields(snapshot: &SessionSnapshot) {
         snapshot.checkpoint_covered_turns,
         snapshot.tail_turns,
         snapshot.latest_checkpoint_at.as_deref(),
+        snapshot.latest_checkpoint_reason.as_deref(),
         snapshot.usage.requests,
         snapshot.usage.prompt_tokens,
         snapshot.usage.completion_tokens,

@@ -176,6 +176,22 @@ impl EventAssembler {
                 }
                 events
             }
+            AgentEvent::PermissionRequested(request) => {
+                let mut events = self.status_event("waiting_permission");
+                events.push(self.event("permission.requested", json!(request)));
+                events
+            }
+            AgentEvent::PermissionResolved {
+                request_id,
+                decision,
+            } => {
+                let mut events = self.status_event("working");
+                events.push(self.event(
+                    "permission.resolved",
+                    json!({ "request_id": request_id, "decision": decision }),
+                ));
+                events
+            }
             AgentEvent::CompactionStarted { turn_count } => {
                 vec![self.event("compaction.started", json!({ "turn_count": turn_count }))]
             }
@@ -308,6 +324,33 @@ fn tool_can_mutate_workspace(name: &str) -> bool {
 mod tests {
     use super::*;
     use crate::llm::ToolCallStreamProgress;
+
+    /// 验证权限决定会作为可重放事件发送到 Web 消息流。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn emits_permission_resolution_for_stream_replay() {
+        let mut assembler = EventAssembler::new("run", "workspace", "session");
+
+        let events = assembler.map(RunnerEvent::Agent(AgentEvent::PermissionResolved {
+            request_id: "permission".to_string(),
+            decision: crate::permission::PermissionDecision::Deny {
+                reply: Some("保留文件".to_string()),
+            },
+        }));
+        let resolved = events
+            .iter()
+            .find(|event| event.kind == "permission.resolved")
+            .unwrap();
+
+        assert_eq!(resolved.payload["request_id"], "permission");
+        assert_eq!(resolved.payload["decision"]["decision"], "deny");
+        assert_eq!(resolved.payload["decision"]["reply"], "保留文件");
+    }
 
     #[test]
     fn keeps_tool_progress_and_result_on_one_tool_id() {

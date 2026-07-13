@@ -1,4 +1,5 @@
 use crate::llm::{FunctionDefinition, ToolDefinition};
+use crate::permission::PermissionProfile;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeSet;
@@ -115,6 +116,7 @@ impl ToolSpec {
 #[derive(Default, Clone)]
 pub struct ToolRegistry {
     tools: HashMap<String, ToolSpec>,
+    permission_profile: Option<PermissionProfile>,
 }
 
 impl ToolRegistry {
@@ -124,6 +126,17 @@ impl ToolRegistry {
 
     pub fn register(&mut self, tool: ToolSpec) {
         self.tools.insert(tool.name.clone(), tool);
+    }
+
+    /// 绑定当前会话使用的权限配置。
+    ///
+    /// 参数:
+    /// - `profile`: 权限模式、工作区和审计日志
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn set_permission_profile(&mut self, profile: PermissionProfile) {
+        self.permission_profile = Some(profile);
     }
 
     pub fn definitions(&self) -> Vec<ToolDefinition> {
@@ -206,17 +219,53 @@ impl ToolRegistry {
         Ok(tool.permission)
     }
 
+    /// 记录工具权限请求已经展示给用户。
+    pub(crate) fn record_permission_requested(&self, name: &str, arguments: &str) -> Result<()> {
+        let arguments = parse_arguments(arguments)?;
+        if let Some(profile) = &self.permission_profile {
+            profile.record_requested(local_tool_name(name), &arguments);
+        }
+        Ok(())
+    }
+
+    /// 记录用户已经批准工具权限。
+    ///
+    /// 参数:
+    /// - `name`: 工具名称
+    /// - `arguments`: 原始工具参数
+    ///
+    /// 返回:
+    /// - 参数解析和审计写入结果
+    pub(crate) fn record_permission_approved(&self, name: &str, arguments: &str) -> Result<()> {
+        let arguments = parse_arguments(arguments)?;
+        if let Some(profile) = &self.permission_profile {
+            profile.record_approved(local_tool_name(name), &arguments);
+        }
+        Ok(())
+    }
+
+    /// 记录用户拒绝工具权限及可选回复。
+    pub(crate) fn record_permission_denied(
+        &self,
+        name: &str,
+        arguments: &str,
+        reply: Option<&str>,
+    ) -> Result<()> {
+        let arguments = parse_arguments(arguments)?;
+        if let Some(profile) = &self.permission_profile {
+            profile.record_denied(local_tool_name(name), &arguments, reply);
+        }
+        Ok(())
+    }
+
     pub async fn call(&self, name: &str, arguments: &str) -> Result<String> {
         let name = local_tool_name(name);
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");
         };
-        let args = if arguments.trim().is_empty() {
-            json!({})
-        } else {
-            serde_json::from_str(arguments)?
-        };
-        tool.call(args, ToolProgress::default()).await
+        let mut args = parse_arguments(arguments)?;
+        self.call_authorized(tool, name, &mut args, ToolProgress::default())
+            .await
     }
 
     pub async fn call_with_progress(
@@ -229,12 +278,50 @@ impl ToolRegistry {
         let Some(tool) = self.tools.get(name) else {
             bail!("unknown tool: {name}");
         };
-        let args = if arguments.trim().is_empty() {
-            json!({})
-        } else {
-            serde_json::from_str(arguments)?
-        };
-        tool.call(args, ToolProgress::new(sender)).await
+        let mut args = parse_arguments(arguments)?;
+        self.call_authorized(tool, name, &mut args, ToolProgress::new(sender))
+            .await
+    }
+
+    /// 统一完成权限判定、沙盒标记注入和审计结果记录。
+    ///
+    /// 参数:
+    /// - `tool`: 待执行工具定义
+    /// - `name`: 本地工具名称
+    /// - `args`: 已解析工具参数
+    /// - `progress`: 工具进度通道
+    ///
+    /// 返回:
+    /// - 工具执行结果
+    async fn call_authorized(
+        &self,
+        tool: &ToolSpec,
+        name: &str,
+        args: &mut Value,
+        progress: ToolProgress,
+    ) -> Result<String> {
+        if let Some(profile) = &self.permission_profile {
+            let sandboxed = profile.authorize(name, tool.permission, args)?;
+            if sandboxed {
+                args.as_object_mut()
+                    .context("tool arguments must be a JSON object")?
+                    .insert("_miyu_sandbox".to_string(), Value::Bool(true));
+            }
+        }
+        let result = tool.call(args.clone(), progress).await;
+        if let Some(profile) = &self.permission_profile {
+            profile.record_result(name, args, &result);
+        }
+        result
+    }
+}
+
+/// 解析工具参数，空参数按空对象处理。
+fn parse_arguments(arguments: &str) -> Result<Value> {
+    if arguments.trim().is_empty() {
+        Ok(json!({}))
+    } else {
+        Ok(serde_json::from_str(arguments)?)
     }
 }
 

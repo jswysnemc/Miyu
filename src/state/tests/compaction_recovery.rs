@@ -76,6 +76,81 @@ fn empty_summary_does_not_replace_previous_checkpoint() {
 }
 
 #[test]
+fn manual_compaction_records_manual_checkpoint_reason() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    for index in 1..=3 {
+        let turn_id = format!("turn_{index}");
+        store.start_turn(&turn_id, "user").unwrap();
+        store.complete_turn(&turn_id, "assistant", None).unwrap();
+    }
+    let request = store.select_manual_compaction(1).unwrap().unwrap();
+    store
+        .apply_manual_compaction_with_budget_guard(&request, "summary", 10_000)
+        .unwrap();
+
+    let conn = store.conv_db.conn.lock().unwrap();
+    let checkpoint = crate::state::checkpoints::load_latest_checkpoint(&conn)
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        checkpoint.reason,
+        crate::state::checkpoints::CheckpointReason::Manual
+    );
+}
+
+#[test]
+fn checkpoint_summary_remains_anchor_when_legacy_mirror_is_missing() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    for index in 1..=3 {
+        let turn_id = format!("turn_{index}");
+        store.start_turn(&turn_id, "user").unwrap();
+        store.complete_turn(&turn_id, "assistant", None).unwrap();
+    }
+    let request = store.select_manual_compaction(1).unwrap().unwrap();
+    store
+        .apply_compaction(&request, "checkpoint anchor")
+        .unwrap();
+    store.clear_compaction_summary().unwrap();
+    for index in 4..=5 {
+        let turn_id = format!("turn_{index}");
+        store.start_turn(&turn_id, "user").unwrap();
+        store.complete_turn(&turn_id, "assistant", None).unwrap();
+    }
+
+    let next = store.select_manual_compaction(1).unwrap().unwrap();
+    assert_eq!(next.previous_summary.as_deref(), Some("checkpoint anchor"));
+}
+
+#[test]
+fn committed_checkpoint_survives_legacy_mirror_write_failure() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    for index in 1..=3 {
+        let turn_id = format!("turn_{index}");
+        store.start_turn(&turn_id, "user").unwrap();
+        store.complete_turn(&turn_id, "assistant", None).unwrap();
+    }
+    let request = store.select_manual_compaction(1).unwrap().unwrap();
+    std::fs::create_dir_all(store.compaction_summary_file()).unwrap();
+
+    store.apply_compaction(&request, "durable summary").unwrap();
+
+    let projected = store.project_history(None).unwrap();
+    let recovery = store.recovery_snapshot().unwrap();
+    assert!(projected
+        .checkpoint_context
+        .as_deref()
+        .unwrap()
+        .contains("durable summary"));
+    assert_eq!(
+        recovery.latest.as_ref().unwrap().kind,
+        FailureKind::CompactionMirrorFailed
+    );
+}
+
+#[test]
 fn compaction_budget_check_does_not_write_checkpoint_or_recovery() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();

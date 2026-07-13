@@ -29,6 +29,8 @@ struct SessionUsageResponse {
     checkpoint_count: usize,
     compacted_turns: usize,
     latest_checkpoint_at: Option<String>,
+    latest_checkpoint_reason: Option<String>,
+    compaction_warning: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -89,6 +91,12 @@ async fn usage(State(state): State<WebAppState>) -> WebResult<Json<SystemUsageRe
             checkpoint_count: snapshot.checkpoint_count,
             compacted_turns: snapshot.checkpoint_covered_turns,
             latest_checkpoint_at: snapshot.latest_checkpoint_at,
+            latest_checkpoint_reason: snapshot.latest_checkpoint_reason,
+            compaction_warning: snapshot
+                .projection_warnings
+                .iter()
+                .find(|warning| warning.contains("多次压缩"))
+                .cloned(),
         },
         process: ProcessUsageResponse {
             pid: process.pid,

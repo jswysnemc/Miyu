@@ -96,7 +96,22 @@ function historyTurnParts(turn: SessionTimelineTurn): LiveMessagePart[] {
     parts.push({ id: `${turn.turn_id}-reasoning`, type: "reasoning", source: turn.assistant.reasoning, startedAt: "" });
   }
   const tools = [...turn.tools].sort((left, right) => left.created_at.localeCompare(right.created_at));
-  for (const tool of tools) parts.push({ id: `${turn.turn_id}-${tool.id}`, type: "tool", tool: timelineTool(tool) });
+  for (const tool of tools) {
+    if (tool.permission) {
+      parts.push({
+        id: `${turn.turn_id}-${tool.id}-permission`,
+        type: "permission",
+        request: {
+          id: `history-${tool.id}`,
+          session_id: "",
+          tool: tool.name,
+          arguments: tool.arguments
+        },
+        decision: tool.permission
+      });
+    }
+    parts.push({ id: `${turn.turn_id}-${tool.id}`, type: "tool", tool: timelineTool(tool) });
+  }
   if (turn.assistant.content) parts.push({ id: `${turn.turn_id}-text`, type: "text", source: turn.assistant.content });
   return parts;
 }

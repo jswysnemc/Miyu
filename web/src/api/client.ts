@@ -13,8 +13,11 @@ import type {
   PromptDocument,
   PromptKind,
   PromptSummary,
+  PermissionAuditEvent,
+  PermissionRequest,
   ProviderConfig,
   ProviderModelsResponse,
+  RunMode,
   RunModelSelection,
   ThinkingLevel,
   RunInfo,
@@ -105,6 +108,7 @@ export const api = {
       }),
     messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`),
     timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`),
+    permissionAudit: (id: string) => apiRequest<PermissionAuditEvent[]>(`/api/sessions/${id}/permission-audit?limit=200`),
     compact: (id: string, keepTailTurns = 3) =>
       apiRequest<{ message: string }>(`/api/sessions/${id}/compact`, {
         method: "POST",
@@ -116,7 +120,7 @@ export const api = {
     start: (
       sessionId: string,
       input: string,
-      mode: "plan" | "yolo",
+      mode: RunMode,
       selection?: RunModelSelection,
       imageUrls?: string[],
       thinkingLevel?: ThinkingLevel,
@@ -136,6 +140,13 @@ export const api = {
         })
       }),
     stop: (id: string) => apiRequest<{ stopped: boolean }>(`/api/runs/${id}`, { method: "DELETE" })
+  },
+  permissions: {
+    decide: (request: PermissionRequest, decision: "allow" | "deny", reply?: string) =>
+      apiRequest<{ accepted: boolean }>(`/api/permissions/${request.id}/decision`, {
+        method: "POST",
+        body: JSON.stringify({ decision, reply })
+      })
   },
   workspace: {
     tree: (path = "", depth = 5) => {

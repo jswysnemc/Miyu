@@ -195,13 +195,14 @@ impl Agent {
             return Ok(false);
         }
         self.state.apply_compaction(&request, &summary)?;
-        let reprojected = self.chat_messages_for_turn(
+        let mut reprojected = self.chat_messages_for_turn(
             turn_id,
             input,
             image_urls,
             association_prompt,
             auto_meme_reminder,
         )?;
+        reprojected.extend(self.state.project_running_turn_tool_messages(turn_id)?);
         let reprojected_projection =
             project_provider_turn_from_messages(&reprojected, 0, self.context_tokens);
         self.state.record_provider_overflow_recovery(

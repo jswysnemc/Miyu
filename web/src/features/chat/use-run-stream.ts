@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useReducer, useRef } from "react";
-import type { RunInfo, RunModelSelection, ThinkingLevel, WebEvent } from "../../api/contracts";
+import type { RunInfo, RunMode, RunModelSelection, ThinkingLevel, WebEvent } from "../../api/contracts";
 import { api } from "../../api/client";
 import { initialRunState, runEventReducer, type LiveRunState } from "./run-event-reducer";
 
@@ -14,6 +14,8 @@ const EVENT_TYPES = [
   "tool.call.started",
   "tool.progress",
   "tool.result",
+  "permission.requested",
+  "permission.resolved",
   "workspace.changed",
   "content.flushed",
   "compaction.started",
@@ -137,7 +139,7 @@ export function useRunStream(workspaceId: string | undefined, sessionId: string 
   const start = async (
     targetSessionId: string,
     input: string,
-    mode: "plan" | "yolo",
+    mode: RunMode,
     selection?: RunModelSelection,
     imageUrls?: string[],
     thinkingLevel?: ThinkingLevel,

@@ -39,7 +39,11 @@ pub fn save_summary(path: &Path, summary: &str, compacted_turns: usize) -> Resul
         compacted_turns,
         summary: summary.trim().to_string(),
     };
-    std::fs::write(path, format!("{}\n", serde_json::to_string_pretty(&value)?))?;
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    use std::io::Write;
+    temporary.write_all(format!("{}\n", serde_json::to_string_pretty(&value)?).as_bytes())?;
+    temporary.persist(path)?;
     Ok(())
 }
 

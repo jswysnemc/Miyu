@@ -8,7 +8,7 @@ use crate::state::tool_history::build_budgeted_summary_history;
 use crate::state::StateStore;
 use anyhow::{bail, Result};
 
-const SUMMARY_PROMPT_HISTORY_RESERVE_CHARS: usize = 512;
+const SUMMARY_PROMPT_FIXED_RESERVE_CHARS: usize = 512;
 
 /// 压缩应用结果。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +135,7 @@ impl StateStore {
             }
         }
         let previous_summary = self
-            .load_compaction_summary()?
+            .load_authoritative_compaction_summary()?
             .map(|summary| summary.summary);
         self.select_legacy_compaction_from_parts(
             &turns,
@@ -175,7 +175,7 @@ impl StateStore {
             ((context_limit_chars as f32) * trim_batch_ratio).max(1.0) as usize;
         let turns = self.conv_db.load_turns()?;
         let previous_summary = self
-            .load_compaction_summary()?
+            .load_authoritative_compaction_summary()?
             .map(|summary| summary.summary);
         self.select_legacy_compaction_from_parts(
             &turns,
@@ -231,7 +231,7 @@ impl StateStore {
     ) -> Result<Option<CompactionRequest>> {
         let turns = self.conv_db.load_turns()?;
         let previous_summary = self
-            .load_compaction_summary()?
+            .load_authoritative_compaction_summary()?
             .map(|summary| summary.summary);
         Ok(super::select_manual_compaction(
             &turns,
@@ -261,7 +261,8 @@ impl StateStore {
         .count();
         let history_budget = context_limit_chars
             .saturating_sub(overhead)
-            .saturating_sub(SUMMARY_PROMPT_HISTORY_RESERVE_CHARS);
+            .saturating_sub(super::summary_char_limit(context_limit_chars))
+            .saturating_sub(SUMMARY_PROMPT_FIXED_RESERVE_CHARS);
         let history = build_budgeted_summary_history(
             &self.conv_db,
             &self.session_id,
@@ -321,19 +322,55 @@ impl StateStore {
     /// 返回:
     /// - 应用是否成功
     pub fn apply_compaction(&self, request: &CompactionRequest, summary: &str) -> Result<()> {
-        let previous_count = self
-            .load_compaction_summary()?
-            .map(|summary| summary.compacted_turns)
-            .unwrap_or_default();
+        self.apply_compaction_with_reason(
+            request,
+            summary,
+            crate::state::checkpoints::CheckpointReason::Auto,
+        )
+    }
+
+    /// 使用明确原因应用压缩结果。
+    ///
+    /// 参数:
+    /// - `request`: 压缩请求
+    /// - `summary`: 模型生成的摘要正文
+    /// - `reason`: 自动或手动压缩原因
+    ///
+    /// 返回:
+    /// - 应用是否成功
+    fn apply_compaction_with_reason(
+        &self,
+        request: &CompactionRequest,
+        summary: &str,
+        reason: crate::state::checkpoints::CheckpointReason,
+    ) -> Result<()> {
+        let previous_count = {
+            let conn = self.conv_db.conn.lock().unwrap();
+            crate::state::checkpoints::load_latest_checkpoint(&conn)?
+                .map(|checkpoint| checkpoint.source_turn_count)
+                .unwrap_or_default()
+        };
         let source_turn_count = request.source_turn_count_after_compaction(previous_count);
         crate::state::checkpoints::apply_checkpoint_compaction(
             &self.conv_db,
             request,
             summary,
             source_turn_count,
-            crate::state::checkpoints::CheckpointReason::Auto,
+            reason,
         )?;
-        super::save_summary(&self.compaction_summary_file(), summary, source_turn_count)?;
+        if let Err(error) =
+            super::save_summary(&self.compaction_summary_file(), summary, source_turn_count)
+        {
+            self.record_recovery_failure(
+                request.compact_turn_ids.last().map(String::as_str),
+                crate::state::FailureKind::CompactionMirrorFailed,
+                crate::state::RecoveryStatus::Observed,
+                &format!("权威 checkpoint 已提交，但旧摘要兼容镜像写入失败: {error:#}"),
+                0,
+                0,
+                0,
+            )?;
+        }
         self.resolve_active_compaction_failures()?;
         Ok(())
     }
@@ -401,7 +438,11 @@ impl StateStore {
             )?;
             return Ok(CompactionApplyOutcome::RejectedOverBudget);
         }
-        self.apply_compaction(request, summary)?;
+        self.apply_compaction_with_reason(
+            request,
+            summary,
+            crate::state::checkpoints::CheckpointReason::Manual,
+        )?;
         Ok(CompactionApplyOutcome::Applied)
     }
 
@@ -468,8 +509,29 @@ impl StateStore {
     /// - 压缩摘要上下文消息
     pub fn compaction_summary_context(&self) -> Result<Option<String>> {
         Ok(self
-            .load_compaction_summary()?
+            .load_authoritative_compaction_summary()?
             .map(|summary| super::summary_context_message(&summary.summary)))
+    }
+
+    /// 从 checkpoint 读取权威摘要，旧文件仅作为迁移兼容回退。
+    ///
+    /// 返回:
+    /// - 当前权威压缩摘要
+    pub(crate) fn load_authoritative_compaction_summary(
+        &self,
+    ) -> Result<Option<CompactionSummary>> {
+        let checkpoint = {
+            let conn = self.conv_db.conn.lock().unwrap();
+            crate::state::checkpoints::load_latest_checkpoint(&conn)?
+        };
+        if let Some(checkpoint) = checkpoint {
+            return Ok(Some(CompactionSummary {
+                updated_at: checkpoint.created_at,
+                compacted_turns: checkpoint.source_turn_count,
+                summary: checkpoint.summary,
+            }));
+        }
+        self.load_compaction_summary()
     }
 
     /// 读取压缩摘要。

@@ -136,6 +136,7 @@ pub(super) fn visible_width(value: &str) -> usize {
 pub(super) fn colored_mode_label(mode: AgentMode) -> String {
     match mode {
         AgentMode::Yolo => "\x1b[38;5;208m[YOLO]\x1b[0m".to_string(),
+        AgentMode::Audited => "\x1b[35m[AUDIT]\x1b[0m".to_string(),
         AgentMode::Plan => "\x1b[36m[PLAN]\x1b[0m".to_string(),
     }
 }

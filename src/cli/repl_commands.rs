@@ -131,6 +131,13 @@ fn command_description(command: &str) -> &'static str {
                 "switch to read-only planning mode"
             }
         }
+        "/audit" => {
+            if zh {
+                "切换到权限审计和工作区沙盒模式"
+            } else {
+                "switch to audited workspace sandbox mode"
+            }
+        }
         "/yolo" => {
             if zh {
                 "切换到 YOLO 模式"

@@ -28,6 +28,8 @@ impl WorkStatus {
             | AgentEvent::ToolCallProgress(_)
             | AgentEvent::ToolResult { .. }
             | AgentEvent::ToolProgress { .. }
+            | AgentEvent::PermissionRequested(_)
+            | AgentEvent::PermissionResolved { .. }
             | AgentEvent::CompactionStarted { .. }
             | AgentEvent::CompactionFinished { .. } => Some(Self::Working),
             AgentEvent::FlushContent | AgentEvent::ExternalOutput => None,

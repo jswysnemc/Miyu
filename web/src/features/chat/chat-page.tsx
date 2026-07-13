@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
+import type { RunMode } from "../../api/contracts";
 import { useChatAgentContext } from "../agents/chat-agent-context";
 import { ChatComposer } from "./chat-composer";
 import { HistoryTurn, LiveRunMessage } from "./chat-message";
@@ -47,7 +48,7 @@ export function ChatPage() {
   const chatAgent = useChatAgentContext();
   const thinking = useThinkingLevel();
   const [input, setInput] = useState("");
-  const [mode, setMode] = useState<"plan" | "yolo">("yolo");
+  const [mode, setMode] = useState<RunMode>("yolo");
   const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
   const scrollContentSignal = useMemo(() => [timeline.data, run.states], [timeline.data, run.states]);

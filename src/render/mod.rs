@@ -9,6 +9,7 @@ mod live_tool_status;
 mod markdown;
 mod markdown_blocks;
 mod markdown_inline;
+mod permission;
 mod session_summary;
 #[cfg(test)]
 mod session_summary_tests;
@@ -36,6 +37,7 @@ mod wait_spinner;
 pub(crate) mod work_status;
 
 pub(crate) use error::write_chat_error;
+pub(crate) use permission::{render_permission_event, render_permission_prompt};
 pub use session_summary::print_session_summary;
 pub use stream::StreamRenderer;
 pub use stream_config::{ReasoningDisplayMode, StreamRenderOptions, ToolCallDisplayMode};

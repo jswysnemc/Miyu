@@ -1,6 +1,7 @@
 use super::agents::{AgentProfile, AgentRuntimeOverride, SubagentConfig};
 use super::defaults::*;
 use super::model_metadata::ModelMetadata;
+use super::permission::PermissionConfig;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::collections::HashMap;
 
@@ -8,6 +9,8 @@ use std::collections::HashMap;
 pub struct AppConfig {
     pub active_provider: String,
     pub providers: Vec<ProviderConfig>,
+    #[serde(default)]
+    pub permission: PermissionConfig,
     #[serde(default)]
     pub context: ContextConfig,
     #[serde(default)]

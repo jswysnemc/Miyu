@@ -18,10 +18,11 @@ pub(crate) async fn run_shell_command(
     command: &str,
     timeout_seconds: u64,
     configured_shell: &str,
+    sandboxed: bool,
 ) -> Result<Output> {
     let duration = Duration::from_secs(timeout_seconds.max(1));
     let mut missing = Vec::new();
-    for (program, mut shell) in shell_commands(command, configured_shell) {
+    for (program, mut shell) in shell_commands(command, configured_shell, sandboxed)? {
         match run_command_with_timeout(&mut shell, duration).await {
             Ok(output) => return Ok(output),
             Err(CommandRunError::NotFound) => missing.push(program),
@@ -159,9 +160,16 @@ where
 }
 
 #[cfg(windows)]
-fn shell_commands(command: &str, configured_shell: &str) -> Vec<(String, Command)> {
+fn shell_commands(
+    command: &str,
+    configured_shell: &str,
+    sandboxed: bool,
+) -> Result<Vec<(String, Command)>> {
+    if sandboxed {
+        bail!("audited sandbox mode is not supported on Windows")
+    }
     if let Some(shell) = configured_shell_path(configured_shell) {
-        return vec![shell_command_entry(command, &shell)];
+        return Ok(vec![shell_command_entry(command, &shell)]);
     }
     let mut pwsh = Command::new("pwsh");
     pwsh.arg("-NoLogo")
@@ -181,22 +189,94 @@ fn shell_commands(command: &str, configured_shell: &str) -> Vec<(String, Command
     let mut cmd = Command::new("cmd");
     cmd.arg("/S").arg("/C").arg(command);
 
-    vec![
+    Ok(vec![
         ("pwsh".to_string(), inherit_env(pwsh)),
         ("powershell".to_string(), inherit_env(powershell)),
         ("cmd".to_string(), inherit_env(cmd)),
-    ]
+    ])
 }
 
 #[cfg(not(windows))]
-fn shell_commands(command: &str, configured_shell: &str) -> Vec<(String, Command)> {
-    vec![shell_command_entry(
-        command,
-        &configured_shell_path(configured_shell)
-            .or_else(|| std::env::var("SHELL").ok())
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| "sh".to_string()),
-    )]
+fn shell_commands(
+    command: &str,
+    configured_shell: &str,
+    sandboxed: bool,
+) -> Result<Vec<(String, Command)>> {
+    let shell = configured_shell_path(configured_shell)
+        .or_else(|| std::env::var("SHELL").ok())
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "sh".to_string());
+    if sandboxed {
+        return Ok(vec![(
+            "bwrap".to_string(),
+            sandboxed_shell_command(command, &shell)?,
+        )]);
+    }
+    Ok(vec![shell_command_entry(command, &shell)])
+}
+
+/// 构造 Linux 工作区写入沙盒命令。
+///
+/// 参数:
+/// - `command`: Shell 命令文本
+/// - `shell`: 沙盒内使用的 Shell
+///
+/// 返回:
+/// - bubblewrap 命令
+#[cfg(not(windows))]
+fn sandboxed_shell_command(command: &str, shell: &str) -> Result<Command> {
+    let workspace = crate::runtime_cwd::current_dir()?;
+    let mut process = Command::new("bwrap");
+    process
+        .arg("--die-with-parent")
+        .arg("--new-session")
+        .arg("--unshare-net")
+        .arg("--ro-bind")
+        .arg("/")
+        .arg("/")
+        .arg("--bind")
+        .arg(&workspace)
+        .arg(&workspace)
+        .arg("--proc")
+        .arg("/proc")
+        .arg("--dev")
+        .arg("/dev")
+        .arg("--chdir")
+        .arg(&workspace)
+        .arg("--")
+        .arg(shell)
+        .arg("-lc")
+        .arg(command);
+    Ok(inherit_env(process))
+}
+
+#[cfg(all(test, not(windows)))]
+mod sandbox_tests {
+    use super::*;
+
+    /// 验证审计沙盒只允许写入当前工作区。
+    #[tokio::test]
+    async fn audited_sandbox_blocks_parent_directory_writes() {
+        if std::process::Command::new("bwrap")
+            .arg("--version")
+            .output()
+            .is_err()
+        {
+            return;
+        }
+        let root = tempfile::tempdir().unwrap();
+        let workspace = root.path().join("workspace");
+        std::fs::create_dir_all(&workspace).unwrap();
+        let output = crate::runtime_cwd::scope(workspace.clone(), async {
+            run_shell_command("touch allowed && touch ../blocked", 10, "sh", true)
+                .await
+                .unwrap()
+        })
+        .await;
+        assert!(!output.status.success());
+        assert!(workspace.join("allowed").exists());
+        assert!(!root.path().join("blocked").exists());
+    }
 }
 
 #[cfg(windows)]

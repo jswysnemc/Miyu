@@ -25,6 +25,7 @@ pub struct SessionSnapshot {
     pub checkpoint_covered_turns: usize,
     pub tail_turns: usize,
     pub latest_checkpoint_at: Option<String>,
+    pub latest_checkpoint_reason: Option<String>,
     pub context_chars: usize,
     pub context_limit_chars: usize,
     pub context_ratio: f32,
@@ -67,16 +68,32 @@ impl StateStore {
             .as_ref()
             .map(|usage| usage.prompt_tokens as usize)
             .unwrap_or_default();
-        let projection_warnings = projection
+        let mut projection_warnings: Vec<String> = projection
             .warnings
             .iter()
             .map(|warning| warning.message.clone())
             .collect();
+        if projection.stats.checkpoint_count >= 2 {
+            projection_warnings.push(
+                "当前会话已经多次压缩，上下文细节可能逐步损失；复杂任务建议新建会话继续"
+                    .to_string(),
+            );
+        }
         let session_memory = super::session_memory::repository::load_memory(
             &self.conv_db,
             &projection.stats.session_id,
         )?
         .map(super::session_memory::summary::summarize_memory);
+        let latest_checkpoint_reason = {
+            let conn = self.conv_db.conn.lock().unwrap();
+            super::checkpoints::load_latest_checkpoint(&conn)?
+                .map(|checkpoint| match checkpoint.reason {
+                    super::checkpoints::CheckpointReason::Auto => "auto",
+                    super::checkpoints::CheckpointReason::Manual => "manual",
+                    super::checkpoints::CheckpointReason::Legacy => "legacy",
+                })
+                .map(str::to_string)
+        };
         Ok(SessionSnapshot {
             session_id: projection.stats.session_id,
             turn_count: projection.stats.turn_count,
@@ -84,6 +101,7 @@ impl StateStore {
             checkpoint_covered_turns: projection.stats.checkpoint_covered_turns,
             tail_turns: projection.stats.tail_turns,
             latest_checkpoint_at: projection.stats.latest_checkpoint_at,
+            latest_checkpoint_reason,
             context_chars,
             context_limit_chars,
             context_ratio: context_ratio(context_chars, context_limit_chars),

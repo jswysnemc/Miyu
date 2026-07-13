@@ -5,6 +5,43 @@ use crate::state::turns::Turn;
 use crate::state::ConversationDb;
 use anyhow::Result;
 
+impl crate::state::StateStore {
+    /// 重建当前运行轮次已经完成的工具调用与结果消息。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前运行轮次标识
+    ///
+    /// 返回:
+    /// - 不含重复用户消息和最终占位助手消息的工具交换消息
+    pub(crate) fn project_running_turn_tool_messages(
+        &self,
+        turn_id: &str,
+    ) -> Result<Vec<ChatMessage>> {
+        let Some(turn) = self
+            .conv_db
+            .load_turns()?
+            .into_iter()
+            .find(|turn| turn.turn_id == turn_id)
+        else {
+            return Ok(Vec::new());
+        };
+        let mut messages =
+            project_turn_messages_with_tool_history(&self.conv_db, &self.session_id, &[turn])?;
+        if messages
+            .first()
+            .is_some_and(|message| message.role == "user")
+        {
+            messages.remove(0);
+        }
+        if messages.last().is_some_and(|message| {
+            message.role == "assistant" && message.tool_calls.as_ref().is_none_or(Vec::is_empty)
+        }) {
+            messages.pop();
+        }
+        Ok(messages)
+    }
+}
+
 /// 从 tail turns 和工具历史构造 provider 历史消息。
 ///
 /// 参数:
@@ -198,5 +235,49 @@ mod tests {
             Some(crate::llm::ChatContent::Text(text)) if text == "stable preview"
         ));
         assert_eq!(messages[3].role, "assistant");
+    }
+
+    #[test]
+    fn rebuilds_running_turn_without_duplicate_user_or_pending_assistant() {
+        let (_temp, db) = db();
+        db.start_turn("turn_1", "inspect").unwrap();
+        insert_tool_call(
+            &db,
+            NewToolCallRecord {
+                session_id: "default".to_string(),
+                turn_id: "turn_1".to_string(),
+                seq: 1,
+                provider_call_id: "call_1".to_string(),
+                tool_name: "read_file".to_string(),
+                arguments: "{}".to_string(),
+            },
+        )
+        .unwrap();
+        insert_tool_result(
+            &db,
+            NewToolResultRecord {
+                session_id: "default".to_string(),
+                turn_id: "turn_1".to_string(),
+                provider_call_id: "call_1".to_string(),
+                ok: true,
+                result_preview: "result".to_string(),
+                result_ref: None,
+                error: None,
+                original_chars: 6,
+            },
+        )
+        .unwrap();
+        let store = crate::state::StateStore {
+            base_state_dir: _temp.path().to_path_buf(),
+            session_id: "default".to_string(),
+            state_dir: _temp.path().to_path_buf(),
+            conv_db: std::sync::Arc::new(db),
+        };
+
+        let messages = store.project_running_turn_tool_messages("turn_1").unwrap();
+
+        assert_eq!(messages.len(), 2);
+        assert_eq!(messages[0].role, "assistant");
+        assert_eq!(messages[1].role, "tool");
     }
 }

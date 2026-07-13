@@ -31,7 +31,7 @@ pub(super) fn build_session_summary_projection_parts(
         .map(|checkpoint| checkpoint.compacted_to_seq)
         .unwrap_or_default();
     let turn_stats = store.conv_db.session_summary_turn_stats(after_seq)?;
-    let compaction = store.load_compaction_summary()?;
+    let compaction = store.load_authoritative_compaction_summary()?;
     let usage = store.usage_snapshot()?;
     let recovery = store.recovery_snapshot()?;
     let summary_context_chars = checkpoint

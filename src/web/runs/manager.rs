@@ -496,6 +496,7 @@ fn session_key(workspace_id: &str, session_id: &str) -> String {
 fn parse_mode(value: Option<&str>) -> Result<AgentMode> {
     match value.unwrap_or("yolo").trim().to_ascii_lowercase().as_str() {
         "plan" => Ok(AgentMode::Plan),
+        "audited" | "audit" => Ok(AgentMode::Audited),
         "yolo" | "" => Ok(AgentMode::Yolo),
         value => bail!("unsupported run mode: {value}"),
     }

@@ -106,7 +106,7 @@ impl StateStore {
             .seq_range()
             .ok_or_else(|| anyhow::anyhow!("compaction request has no turns"))?;
         let previous_count = self
-            .load_compaction_summary()?
+            .load_authoritative_compaction_summary()?
             .map(|summary| summary.compacted_turns)
             .unwrap_or_default();
         Ok(CompactionCheckpoint {

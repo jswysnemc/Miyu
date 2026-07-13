@@ -8,6 +8,7 @@ use crate::config::AppConfig;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
 use crate::perf_trace::PerfTrace;
+use crate::permission::{PermissionAuditLog, PermissionProfile};
 use crate::state::StateStore;
 use crate::tools::ToolRegistry;
 use anyhow::{bail, Result};
@@ -297,29 +298,40 @@ impl<'paths> SessionRunner<'paths> {
                 config, self.paths, source, mode, session_id, state_dir,
             ),
         }?;
-        if mode == AgentMode::Yolo && source == SubmissionSource::Gateway {
+        if mode != AgentMode::Plan && source == SubmissionSource::Gateway {
             crate::cron::register_tool(&mut registry, self.paths.clone(), session_id.to_string());
         }
-        let Some(runtime) = config.agent_runtime.as_ref() else {
-            return Ok(registry);
-        };
-        let allowed = runtime
-            .enabled_tools
-            .iter()
-            .map(String::as_str)
-            .collect::<Vec<_>>();
-        let mut filtered = registry.clone_filtered(&allowed);
-        let required = match source {
-            SubmissionSource::Repl | SubmissionSource::Web => &["subagent", "todo"][..],
-            SubmissionSource::Gateway => &["cron"][..],
-            SubmissionSource::Command | SubmissionSource::ShellIntercept => &[][..],
-        };
-        for name in required {
-            if registry.contains(name) {
-                filtered.register_from(&registry, name)?;
+        let mut selected = if let Some(runtime) = config.agent_runtime.as_ref() {
+            let allowed = runtime
+                .enabled_tools
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>();
+            let mut filtered = registry.clone_filtered(&allowed);
+            let required = match source {
+                SubmissionSource::Repl | SubmissionSource::Web => &["subagent", "todo"][..],
+                SubmissionSource::Gateway => &["cron"][..],
+                SubmissionSource::Command | SubmissionSource::ShellIntercept => &[][..],
+            };
+            for name in required {
+                if registry.contains(name) {
+                    filtered.register_from(&registry, name)?;
+                }
             }
-        }
-        Ok(filtered)
+            filtered
+        } else {
+            registry
+        };
+        let workspace = crate::runtime_cwd::current_dir()?;
+        let profile_mode = mode.permission_profile_mode();
+        let audit = (mode != AgentMode::Yolo).then(|| {
+            PermissionAuditLog::new(
+                state_dir.join("permission-audit.jsonl"),
+                session_id.to_string(),
+            )
+        });
+        selected.set_permission_profile(PermissionProfile::new(profile_mode, workspace, audit));
+        Ok(selected)
     }
 }
 
@@ -349,7 +361,7 @@ fn build_submission_tool_registry(
         | SubmissionSource::Gateway
         | SubmissionSource::ShellIntercept => build_tool_registry(config, paths, mode),
     }?;
-    if mode == AgentMode::Yolo && should_apply_command_mode_exit_policy(source) {
+    if mode != AgentMode::Plan && should_apply_command_mode_exit_policy(source) {
         crate::tools::register_command_mode_background(&mut registry, config, paths, session_id);
     }
     Ok(registry)
