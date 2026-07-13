@@ -44,7 +44,7 @@ miyu           # 交互 REPL
 |------|------|
 | 交互 REPL | 双模式（Yolo / Plan）、流式渲染、斜杠命令、会话 resume、Agent 复用 |
 | 配置 TUI | 供应商、模型、插件、网关等可视化编辑 |
-| Shell 集成 | Command-not-found / 钩子触发无缝对话 |
+| Shell 集成 | fish/zsh/bash/PowerShell 钩子；Windows 走 platform shell 抽象 |
 | 多协议 LLM | OpenAI Chat、OpenAI Responses、Anthropic Messages |
 | 工具与插件 | 文件/命令、搜索、表情包、知识库、记忆、深度研究等 |
 | 消息网关 | QQ / 微信等渠道（可选） |
@@ -152,6 +152,10 @@ curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolch
 
 欢迎贡献方向：系统排障、知识与检索、角色扮演与趣味、shell/守护进程集成、性能与缺陷修复。  
 PR 请说明设计意图与使用场景；**一个 PR 对应一个功能**。
+
+## 架构
+
+模块分层、数据流与跨平台说明见 [ARCHITECTURE.md](./ARCHITECTURE.md)。
 
 ## 许可
 

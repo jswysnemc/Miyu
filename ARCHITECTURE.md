@@ -93,14 +93,16 @@ flowchart TB
 
     subgraph Peripherals["外围"]
         SHELL["shell/ fish bash zsh pwsh hook"]
+        PLATFORM["platform/ shell 抽象 PowerShell/cmd"]
         RENDER["render/ 流式渲染 Markdown LaTeX"]
-        PATHS["paths/ XDG 目录"]
+        PATHS["paths/ XDG / 跨平台目录"]
         I18N["i18n 中英文"]
         PROMPTS["prompts/ 系统提示 build.rs 混淆嵌入"]
         CLIP["clipboard 剪贴板"]
         ALARM["alarm 闹钟管理"]
         MEMES["memes 表情包"]
         DKB["default_kb 默认知识库"]
+        WEB["web/ 工作台 终端 系统监控"]
     end
 
     MAIN --> CLI
@@ -158,6 +160,8 @@ flowchart TB
     PERSONA --> MS & MEMES & PROMPTS
 
     SHELL --> SHELLINT
+    PLATFORM --> REPL
+    PLATFORM --> WEB
     AGENT --> RENDER
     CLI --> TUI
 ```
@@ -198,20 +202,20 @@ flowchart TB
     end
 ```
 
-## 3. 存储流图（XDG 目录与数据库 schema）
+## 3. 存储流图（跨平台目录与数据库 schema）
 
 ```mermaid
 flowchart LR
-    subgraph Config["~/.config/miyu/ 配置"]
+    subgraph Config["配置目录（Linux ~/.config/miyu；Windows %APPDATA%\\miyu）"]
         CFG["config.jsonc AppConfig"]
         SECRET["secrets.jsonc api_keys"]
         SKILLS["skills/ 已安装 skill 目录 SKILL.md"]
         PROMPTF["persona/system-prompt.md 人格提示"]
         IDENTITY["persona/identities/ 身份提示"]
-        SHELLHOOK["shell/bash-hook.sh zsh-hook.zsh + fish/conf.d/miyu.fish"]
+        SHELLHOOK["shell hooks: bash/zsh/powershell + fish conf.d"]
     end
 
-    subgraph State["~/.local/state/miyu/ 运行状态"]
+    subgraph State["运行状态（Linux ~/.local/state/miyu；Windows 通常 %LOCALAPPDATA%\\miyu）"]
         CONVDB["conversation.db SQLite WAL 对话轮次"]
         USAGEJ["usage.json 用量统计"]
         LOADJ["loaded-tools.json 渐进式工具集"]
@@ -222,7 +226,7 @@ flowchart LR
         JSONL["conversation.jsonl 旧格式 迁移后弃用"]
     end
 
-    subgraph Data["~/.local/share/miyu/ 持久数据"]
+    subgraph Data["持久数据（Linux ~/.local/share/miyu；Windows data 目录）"]
         KB["kb/ 知识库文件 + 关键词索引 + 语义嵌入"]
         PERSONA["persona/ 按人格隔离"]
         MEMEDIR["persona/memes/ 表情包图片 + 索引"]
@@ -231,11 +235,11 @@ flowchart LR
         AUTOSKILL["persona/skills/ 自动学习的 skill"]
     end
 
-    subgraph Cache["~/.cache/miyu/ 缓存"]
+    subgraph Cache["缓存（Linux ~/.cache/miyu；Windows cache 目录）"]
         CACHEF["临时缓存 文件/网络结果"]
     end
 
-    subgraph Pics["~/Pictures/miyu/ 图片产物"]
+    subgraph Pics["图片产物（Linux ~/Pictures/miyu；Windows Pictures\\miyu）"]
         PICF["搜图/生图/截图保存"]
     end
 
@@ -395,3 +399,7 @@ flowchart TB
 - **子代理**：`task` 工具启动后台子代理，`SubagentRunner` 独立 LLM 循环，有 max_steps 预算与超时，预算耗尽注入 `finalization_prompt` 收尾。
 - **网关**：`supervisor` 用 JoinSet 并发启动配置中启用的 QQ/微信/OneBot 渠道，事件接入后构建 Agent 走 `chat_stream`，再通过渠道工具回复。
 - **存储隔离**：记忆、表情包、skills 按人格（persona）目录隔离；对话状态、用量、闹钟全局共享。
+- **跨平台目录**：`paths::MiyuPaths` 通过 `directories` 解析配置/数据/缓存/状态目录。Linux 遵循 XDG；Windows 映射到 `%APPDATA%` / `%LOCALAPPDATA%` 等标准位置。PowerShell hook 写入 `config_dir/shell/powershell-hook.ps1`。
+- **平台 Shell 抽象**：`platform/shell` 统一命令执行、交互终端与外部编辑器启动。Windows 优先 `SHELL`，其次 `pwsh.exe` / `powershell.exe`，最后 `COMSPEC`/`cmd.exe`；按 Shell 类型生成 `-Command`、`/C` 或 POSIX `-lc` 参数。REPL `!` 命令、Web 终端与默认编辑器均走此抽象。
+- **Windows 能力边界**：已支持 PowerShell 命令未找到拦截、CLI、Web 工作台/终端、剪贴板、音频闹钟、进程 CPU/RSS 监控与命令执行。审计 Shell 沙盒依赖 Linux `bubblewrap`，Windows 上不启用；`check_issue` 目前仅 Linux/macOS。文件搜索需本机 `rg`，工作区 Git 功能需 `git`。
+- **CI**：`.github/workflows/windows.yml` 在 `windows-latest` 上构建 Web 资源并运行 `cargo test --locked` 与前端测试。

@@ -44,7 +44,7 @@ miyu           # interactive REPL
 |------|--------|
 | Interactive REPL | Yolo / Plan modes, streaming UI, slash commands, session resume, agent reuse |
 | Config TUI | Providers, models, plugins, gateways |
-| Shell integration | Command-not-found / hooks for frictionless chat |
+| Shell integration | fish/zsh/bash/PowerShell hooks; Windows uses the platform shell abstraction |
 | Multi-protocol LLM | OpenAI Chat, OpenAI Responses, Anthropic Messages |
 | Tools & plugins | Files/commands, search, memes, knowledge base, memory, deep research, … |
 | Messaging gateways | Optional QQ / WeChat-style channels |
@@ -152,6 +152,10 @@ curl -fsSL https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolch
 
 Contribution ideas: troubleshooting, knowledge/retrieval, roleplay and fun features, deeper system integration, performance and bugfixes.  
 PRs should explain intent and scenarios; **one feature per PR**.
+
+## Architecture
+
+Layering, data flow, and cross-platform notes: [ARCHITECTURE.md](./ARCHITECTURE.md).
 
 ## License
 
