@@ -46,10 +46,12 @@ fn renders_partial_json_patch_when_patch_string_is_closed() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("sample.txt");
     std::fs::write(&path, "old\n").unwrap();
-    let partial = format!(
-        "{{\"patch\":\"*** Begin Patch\\n*** Update File: {}\\n@@\\n-old\\n+new\\n*** End Patch\",\"path\":\"",
+    let patch = format!(
+        "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",
         path.display()
     );
+    let patch_json = serde_json::to_string(&patch).unwrap();
+    let partial = format!(r#"{{"patch":{patch_json},"path":""#);
 
     let output = render_for_test(&partial).unwrap();
     let plain = strip_ansi_for_test(&output);

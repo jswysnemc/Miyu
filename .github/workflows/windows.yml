@@ -30,6 +30,9 @@ jobs:
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
 
+      - name: Install ripgrep
+        run: choco install ripgrep --no-progress --yes
+
       - name: Run Rust tests
         run: cargo test --locked
 

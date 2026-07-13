@@ -126,10 +126,12 @@ fn edit_progress_waits_for_renderable_diff_before_consuming_preview() {
     assert!(!renderer.streaming_edit_progress.contains(&0));
     assert_eq!(renderer.pending_streamed_edit_blocks, 0);
 
-    let arguments_preview = format!(
-        "{{\"patch\":\"*** Begin Patch\\n*** Update File: {}\\n@@\\n-old\\n+new\\n*** End Patch\",\"path\":\"",
+    let patch = format!(
+        "*** Begin Patch\n*** Update File: {}\n@@\n-old\n+new\n*** End Patch",
         path.display()
     );
+    let patch_json = serde_json::to_string(&patch).unwrap();
+    let arguments_preview = format!(r#"{{"patch":{patch_json},"path":""#);
     renderer
         .write_tool_call_progress(&ToolCallStreamProgress {
             index: 0,

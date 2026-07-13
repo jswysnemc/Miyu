@@ -75,7 +75,7 @@ mod tests {
     #[tokio::test]
     async fn executes_shell_command_and_captures_output() {
         #[cfg(windows)]
-        let command = "Write-Output shell-test";
+        let command = "[Console]::Write('shell-test')";
         #[cfg(not(windows))]
         let command = "printf shell-test";
         let result = execute_repl_shell(command).await.unwrap();

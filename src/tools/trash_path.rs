@@ -78,6 +78,7 @@ fn resolve_existing_path_without_following_leaf(path: &Path) -> Result<PathBuf> 
 /// - 安全时返回成功
 fn ensure_safe_trash_target(path: &Path) -> Result<()> {
     let cwd = crate::runtime_cwd::current_dir()?.canonicalize()?;
+    let resolved_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
     let home = directories::BaseDirs::new().map(|dirs| dirs.home_dir().to_path_buf());
     let dangerous = [
         Path::new("/"),
@@ -96,13 +97,16 @@ fn ensure_safe_trash_target(path: &Path) -> Result<()> {
         Path::new("/usr"),
         Path::new("/var"),
     ];
-    if dangerous.iter().any(|item| path == *item) {
+    if dangerous
+        .iter()
+        .any(|item| path == *item || resolved_path == *item)
+    {
         bail!(
             "refusing to trash dangerous system path: {}",
             path.display()
         )
     }
-    if path == cwd {
+    if path == cwd || resolved_path == cwd {
         bail!(
             "refusing to trash current workspace root: {}",
             path.display()
