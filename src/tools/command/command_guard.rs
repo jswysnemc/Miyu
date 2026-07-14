@@ -62,14 +62,26 @@ fn has_file_output_redirection(command: &str) -> bool {
             continue;
         }
 
-        // 1. 跳过追加重定向符号和操作符后的空白
+        // 1. 放行作为命令参数使用的输出进程替换，并继续检查内部命令
+        if is_output_process_substitution_start(&chars, index) {
+            index += 2;
+            continue;
+        }
+
+        // 2. 跳过追加重定向符号和操作符后的空白
         index += 1;
         if chars.get(index) == Some(&'>') {
             index += 1;
         }
         skip_whitespace(&chars, &mut index);
 
-        // 2. 文件描述符复制或关闭不写入文件
+        // 3. 放行作为重定向目标使用的输出进程替换，并继续检查内部命令
+        if is_output_process_substitution_start(&chars, index) {
+            index += 2;
+            continue;
+        }
+
+        // 4. 文件描述符复制或关闭不写入文件
         if chars.get(index) == Some(&'&') {
             index += 1;
             skip_whitespace(&chars, &mut index);
@@ -87,13 +99,25 @@ fn has_file_output_redirection(command: &str) -> bool {
             return true;
         }
 
-        // 3. 空设备允许丢弃输出，其他目标均视为文件写入
+        // 5. 空设备允许丢弃输出，其他目标均视为文件写入
         let target = read_redirection_target(&chars, &mut index);
         if !is_null_device(&target) {
             return true;
         }
     }
     false
+}
+
+/// 判断当前位置是否为 Shell 输出进程替换起始符。
+///
+/// 参数:
+/// - `chars`: 命令字符列表
+/// - `index`: 待检查的字符位置
+///
+/// 返回:
+/// - 当前字符和下一字符组成 `>(` 时返回 true
+fn is_output_process_substitution_start(chars: &[char], index: usize) -> bool {
+    chars.get(index) == Some(&'>') && chars.get(index + 1) == Some(&'(')
 }
 
 /// 判断字符是否位于 Shell 词边界。
@@ -251,6 +275,15 @@ mod tests {
         assert!(ensure_not_file_write_command("grep foo file >&2").is_ok());
         assert!(ensure_not_file_write_command("grep foo file 2>&-").is_ok());
         assert!(ensure_not_file_write_command("grep foo file 2>&1file").is_err());
+    }
+
+    /// 验证输出进程替换不会被误判为文件写入。
+    #[test]
+    fn allows_output_process_substitution() {
+        assert!(ensure_not_file_write_command("printf hello > >(wc -c)").is_ok());
+        assert!(ensure_not_file_write_command("command 2> >(grep error)").is_ok());
+        assert!(ensure_not_file_write_command("printf hello >(wc -c)").is_ok());
+        assert!(ensure_not_file_write_command("printf hello > >(cat > result.txt)").is_err());
     }
 
     #[test]
