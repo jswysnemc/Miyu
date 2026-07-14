@@ -141,47 +141,6 @@ pub(crate) fn start_background_task_for_user(
     start_background_task(args, config, paths, true, None)
 }
 
-/// 用户 CLI 启动网关后台命令。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `config`: 应用配置
-/// - `command`: shell 命令
-/// - `cwd`: 可选工作目录
-/// - `label`: 可选标签
-/// - `timeout_seconds`: 可选超时时间，0 表示不自动超时
-/// - `gateway_id`: 网关标识
-///
-/// 返回:
-/// - JSON 格式任务信息
-pub(crate) fn start_gateway_background_task_for_user(
-    paths: &MiyuPaths,
-    config: &AppConfig,
-    command: &str,
-    cwd: Option<&str>,
-    label: Option<&str>,
-    timeout_seconds: Option<u64>,
-    gateway_id: &str,
-) -> Result<String> {
-    let mut args = json!({"command": command});
-    if let Some(cwd) = cwd.filter(|value| !value.trim().is_empty()) {
-        args["cwd"] = json!(cwd);
-    }
-    if let Some(label) = label.filter(|value| !value.trim().is_empty()) {
-        args["label"] = json!(label);
-    }
-    if let Some(timeout_seconds) = timeout_seconds {
-        args["timeout_seconds"] = json!(timeout_seconds);
-    }
-    start_background_task(
-        args,
-        config,
-        paths,
-        true,
-        Some(BackgroundRuntimeOwner::gateway(gateway_id)),
-    )
-}
-
 /// 用户 CLI 读取后台命令输出。
 ///
 /// 参数:

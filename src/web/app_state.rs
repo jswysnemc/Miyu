@@ -1,4 +1,5 @@
 use super::runs::RunManager;
+use super::services::weixin_login::WeixinLoginManager;
 use super::system_monitor::SystemMonitor;
 use super::terminal::TerminalManager;
 use super::workspaces::WorkspaceManager;
@@ -14,4 +15,5 @@ pub(super) struct WebAppState {
     pub runs: RunManager,
     pub terminals: TerminalManager,
     pub system_monitor: SystemMonitor,
+    pub weixin_login: WeixinLoginManager,
 }

@@ -2,6 +2,7 @@ mod agent_options;
 mod background_tasks;
 mod config;
 mod cron_jobs;
+mod gateway_weixin_login;
 mod gateways;
 mod health;
 mod permissions;
@@ -42,6 +43,7 @@ pub(super) fn router(state: WebAppState) -> Router<WebAppState> {
         .merge(prompts::routes())
         .merge(permissions::routes())
         .merge(gateways::routes())
+        .merge(gateway_weixin_login::routes())
         .merge(sessions::routes())
         .merge(runs::routes())
         .merge(workspace::routes())

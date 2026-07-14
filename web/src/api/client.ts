@@ -35,7 +35,8 @@ import type {
   SubagentDetail,
   Workspace,
   WorkspaceList,
-  WorkspaceSessions
+  WorkspaceSessions,
+  WeixinLoginSnapshot
 } from "./contracts";
 
 /** 使用 URL 启动令牌建立同源会话。 */
@@ -213,7 +214,21 @@ export const api = {
   gateways: {
     list: () => apiRequest<GatewayStatus[]>("/api/gateways"),
     start: (id: string) => apiRequest<Record<string, unknown>>(`/api/gateways/${id}/start`, { method: "POST" }),
-    stop: (id: string) => apiRequest<Record<string, unknown>>(`/api/gateways/${id}/stop`, { method: "POST" })
+    stop: (id: string) => apiRequest<Record<string, unknown>>(`/api/gateways/${id}/stop`, { method: "POST" }),
+    weixinLogin: {
+      start: (baseUrl?: string, botType?: string) =>
+        apiRequest<WeixinLoginSnapshot>("/api/gateways/weixin/login", {
+          method: "POST",
+          body: JSON.stringify({ base_url: baseUrl, bot_type: botType })
+        }),
+      status: (sessionId: string) =>
+        apiRequest<WeixinLoginSnapshot>(`/api/gateways/weixin/login/${encodeURIComponent(sessionId)}`),
+      verify: (sessionId: string, verifyCode: string) =>
+        apiRequest<WeixinLoginSnapshot>(`/api/gateways/weixin/login/${encodeURIComponent(sessionId)}/verify`, {
+          method: "POST",
+          body: JSON.stringify({ verify_code: verifyCode })
+        })
+    }
   },
   cronJobs: {
     list: () => apiRequest<CronJob[]>("/api/cron-jobs"),

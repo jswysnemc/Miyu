@@ -499,7 +499,14 @@ impl AppConfig {
         Ok(provider.model_tools_enabled_for(&provider.default_model))
     }
 
-    pub fn active_context_chars(&self) -> Result<usize> {
+    /// 返回当前模型上下文窗口 token 数。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 当前模型上下文窗口 token 数
+    pub fn active_context_window_tokens(&self) -> Result<usize> {
         let provider = self.provider(None)?;
         Ok(provider
             .model_context_chars_for(&provider.default_model)

@@ -29,6 +29,17 @@ pub fn estimate_texts_tokens(texts: &[&str]) -> u64 {
     estimate_tokens(&combined) as u64
 }
 
+/// 将 token 预算换算为保守字符容量。
+///
+/// 参数:
+/// - `tokens`: token 预算
+///
+/// 返回:
+/// - 任意 CJK / 拉丁混排下都不会超出 token 预算的字符数
+pub fn conservative_char_capacity(tokens: usize) -> usize {
+    tokens.saturating_mul(CHARS_PER_TOKEN_CJK)
+}
+
 /// 按 CJK / 拉丁分别折算，不做 min=1。
 ///
 /// 参数:
@@ -93,5 +104,16 @@ mod tests {
     fn empty_is_zero() {
         assert_eq!(estimate_tokens(""), 0);
         assert_eq!(estimate_texts_tokens(&[]), 0);
+    }
+
+    #[test]
+    fn conservative_capacity_never_exceeds_token_budget() {
+        // 全 CJK 是最坏情况：2 字符/token，容量按此换算保证任何混排都不超预算
+        let budget = conservative_char_capacity(1_000);
+        assert_eq!(budget, 2_000);
+        let cjk_text = "你".repeat(budget);
+        assert!(estimate_tokens(&cjk_text) <= 1_000);
+        let latin_text = "a".repeat(budget);
+        assert!(estimate_tokens(&latin_text) <= 1_000);
     }
 }

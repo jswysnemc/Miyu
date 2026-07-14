@@ -22,7 +22,7 @@ impl Agent {
         messages: &[ChatMessage],
         on_event: &mut impl FnMut(AgentEvent) -> Result<()>,
     ) -> Result<bool> {
-        let projection = project_provider_turn_from_messages(messages, 0, self.context_tokens);
+        let projection = project_provider_turn_from_messages(messages, 0, self.context_char_budget);
         if !self.state.should_attempt_auto_compaction()? {
             return Ok(false);
         }
@@ -152,7 +152,7 @@ impl Agent {
         association_prompt: Option<&str>,
         auto_meme_reminder: Option<&str>,
     ) -> Result<bool> {
-        let projection = project_provider_turn_from_messages(messages, 0, self.context_tokens);
+        let projection = project_provider_turn_from_messages(messages, 0, self.context_char_budget);
         self.state.record_provider_overflow_recovery(
             Some(turn_id),
             FailureKind::ProviderOverflow,
@@ -204,7 +204,7 @@ impl Agent {
         )?;
         reprojected.extend(self.state.project_running_turn_tool_messages(turn_id)?);
         let reprojected_projection =
-            project_provider_turn_from_messages(&reprojected, 0, self.context_tokens);
+            project_provider_turn_from_messages(&reprojected, 0, self.context_char_budget);
         self.state.record_provider_overflow_recovery(
             Some(turn_id),
             FailureKind::ProviderOverflow,
@@ -231,7 +231,7 @@ impl Agent {
         messages: &[ChatMessage],
         err: &anyhow::Error,
     ) -> Result<()> {
-        let projection = project_provider_turn_from_messages(messages, 0, self.context_tokens);
+        let projection = project_provider_turn_from_messages(messages, 0, self.context_char_budget);
         self.state.record_provider_overflow_recovery(
             Some(turn_id),
             FailureKind::OverflowRetryFailed,
@@ -252,9 +252,9 @@ impl Agent {
     pub(super) fn spawn_session_memory_extraction(&self) {
         let state = self.state.clone();
         let client = self.client.clone();
-        let context_tokens = self.context_tokens;
+        let context_char_budget = self.context_char_budget;
         tokio::spawn(async move {
-            let _ = extract_session_memory_with_model(state, client, context_tokens).await;
+            let _ = extract_session_memory_with_model(state, client, context_char_budget).await;
         });
     }
 }
@@ -264,18 +264,18 @@ impl Agent {
 /// 参数:
 /// - `state`: 状态仓储
 /// - `client`: 模型客户端
-/// - `context_tokens`: 当前主模型上下文窗口字符数
+/// - `context_char_budget`: 当前主模型上下文窗口字符预算
 ///
 /// 返回:
 /// - 提取是否成功
 async fn extract_session_memory_with_model(
     state: StateStore,
     client: OpenAiCompatibleClient,
-    context_tokens: usize,
+    context_char_budget: usize,
 ) -> Result<bool> {
     let mut perf = PerfTrace::new("session-memory");
     perf.mark("start");
-    let Some(input) = state.prepare_session_memory_model_extraction(context_tokens)? else {
+    let Some(input) = state.prepare_session_memory_model_extraction(context_char_budget)? else {
         perf.mark("skip");
         return Ok(false);
     };

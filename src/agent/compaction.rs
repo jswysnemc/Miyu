@@ -81,7 +81,7 @@ impl Agent {
                     super::recovery::classify_compaction_error(&err),
                     &format!("{err:#}"),
                     request.prompt().chars().count(),
-                    self.context_tokens,
+                    self.context_char_budget,
                 )?;
                 return Err(err).context("failed to compact conversation");
             }
@@ -89,7 +89,7 @@ impl Agent {
         match self.state.apply_manual_compaction_with_budget_guard(
             &request,
             &summary,
-            self.context_tokens,
+            self.context_char_budget,
         )? {
             CompactionApplyOutcome::Applied => Ok(turn_count),
             CompactionApplyOutcome::RejectedOverBudget => {
@@ -111,14 +111,14 @@ impl Agent {
     ) -> Result<String> {
         let prompt = self
             .state
-            .build_compaction_summary_prompt(request, self.context_tokens)?;
+            .build_compaction_summary_prompt(request, self.context_char_budget)?;
         let messages = vec![
             ChatMessage::system(
                 "You are a conversation compaction worker. Produce a concise, faithful Markdown summary for future turns. Do not answer the user task.",
             ),
             ChatMessage::plain("user", prompt),
         ];
-        let max_chars = crate::state::summary_char_limit(self.context_tokens);
+        let max_chars = crate::state::summary_char_limit(self.context_char_budget);
         let first = self.request_compaction_summary(messages).await?;
         if crate::state::validate_summary(&first, max_chars).is_ok() {
             return Ok(first);

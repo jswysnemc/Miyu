@@ -38,21 +38,6 @@ impl BackgroundRuntimeOwner {
             process_kind: ProcessKind::BackgroundCommand,
         }
     }
-
-    /// 创建网关运行时 owner。
-    ///
-    /// 参数:
-    /// - `gateway_id`: 网关标识
-    ///
-    /// 返回:
-    /// - 后台任务运行时 owner 元数据
-    pub(super) fn gateway(gateway_id: &str) -> Self {
-        Self {
-            owner_kind: OwnerKind::Gateway,
-            owner_id: gateway_id.to_string(),
-            process_kind: ProcessKind::Gateway,
-        }
-    }
 }
 
 /// 启动后台命令。
@@ -167,10 +152,24 @@ pub(super) async fn list_background_tasks(paths: &MiyuPaths, config: &AppConfig)
     store.save(&tasks)?;
     let state = StateStore::new(paths)?;
     sync_runtime_tasks(&state, &tasks)?;
+    // 1. 网关进程由网关管理页独立管理，通用后台任务列表不展示
+    tasks.retain(|task| !is_gateway_owned_task(task));
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "tasks": tasks,
     }))?)
+}
+
+/// 判断后台任务是否属于网关进程。
+///
+/// 参数:
+/// - `task`: 后台任务
+///
+/// 返回:
+/// - 属于网关时返回 true
+fn is_gateway_owned_task(task: &BackgroundCommandTask) -> bool {
+    task.runtime_owner_kind.as_deref() == Some(OwnerKind::Gateway.as_str())
+        || task.label.starts_with("gateway:")
 }
 
 /// 读取后台命令输出。
@@ -511,6 +510,39 @@ mod tests {
     #[test]
     fn sanitize_id_keeps_safe_subset() {
         assert_eq!(sanitize_id("Dev Server 01!"), "dev-server-01");
+    }
+
+    #[test]
+    fn gateway_owned_tasks_are_detected_by_owner_and_label() {
+        let mut task = BackgroundCommandTask {
+            id: "1".to_string(),
+            runtime_process_id: None,
+            runtime_owner_kind: Some("gateway".to_string()),
+            runtime_owner_id: Some("qq".to_string()),
+            runtime_process_kind: Some("gateway".to_string()),
+            label: "gateway:qq".to_string(),
+            command: "miyu gateway qq-bot".to_string(),
+            cwd: ".".to_string(),
+            pid: 100,
+            pgid: None,
+            status: "running".to_string(),
+            stdout_log: "stdout.log".to_string(),
+            stderr_log: "stderr.log".to_string(),
+            started_at: 0,
+            updated_at: 0,
+            timeout_seconds: 0,
+        };
+        assert!(is_gateway_owned_task(&task));
+
+        // 兼容旧记录：无 owner 元数据但 label 带 gateway: 前缀
+        task.runtime_owner_kind = None;
+        task.runtime_owner_id = None;
+        task.runtime_process_kind = None;
+        assert!(is_gateway_owned_task(&task));
+
+        // 普通后台任务不应被识别为网关
+        task.label = "dev server".to_string();
+        assert!(!is_gateway_owned_task(&task));
     }
 
     #[tokio::test]

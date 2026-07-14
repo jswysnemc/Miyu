@@ -62,7 +62,7 @@ fn official_anthropic_uses_family_context_fallback() {
     let mut config = AppConfig::default();
     config.active_provider = "anthropic".to_string();
 
-    assert_eq!(config.active_context_chars().unwrap(), 200_000);
+    assert_eq!(config.active_context_window_tokens().unwrap(), 200_000);
 }
 
 #[test]
@@ -77,7 +77,7 @@ fn explicit_anthropic_context_overrides_family_fallback() {
     provider.set_model_context_chars_for(&model, Some(160_000));
     config.active_provider = "anthropic".to_string();
 
-    assert_eq!(config.active_context_chars().unwrap(), 160_000);
+    assert_eq!(config.active_context_window_tokens().unwrap(), 160_000);
 }
 
 #[test]
@@ -232,7 +232,7 @@ fn progressive_tool_loading_defaults_disabled() {
 }
 
 #[test]
-fn active_context_chars_prefers_model_metadata() {
+fn active_context_window_tokens_prefers_model_metadata() {
     let mut config = AppConfig::default();
     let model = config.providers[0].default_model.clone();
     config.providers[0]
@@ -248,7 +248,7 @@ fn active_context_chars_prefers_model_metadata() {
         },
     );
 
-    assert_eq!(config.active_context_chars().unwrap(), 128_000);
+    assert_eq!(config.active_context_window_tokens().unwrap(), 128_000);
 }
 
 #[test]

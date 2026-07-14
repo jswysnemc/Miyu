@@ -27,7 +27,7 @@ impl ReplChrome {
     /// 返回:
     /// - chrome 状态
     pub(super) fn from_runtime(config: &AppConfig, state: &StateStore, mode: AgentMode) -> Self {
-        let context_limit = config.active_context_chars().unwrap_or(128_000);
+        let context_limit = config.active_context_window_tokens().unwrap_or(128_000);
         let snapshot = state.session_snapshot(context_limit).ok();
         let provider = config.provider(None).ok();
         let model = provider

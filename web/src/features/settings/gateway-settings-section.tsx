@@ -1,5 +1,8 @@
-import type { AppConfig } from "../../api/contracts";
+import { useState } from "react";
+import { QrCode } from "lucide-react";
+import type { AppConfig, WeixinLoginAccount } from "../../api/contracts";
 import { GatewayRuntimeControl } from "../gateways/gateway-runtime-control";
+import { WeixinLoginDialog } from "../gateways/weixin-login-dialog";
 import { SettingsGroup } from "./editor-layout";
 import type { GatewayId } from "./settings-types";
 import { PasswordField } from "../../shared/ui/password-field";
@@ -21,6 +24,19 @@ type GatewaySettingsSectionProps = {
 export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave }: GatewaySettingsSectionProps) {
   const qq = config.gateways.qq;
   const weixin = config.gateways.weixin;
+  const [loginOpen, setLoginOpen] = useState(false);
+
+  /** 登录成功后回填微信账户配置。 */
+  const handleConfirmed = (account: WeixinLoginAccount) => {
+    onGatewayChange("weixin", {
+      enabled: true,
+      account: account.account_id,
+      base_url: account.base_url,
+      cdn_base_url: account.cdn_base_url,
+      token: ""
+    });
+  };
+
   return (
     <div className="settings-editor gateway-settings">
       <SettingsGroup
@@ -51,8 +67,19 @@ export function GatewaySettingsSection({ config, dirty, onGatewayChange, onSave 
           <label className="settings-field"><span>Agent</span><input value={weixin.bot_agent} onChange={(event) => onGatewayChange("weixin", { bot_agent: event.target.value })} /></label>
           <div className="settings-field"><span>访问令牌</span><PasswordField value={weixin.token} onChange={(value) => onGatewayChange("weixin", { token: value })} /></div>
         </div>
+        <div className="gateway-weixin-login-row">
+          <button type="button" className="gateway-weixin-login-button" onClick={() => setLoginOpen(true)}><QrCode size={14} />扫码登录</button>
+          <small>扫码登录后自动获取并回填账户凭证</small>
+        </div>
         <GatewayRuntimeControl gatewayId="weixin" enabled={weixin.enabled} dirty={dirty} onSave={onSave} />
       </SettingsGroup>
+      <WeixinLoginDialog
+        open={loginOpen}
+        baseUrl={weixin.base_url}
+        botType={weixin.bot_type}
+        onClose={() => setLoginOpen(false)}
+        onConfirmed={handleConfirmed}
+      />
     </div>
   );
 }

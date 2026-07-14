@@ -577,6 +577,37 @@
 
 .gateway-settings { max-width: 1100px; }
 
+.gateway-weixin-login-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 14px;
+}
+
+.gateway-weixin-login-button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 36px;
+  padding: 0 14px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-raised);
+  color: var(--ink);
+  font-size: 0.8125rem;
+  font-weight: 500;
+}
+
+.gateway-weixin-login-button:hover {
+  border-color: color-mix(in srgb, var(--signal) 50%, var(--line));
+  color: var(--signal);
+}
+
+.gateway-weixin-login-row small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
 .settings-switch {
   display: grid;
   grid-template-columns: 38px auto;

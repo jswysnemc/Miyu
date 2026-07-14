@@ -34,6 +34,9 @@ pub(super) fn routes() -> Router<WebAppState> {
 /// 列出全部后台任务并刷新运行状态。
 async fn list(State(state): State<WebAppState>) -> WebResult<Json<Value>> {
     let config = load_config(&state)?;
+    // 1. 先迁移历史遗留的网关记录，网关进程只在网关管理页展示
+    crate::gateways::process_control::migrate_legacy_gateway_tasks(&state.paths)
+        .map_err(WebError::from)?;
     let output = list_background_tasks_for_user(&state.paths, &config)
         .await
         .map_err(WebError::from)?;

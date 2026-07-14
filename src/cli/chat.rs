@@ -172,7 +172,7 @@ pub(super) async fn run_chat_with_options(
             choice.label()
         );
     }
-    config.active_context_chars()?;
+    config.active_context_window_tokens()?;
     let chat_input = prepare_clipboard_chat_input(message, clipb)?;
     let reasoning_mode = if show_reasoning == Some(false) {
         render::ReasoningDisplayMode::Hidden

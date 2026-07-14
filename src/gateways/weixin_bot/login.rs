@@ -37,19 +37,19 @@ pub(crate) struct SavedWeixinAccount {
 }
 
 #[derive(Debug, Deserialize)]
-struct QrCodeResponse {
-    qrcode: String,
-    qrcode_img_content: String,
+pub(crate) struct QrCodeResponse {
+    pub(crate) qrcode: String,
+    pub(crate) qrcode_img_content: String,
 }
 
 #[derive(Debug, Deserialize)]
-struct QrStatusResponse {
-    status: String,
-    bot_token: Option<String>,
-    ilink_bot_id: Option<String>,
-    baseurl: Option<String>,
-    ilink_user_id: Option<String>,
-    redirect_host: Option<String>,
+pub(crate) struct QrStatusResponse {
+    pub(crate) status: String,
+    pub(crate) bot_token: Option<String>,
+    pub(crate) ilink_bot_id: Option<String>,
+    pub(crate) baseurl: Option<String>,
+    pub(crate) ilink_user_id: Option<String>,
+    pub(crate) redirect_host: Option<String>,
 }
 
 /// 返回微信登录默认基础地址。
@@ -193,7 +193,10 @@ pub(crate) async fn run_weixin_login(paths: &MiyuPaths, config: WeixinLoginConfi
 ///
 /// 返回:
 /// - 回写是否成功
-fn update_weixin_gateway_config(paths: &MiyuPaths, account: &SavedWeixinAccount) -> Result<()> {
+pub(crate) fn update_weixin_gateway_config(
+    paths: &MiyuPaths,
+    account: &SavedWeixinAccount,
+) -> Result<()> {
     AppConfig::init_files(paths)?;
     let mut config = AppConfig::load_or_default(paths)?;
     config.gateways.weixin.enabled = true;
@@ -247,7 +250,7 @@ pub(crate) fn load_weixin_account(
 ///
 /// 返回:
 /// - 二维码响应
-async fn fetch_qrcode(
+pub(crate) async fn fetch_qrcode(
     client: &reqwest::Client,
     base_url: &str,
     bot_type: &str,
@@ -277,7 +280,7 @@ async fn fetch_qrcode(
 ///
 /// 返回:
 /// - 登录状态响应
-async fn poll_qrcode_status(
+pub(crate) async fn poll_qrcode_status(
     client: &reqwest::Client,
     base_url: &str,
     qrcode: &str,
@@ -367,7 +370,10 @@ fn read_verify_code() -> Result<String> {
 ///
 /// 返回:
 /// - 保存文件路径
-fn save_weixin_account(paths: &MiyuPaths, account: &SavedWeixinAccount) -> Result<PathBuf> {
+pub(crate) fn save_weixin_account(
+    paths: &MiyuPaths,
+    account: &SavedWeixinAccount,
+) -> Result<PathBuf> {
     let dir = weixin_accounts_dir(paths);
     std::fs::create_dir_all(&dir)?;
     let path = account_file(paths, &account.account_id);

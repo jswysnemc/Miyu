@@ -1,17 +1,14 @@
+use super::process_control::{
+    refresh_gateway_processes, spawn_gateway_process, stop_gateway_process,
+};
 use crate::config::AppConfig;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
-use crate::tools::command::{
-    list_background_tasks_for_user, start_gateway_background_task_for_user,
-    stop_background_task_for_user,
-};
 use anyhow::{Context, Result};
-use serde::Deserialize;
 use serde_json::json;
 
 const GATEWAY_QQ: &str = "qq";
 const GATEWAY_WEIXIN: &str = "weixin";
-const GATEWAY_LABEL_PREFIX: &str = "gateway:";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ManagedGateway {
@@ -26,21 +23,6 @@ pub(crate) struct GatewayRuntimeStatus {
     pub(crate) task_id: Option<String>,
     pub(crate) status: String,
     pub(crate) pid: Option<u32>,
-}
-
-#[derive(Debug, Deserialize)]
-struct BackgroundTaskList {
-    tasks: Vec<BackgroundTask>,
-}
-
-#[derive(Debug, Clone, Deserialize)]
-struct BackgroundTask {
-    id: String,
-    label: String,
-    runtime_owner_kind: Option<String>,
-    runtime_owner_id: Option<String>,
-    pid: u32,
-    status: String,
 }
 
 impl ManagedGateway {
@@ -70,17 +52,6 @@ impl ManagedGateway {
             Self::Qq => "QQ official bot",
             Self::Weixin => "Weixin iLink bot",
         }
-    }
-
-    /// 返回后台任务标签。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 后台任务标签
-    fn label(self) -> String {
-        format!("{GATEWAY_LABEL_PREFIX}{}", self.id())
     }
 
     /// 返回启动命令参数。
@@ -121,25 +92,29 @@ pub(crate) async fn gateway_runtime_statuses(
     paths: &MiyuPaths,
     config: &AppConfig,
 ) -> Result<Vec<GatewayRuntimeStatus>> {
-    let tasks = gateway_background_tasks(paths, config).await?;
+    let records = refresh_gateway_processes(paths)?;
     Ok(managed_gateways()
         .iter()
         .map(|gateway| {
-            let task = find_gateway_task(&tasks, *gateway);
+            let record = records
+                .iter()
+                .find(|record| record.gateway_id == gateway.id());
             GatewayRuntimeStatus {
                 gateway: *gateway,
                 enabled: gateway_enabled(config, *gateway),
-                task_id: task.map(|task| task.id.clone()),
-                status: task
-                    .map(|task| task.status.clone())
+                task_id: record.map(|record| record.runtime_process_id()),
+                status: record
+                    .map(|record| record.status.clone())
                     .unwrap_or_else(|| "stopped".to_string()),
-                pid: task.map(|task| task.pid),
+                pid: record
+                    .filter(|record| record.is_running())
+                    .map(|record| record.pid),
             }
         })
         .collect())
 }
 
-/// 启动指定网关后台任务。
+/// 启动指定网关独立进程。
 ///
 /// 参数:
 /// - `paths`: Miyu 路径
@@ -153,9 +128,10 @@ pub(crate) async fn start_gateway(
     config: &AppConfig,
     gateway: ManagedGateway,
 ) -> Result<String> {
-    if find_gateway_task(&gateway_background_tasks(paths, config).await?, gateway)
-        .map(|task| task.status == "running")
-        .unwrap_or(false)
+    let records = refresh_gateway_processes(paths)?;
+    if records
+        .iter()
+        .any(|record| record.gateway_id == gateway.id() && record.is_running())
     {
         return Ok(serde_json::to_string_pretty(&json!({
             "ok": true,
@@ -164,18 +140,23 @@ pub(crate) async fn start_gateway(
         }))?);
     }
     let command = gateway_command(gateway)?;
-    start_gateway_background_task_for_user(
+    let record = spawn_gateway_process(
         paths,
         config,
-        &command,
-        Some(&gateway_workspace(paths)),
-        Some(&gateway.label()),
-        Some(0),
         gateway.id(),
-    )
+        &command,
+        &gateway_workspace(paths),
+    )?;
+    Ok(serde_json::to_string_pretty(&json!({
+        "ok": true,
+        "gateway": gateway.id(),
+        "pid": record.pid,
+        "stdout_log": record.stdout_log,
+        "stderr_log": record.stderr_log,
+    }))?)
 }
 
-/// 停止指定网关后台任务。
+/// 停止指定网关独立进程。
 ///
 /// 参数:
 /// - `paths`: Miyu 路径
@@ -183,75 +164,22 @@ pub(crate) async fn start_gateway(
 /// - `gateway`: 网关
 ///
 /// 返回:
-/// - 停止的任务数量
+/// - 停止的进程数量
 pub(crate) async fn stop_gateway(
     paths: &MiyuPaths,
     config: &AppConfig,
     gateway: ManagedGateway,
 ) -> Result<usize> {
-    let tasks = gateway_background_tasks(paths, config).await?;
-    let matching = tasks
+    let records = refresh_gateway_processes(paths)?;
+    let has_running = records
         .iter()
-        .filter(|task| is_gateway_task(task, gateway) && task.status == "running")
-        .cloned()
-        .collect::<Vec<_>>();
-    if !matching.is_empty() {
-        // 1. 先按 runtime owner 执行连接关闭策略，再让兼容 JSON 任务状态跟随刷新
+        .any(|record| record.gateway_id == gateway.id() && record.is_running());
+    if has_running {
+        // 1. 先按 runtime owner 执行连接关闭策略，再终止独立进程
         let state = StateStore::new(paths)?;
         state.apply_gateway_connection_close_policy(gateway.id())?;
     }
-    for task in &matching {
-        stop_background_task_for_user(paths, config, &task.id, false).await?;
-    }
-    Ok(matching.len())
-}
-
-/// 查询后台任务列表。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `config`: 应用配置
-///
-/// 返回:
-/// - 后台任务列表
-async fn gateway_background_tasks(
-    paths: &MiyuPaths,
-    config: &AppConfig,
-) -> Result<Vec<BackgroundTask>> {
-    let raw = list_background_tasks_for_user(paths, config).await?;
-    let list = serde_json::from_str::<BackgroundTaskList>(&raw)?;
-    Ok(list.tasks)
-}
-
-/// 查找网关对应后台任务。
-///
-/// 参数:
-/// - `tasks`: 后台任务列表
-/// - `gateway`: 网关
-///
-/// 返回:
-/// - 可选后台任务
-fn find_gateway_task(tasks: &[BackgroundTask], gateway: ManagedGateway) -> Option<&BackgroundTask> {
-    tasks
-        .iter()
-        .filter(|task| is_gateway_task(task, gateway))
-        .max_by_key(|task| &task.id)
-}
-
-/// 判断任务是否属于指定网关。
-///
-/// 参数:
-/// - `task`: 后台任务
-/// - `gateway`: 网关
-///
-/// 返回:
-/// - 是否匹配
-fn is_gateway_task(task: &BackgroundTask, gateway: ManagedGateway) -> bool {
-    if task.runtime_owner_kind.is_some() || task.runtime_owner_id.is_some() {
-        return task.runtime_owner_kind.as_deref() == Some("gateway")
-            && task.runtime_owner_id.as_deref() == Some(gateway.id());
-    }
-    task.label == gateway.label()
+    stop_gateway_process(paths, config, gateway.id()).await
 }
 
 /// 判断网关是否在配置中启用。
@@ -309,76 +237,6 @@ fn shell_quote(value: &str) -> String {
 mod tests {
     use super::*;
 
-    /// 验证网关后台任务标签只匹配对应渠道。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 无
-    #[test]
-    fn gateway_task_matching_uses_gateway_label() {
-        let qq_task = task("1", "gateway:qq", "running", 100);
-        let weixin_task = task("2", "gateway:weixin", "running", 101);
-
-        assert!(is_gateway_task(&qq_task, ManagedGateway::Qq));
-        assert!(!is_gateway_task(&weixin_task, ManagedGateway::Qq));
-    }
-
-    /// 验证网关后台任务优先使用 runtime owner 元数据匹配。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 无
-    #[test]
-    fn gateway_task_matching_prefers_runtime_owner() {
-        let mut task = task("1", "gateway:weixin", "running", 100);
-        task.runtime_owner_kind = Some("gateway".to_string());
-        task.runtime_owner_id = Some("qq".to_string());
-
-        assert!(is_gateway_task(&task, ManagedGateway::Qq));
-        assert!(!is_gateway_task(&task, ManagedGateway::Weixin));
-    }
-
-    /// 验证非网关 owner 不会因为标签被误判为网关任务。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 无
-    #[test]
-    fn gateway_task_matching_rejects_labeled_non_gateway_owner() {
-        let mut task = task("1", "gateway:qq", "running", 100);
-        task.runtime_owner_kind = Some("session".to_string());
-        task.runtime_owner_id = Some("default".to_string());
-
-        assert!(!is_gateway_task(&task, ManagedGateway::Qq));
-    }
-
-    /// 验证查找网关任务时选择最新任务。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 无
-    #[test]
-    fn find_gateway_task_selects_latest_matching_task() {
-        let tasks = vec![
-            task("100-1", "gateway:qq", "exited", 100),
-            task("101-1", "gateway:qq", "running", 101),
-            task("102-1", "gateway:weixin", "running", 102),
-        ];
-
-        let found = find_gateway_task(&tasks, ManagedGateway::Qq).unwrap();
-
-        assert_eq!(found.id, "101-1");
-        assert_eq!(found.status, "running");
-    }
-
     /// 验证网关启动命令参数映射稳定。
     ///
     /// 参数:
@@ -405,26 +263,5 @@ mod tests {
     #[test]
     fn shell_quote_escapes_single_quotes() {
         assert_eq!(shell_quote("a'b"), "'a'\"'\"'b'");
-    }
-
-    /// 创建测试后台任务。
-    ///
-    /// 参数:
-    /// - `id`: 任务 ID
-    /// - `label`: 任务标签
-    /// - `status`: 任务状态
-    /// - `pid`: 进程 ID
-    ///
-    /// 返回:
-    /// - 后台任务
-    fn task(id: &str, label: &str, status: &str, pid: u32) -> BackgroundTask {
-        BackgroundTask {
-            id: id.to_string(),
-            label: label.to_string(),
-            runtime_owner_kind: None,
-            runtime_owner_id: None,
-            pid,
-            status: status.to_string(),
-        }
     }
 }

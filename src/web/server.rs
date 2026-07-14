@@ -2,6 +2,7 @@ use super::api;
 use super::app_state::WebAppState;
 use super::assets;
 use super::runs::RunManager;
+use super::services::weixin_login::WeixinLoginManager;
 use super::system_monitor::SystemMonitor;
 use super::terminal::TerminalManager;
 use super::workspaces::WorkspaceManager;
@@ -35,6 +36,7 @@ pub(super) async fn run(paths: &MiyuPaths, args: WebArgs) -> Result<()> {
         runs: runs.clone(),
         terminals: TerminalManager::new(),
         system_monitor: SystemMonitor::new(),
+        weixin_login: WeixinLoginManager::new(paths),
     };
     runs.resume_queued().await;
     let app = Router::new()

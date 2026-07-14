@@ -132,7 +132,7 @@ async fn usage(
 /// - 当前模型上下文 token 数
 fn usage_context_window(config: &AppConfig, query: &SystemUsageQuery) -> Result<usize> {
     match (&query.provider_id, &query.model) {
-        (None, None) => config.active_context_chars(),
+        (None, None) => config.active_context_window_tokens(),
         (Some(provider_id), Some(model)) => {
             // 【Web主界面】【同步模型上下文】1. 校验供应商和模型必须同时为非空值
             if provider_id.trim().is_empty() || model.trim().is_empty() {
@@ -141,7 +141,7 @@ fn usage_context_window(config: &AppConfig, query: &SystemUsageQuery) -> Result<
             // 【Web主界面】【同步模型上下文】2. 在临时配置中应用选择，复用统一的上下文容量解析规则
             let mut selected_config = config.clone();
             selected_config.set_active_provider_model(provider_id, model)?;
-            selected_config.active_context_chars()
+            selected_config.active_context_window_tokens()
         }
         _ => bail!("provider_id and model must be provided together"),
     }

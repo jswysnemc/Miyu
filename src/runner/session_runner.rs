@@ -139,7 +139,7 @@ impl<'paths> SessionRunner<'paths> {
         let mut perf = PerfTrace::new("runner");
         perf.mark("start submission");
         let config = self.load_config()?;
-        let context_limit_chars = config.active_context_chars()?;
+        let context_limit_chars = config.active_context_window_tokens()?;
         let state = match submission.session_id.as_deref() {
             Some(session_id) => StateStore::for_session(self.paths, session_id)?,
             None => StateStore::new(self.paths)?,
@@ -223,7 +223,7 @@ impl<'paths> SessionRunner<'paths> {
         let mut perf = PerfTrace::new("runner");
         perf.mark("start reused-agent submission");
         let config = self.load_config()?;
-        let context_limit_chars = config.active_context_chars()?;
+        let context_limit_chars = config.active_context_window_tokens()?;
         let state_dir = agent.state().state_dir().to_path_buf();
         // 1. 仍按轮获取运行所有权，避免并发会话互相踩
         let _active_run = ActiveRunGuard::acquire_with_state_dir(

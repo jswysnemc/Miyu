@@ -39,7 +39,8 @@ pub struct Agent {
     state: StateStore,
     client: OpenAiCompatibleClient,
     base_system_prompt: String,
-    context_tokens: usize,
+    // 上下文窗口 token 数经保守换算得到的字符预算，压缩触发与预算判断均用字符口径
+    context_char_budget: usize,
     trim_at_ratio: f32,
     tools_enabled: bool,
     max_tool_rounds: usize,
@@ -93,7 +94,9 @@ impl Agent {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
         }
-        let context_tokens = config.active_context_chars()?;
+        let context_char_budget = crate::token_estimate::conservative_char_capacity(
+            config.active_context_window_tokens()?,
+        );
         let max_tool_rounds = config.tools.max_rounds;
         if tools_enabled && config.tools.progressive_loading_enabled {
             tools::register_progressive_loader(&mut tools);
@@ -105,7 +108,7 @@ impl Agent {
             state,
             client,
             base_system_prompt,
-            context_tokens,
+            context_char_budget,
             trim_at_ratio: config.context.trim_at_ratio,
             tools_enabled,
             max_tool_rounds,
@@ -175,7 +178,9 @@ impl Agent {
                 .reset_if_prompt_changed(&self.base_system_prompt)?;
             self.state.recover_stale_turns()?;
         }
-        self.context_tokens = self.config.active_context_chars()?;
+        self.context_char_budget = crate::token_estimate::conservative_char_capacity(
+            self.config.active_context_window_tokens()?,
+        );
         self.max_tool_rounds = self.config.tools.max_rounds;
         self.trim_at_ratio = self.config.context.trim_at_ratio;
         Ok(())
@@ -356,7 +361,7 @@ impl Agent {
             let projection = project_provider_turn_from_messages(
                 &ordered_messages,
                 definitions.len(),
-                self.context_tokens,
+                self.context_char_budget,
             );
             self.state
                 .enforce_provider_projection(Some(turn_id), &projection)?;
@@ -666,7 +671,7 @@ impl Agent {
             association_prompt,
             auto_meme_reminder,
             0,
-            self.context_tokens,
+            self.context_char_budget,
         );
         self.last_dynamic_sources = projection.dynamic_sources.clone();
         self.state

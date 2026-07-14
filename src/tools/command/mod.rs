@@ -18,8 +18,10 @@ use background_tasks::BackgroundRuntimeOwner;
 pub(crate) use background::{
     cleanup_background_tasks_for_user, list_background_tasks_for_user,
     read_background_task_output_for_user, start_background_task_for_user,
-    start_gateway_background_task_for_user, stop_background_task_for_user,
+    stop_background_task_for_user,
 };
+pub(crate) use process::{process_exists, spawn_background_shell, terminate_process};
+pub(crate) use store::{unix_seconds, BackgroundCommandStore, BackgroundCommandTask};
 
 /// 注册命令相关工具。
 ///
