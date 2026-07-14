@@ -3,6 +3,7 @@ import { Activity, Archive, Cpu, Gauge, HardDrive, TerminalSquare } from "lucide
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { api } from "../../api/client";
+import type { RunModelSelection } from "../../api/contracts";
 import { useAnchoredPopover } from "../../shared/ui/popover/use-anchored-popover";
 import "./system-usage.css";
 
@@ -12,17 +13,18 @@ import "./system-usage.css";
  * 浮层通过 Portal 渲染到 body,按视口空间自动上下翻转,避免被
  * 输入区其他元素遮挡或溢出屏幕。
  *
+ * @param selection 主界面当前选择的供应商和模型
  * @returns 系统用量组件
  */
-export function SystemUsage() {
+export function SystemUsage({ selection }: { selection: RunModelSelection | null }) {
   const queryClient = useQueryClient();
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popoverRef = useRef<HTMLDivElement>(null);
   const usage = useQuery({
-    queryKey: ["system-usage"],
-    queryFn: api.system.usage,
+    queryKey: ["system-usage", selection?.providerId, selection?.model],
+    queryFn: () => api.system.usage(selection),
     refetchInterval: 5_000
   });
   const compact = useMutation({

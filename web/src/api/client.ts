@@ -260,6 +260,14 @@ export const api = {
     cancel: (id: string) => apiRequest<Subagent>(`/api/subagents/${encodeURIComponent(id)}/cancel`, { method:"POST" })
   },
   system: {
-    usage: () => apiRequest<SystemUsage>("/api/system/usage")
+    usage: (selection?: RunModelSelection | null) => {
+      const query = new URLSearchParams();
+      if (selection) {
+        query.set("provider_id", selection.providerId);
+        query.set("model", selection.model);
+      }
+      const suffix = query.size > 0 ? `?${query.toString()}` : "";
+      return apiRequest<SystemUsage>(`/api/system/usage${suffix}`);
+    }
   }
 };

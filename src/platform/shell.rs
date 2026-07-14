@@ -24,12 +24,29 @@ pub(crate) fn command_invocation(script: &str) -> ShellInvocation {
     ShellInvocation { program, args }
 }
 
-/// 返回当前平台适合交互终端的 Shell 程序。
+/// 返回当前平台适合交互终端的 Shell 调用。
 ///
 /// 返回:
-/// - Shell 程序路径或名称
-pub(crate) fn interactive_shell_program() -> OsString {
-    preferred_shell_program()
+/// - Shell 程序和交互启动参数
+pub(crate) fn interactive_shell_invocation() -> ShellInvocation {
+    #[cfg(windows)]
+    {
+        let program = super::shell_selection::select_windows_interactive_shell(
+            std::env::var_os("SHELL").as_deref(),
+            executable_in_path("pwsh.exe").is_some(),
+            executable_in_path("powershell.exe").is_some(),
+            std::env::var_os("COMSPEC").as_deref(),
+        );
+        let args = super::shell_selection::windows_interactive_shell_args(&program);
+        return ShellInvocation { program, args };
+    }
+    #[cfg(not(windows))]
+    {
+        ShellInvocation {
+            program: preferred_shell_program(),
+            args: Vec::new(),
+        }
+    }
 }
 
 /// 构造外部编辑器启动命令。
