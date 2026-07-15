@@ -1,4 +1,3 @@
-use super::command_guard::ensure_not_file_write_command;
 use super::process::run_shell_command;
 use crate::config::AppConfig;
 use crate::i18n::text as t;
@@ -22,7 +21,10 @@ pub(crate) fn register(
     let shell = config.tools.command_shell.clone();
     registry.register(ToolSpec::new(
         "run_command",
-        t("Run workspace shell commands for builds, tests, validation, export, inspection, and other command-line programs. Do not generate or edit source text through redirection, tee, or heredocs; use edit_file for text changes. A program's own -o/--output option may create build artifacts.", "运行构建、测试、校验、导出、检查及其他命令行程序。不要通过重定向、tee 或 heredoc 生成或编辑源文本，文本修改应使用 edit_file。程序自身通过 -o/--output 生成构建产物属于允许用途。"),
+        t(
+            "Run workspace shell commands for builds, tests, validation, export, inspection, and other command-line programs. Prefer edit_file/write_file for source text edits, but shell redirection, tee, and heredocs are allowed when useful. A program's own -o/--output option may create build artifacts.",
+            "运行构建、测试、校验、导出、检查及其他命令行程序。源码文本修改优先使用 edit_file/write_file，但 shell 重定向、tee、heredoc 也允许使用。程序自身通过 -o/--output 生成构建产物属于允许用途。",
+        ),
         json!({"type":"object","properties":{"command":{"type":"string","description": t("Complete shell command string. Put pipelines and conditionals in this single field; do not pass argv arrays or separate cwd fields.", "完整 Shell 命令字符串。管道和条件语句都放在此字段中，不要传 argv 数组或额外 cwd 字段。")},"timeout_seconds":{"type":"integer","minimum":1,"maximum":120,"description": t("Optional timeout from 1 to 120 seconds. Defaults to 30.", "可选超时，范围 1 到 120 秒，默认 30 秒。")}},"required":["command"],"additionalProperties":false}),
         move |args| {
             let shell = shell.clone();
@@ -63,7 +65,6 @@ async fn run_command(args: Value, allowed: bool, shell: String) -> Result<String
         bail!("{}", t("command execution is disabled; set skills.allow_command_execution=true in config.jsonc to enable run_command", "命令执行已禁用；请在 config.jsonc 中设置 skills.allow_command_execution=true 以启用 run_command"));
     }
     let command = required(&args, "command")?;
-    ensure_not_file_write_command(&command)?;
     let timeout = command_timeout(&args);
     let sandboxed = args
         .get("_miyu_sandbox")
@@ -72,7 +73,6 @@ async fn run_command(args: Value, allowed: bool, shell: String) -> Result<String
     let output = run_shell_command(&command, timeout, shell.as_str(), sandboxed).await?;
     command_output(output)
 }
-
 /// 执行只读 shell 命令。
 ///
 /// 参数:
