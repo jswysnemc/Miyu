@@ -160,33 +160,35 @@ fn visit_files(
     deadline: Instant,
     visitor: &mut impl FnMut(&Path) -> bool,
 ) -> Result<bool> {
-    let mut pending = vec![root.to_path_buf()];
-    while let Some(directory) = pending.pop() {
+    std::fs::metadata(root)?;
+    let filter_root = root.to_path_buf();
+    let mut builder = ignore::WalkBuilder::new(root);
+    builder
+        .hidden(false)
+        .ignore(true)
+        .git_ignore(true)
+        .git_global(true)
+        .git_exclude(true)
+        .require_git(false)
+        .parents(true)
+        .follow_links(false)
+        .filter_entry(move |entry| !excluded_directory(&filter_root, entry.path()));
+    // 1. 使用 ignore 遍历器保持与 ripgrep 一致的忽略规则
+    for entry in builder.build() {
         if Instant::now() >= deadline {
             return Ok(true);
         }
-        let entries = match std::fs::read_dir(&directory) {
-            Ok(entries) => entries,
-            Err(_err) if directory != root => continue,
-            Err(err) => return Err(err.into()),
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(_) => continue,
         };
-        let mut entries = entries.filter_map(|entry| entry.ok()).collect::<Vec<_>>();
-        entries.sort_by_key(|entry| entry.file_name());
-        for entry in entries {
-            if Instant::now() >= deadline {
-                return Ok(true);
-            }
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_dir() {
-                if !excluded_directory(root, &path) {
-                    pending.push(path);
-                }
-            } else if file_type.is_file() && visitor(&path) {
-                return Ok(false);
-            }
+        // 2. 只向调用方传递普通文件
+        if entry
+            .file_type()
+            .is_some_and(|file_type| file_type.is_file())
+            && visitor(entry.path())
+        {
+            return Ok(false);
         }
     }
     Ok(false)
@@ -303,5 +305,25 @@ mod tests {
         let result = glob_files(temp.path(), "**/file[0-9].rs", 10).unwrap();
 
         assert_eq!(result.lines, vec!["nested/file1.rs"]);
+    }
+
+    /// 验证原生遍历遵守 Git 忽略规则。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn glob_respects_gitignore_rules() {
+        let temp = tempfile::tempdir().unwrap();
+        std::fs::write(temp.path().join(".gitignore"), "ignored/\n").unwrap();
+        std::fs::create_dir_all(temp.path().join("ignored")).unwrap();
+        std::fs::write(temp.path().join("ignored/file.rs"), "content").unwrap();
+        std::fs::write(temp.path().join("visible.rs"), "content").unwrap();
+
+        let result = glob_files(temp.path(), "**/*.rs", 10).unwrap();
+
+        assert_eq!(result.lines, vec!["visible.rs"]);
     }
 }
