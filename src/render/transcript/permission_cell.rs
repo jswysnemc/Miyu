@@ -1,4 +1,5 @@
 use crate::permission::{PermissionDecision, PermissionRequest};
+use crate::render::PermissionChoice;
 
 /// TUI transcript 中已经处理的权限事件。
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -6,6 +7,7 @@ pub(crate) struct PermissionCell {
     pub(crate) request: PermissionRequest,
     pub(crate) decision: Option<PermissionDecision>,
     pub(crate) reply_draft: Option<String>,
+    pub(crate) selected: PermissionChoice,
 }
 
 impl PermissionCell {
@@ -21,6 +23,7 @@ impl PermissionCell {
             request,
             decision: None,
             reply_draft: None,
+            selected: PermissionChoice::Allow,
         }
     }
 
@@ -46,6 +49,17 @@ impl PermissionCell {
     pub(crate) fn set_reply_draft(&mut self, draft: Option<String>) {
         self.reply_draft = draft;
     }
+
+    /// 更新当前高亮的权限选项。
+    ///
+    /// 参数:
+    /// - `selected`: 高亮选项
+    ///
+    /// 返回:
+    /// - 无
+    pub(crate) fn set_selected(&mut self, selected: PermissionChoice) {
+        self.selected = selected;
+    }
 }
 
 /// 渲染权限事件。
@@ -59,7 +73,7 @@ pub(crate) fn render(cell: &PermissionCell) -> String {
     match &cell.decision {
         Some(decision) => crate::render::render_permission_event(&cell.request, decision),
         None => {
-            let mut output = crate::render::render_permission_prompt(&cell.request);
+            let mut output = crate::render::render_permission_prompt(&cell.request, cell.selected);
             if let Some(draft) = &cell.reply_draft {
                 output.push_str("\n  \x1b[2m回复 Miyu\x1b[0m\n    ");
                 output.push_str(draft);

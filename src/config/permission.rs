@@ -47,12 +47,52 @@ impl Default for DefaultPermissionMode {
     }
 }
 
-/// 终端运行入口共用的权限配置。
-#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize, Default)]
+/// 终端运行入口使用的权限配置；TUI 与 CLI 可分别设置。
+#[derive(Debug, Clone, Eq, PartialEq, Serialize, Deserialize)]
 pub struct PermissionConfig {
-    /// CLI 与 TUI 未指定模式参数时采用的权限模式
+    /// 兼容旧字段：当 tui_mode / cli_mode 缺省时作为共用默认值。
     #[serde(default)]
     pub default_mode: DefaultPermissionMode,
+    /// TUI（交互 REPL）默认权限模式；缺省时回退 `default_mode`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tui_mode: Option<DefaultPermissionMode>,
+    /// CLI 单次命令（ask/tool 等）默认权限模式；缺省时回退 `default_mode`。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_mode: Option<DefaultPermissionMode>,
+}
+
+impl Default for PermissionConfig {
+    fn default() -> Self {
+        Self {
+            default_mode: DefaultPermissionMode::Yolo,
+            tui_mode: None,
+            cli_mode: None,
+        }
+    }
+}
+
+impl PermissionConfig {
+    /// 返回 TUI 使用的默认权限模式。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - `tui_mode`，缺省时使用 `default_mode`
+    pub fn tui_mode(&self) -> DefaultPermissionMode {
+        self.tui_mode.unwrap_or(self.default_mode)
+    }
+
+    /// 返回 CLI 使用的默认权限模式。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - `cli_mode`，缺省时使用 `default_mode`
+    pub fn cli_mode(&self) -> DefaultPermissionMode {
+        self.cli_mode.unwrap_or(self.default_mode)
+    }
 }
 
 #[cfg(test)]
@@ -60,16 +100,27 @@ mod tests {
     use super::*;
 
     /// 验证旧配置缺少权限字段时保持 YOLO 兼容默认值。
-    ///
-    /// 参数:
-    /// - 无
-    ///
-    /// 返回:
-    /// - 无
     #[test]
     fn permission_config_defaults_to_yolo_for_legacy_configs() {
         let config: PermissionConfig = serde_json::from_str("{}").unwrap();
-
         assert_eq!(config.default_mode, DefaultPermissionMode::Yolo);
+        assert_eq!(config.tui_mode(), DefaultPermissionMode::Yolo);
+        assert_eq!(config.cli_mode(), DefaultPermissionMode::Yolo);
+    }
+
+    /// 验证 TUI/CLI 可分别配置，并在缺省时回退旧字段。
+    #[test]
+    fn permission_config_supports_separate_tui_and_cli_modes() {
+        let config: PermissionConfig = serde_json::from_str(
+            r#"{"default_mode":"yolo","tui_mode":"audited","cli_mode":"plan"}"#,
+        )
+        .unwrap();
+        assert_eq!(config.tui_mode(), DefaultPermissionMode::Audited);
+        assert_eq!(config.cli_mode(), DefaultPermissionMode::Plan);
+
+        let legacy: PermissionConfig =
+            serde_json::from_str(r#"{"default_mode":"audited"}"#).unwrap();
+        assert_eq!(legacy.tui_mode(), DefaultPermissionMode::Audited);
+        assert_eq!(legacy.cli_mode(), DefaultPermissionMode::Audited);
     }
 }

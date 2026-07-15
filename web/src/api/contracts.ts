@@ -2,6 +2,8 @@ export type RunMode = "plan" | "audited" | "yolo";
 
 export type PermissionConfig = {
   default_mode: RunMode;
+  tui_mode?: RunMode;
+  cli_mode?: RunMode;
 };
 
 export type PermissionAuditEvent = {

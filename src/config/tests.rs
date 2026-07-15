@@ -23,6 +23,8 @@ fn legacy_app_config_defaults_terminal_permission_mode_to_yolo() {
     let config: AppConfig = serde_json::from_value(value).unwrap();
 
     assert_eq!(config.permission.default_mode, DefaultPermissionMode::Yolo);
+    assert_eq!(config.permission.tui_mode(), DefaultPermissionMode::Yolo);
+    assert_eq!(config.permission.cli_mode(), DefaultPermissionMode::Yolo);
 }
 
 #[test]

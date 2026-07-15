@@ -14,31 +14,59 @@ type PermissionDefaultSettingsProps = {
 };
 
 /**
- * 渲染 CLI 与 TUI 共用的默认权限模式设置。
+ * 渲染 TUI / CLI 各自的默认权限模式设置。
  *
  * @param props 应用配置和更新回调
  * @returns 默认权限模式设置分组
  */
 export function PermissionDefaultSettings({ config, onConfigChange }: PermissionDefaultSettingsProps) {
-  const value = config.permission?.default_mode ?? "yolo";
+  const tuiValue = config.permission?.tui_mode ?? config.permission?.default_mode ?? "yolo";
+  const cliValue = config.permission?.cli_mode ?? config.permission?.default_mode ?? "yolo";
 
   /**
-   * 更新共享配置文件中的终端默认权限模式。
+   * 更新 TUI 默认权限模式。
    *
-   * @param defaultMode 新默认权限模式
-   * @returns 无返回值
+   * @param mode 新默认权限模式
    */
-  const updateDefaultMode = (defaultMode: RunMode) => {
-    onConfigChange({ ...config, permission: { default_mode: defaultMode } });
+  const updateTuiMode = (mode: RunMode) => {
+    onConfigChange({
+      ...config,
+      permission: {
+        default_mode: mode,
+        tui_mode: mode,
+        cli_mode: config.permission?.cli_mode ?? config.permission?.default_mode ?? "yolo"
+      }
+    });
+  };
+
+  /**
+   * 更新 CLI 默认权限模式。
+   *
+   * @param mode 新默认权限模式
+   */
+  const updateCliMode = (mode: RunMode) => {
+    onConfigChange({
+      ...config,
+      permission: {
+        default_mode: config.permission?.tui_mode ?? config.permission?.default_mode ?? "yolo",
+        tui_mode: config.permission?.tui_mode ?? config.permission?.default_mode ?? "yolo",
+        cli_mode: mode
+      }
+    });
   };
 
   return (
-    <SettingsGroup title="默认权限" description="CLI 与 TUI 未传入模式参数时使用此配置。">
+    <SettingsGroup title="默认权限" description="TUI 与 CLI 可分别配置默认权限模式；命令行参数仍可临时覆盖。">
       <div className="settings-form-grid">
         <div className="settings-field">
-          <span>终端默认模式</span>
-          <Select value={value} options={PERMISSION_OPTIONS} onChange={updateDefaultMode} ariaLabel="终端默认权限模式" menuPreferredWidth={330} />
-          <small>终端配置界面和 Web 设置页写入同一份 Miyu 配置。</small>
+          <span>TUI 默认模式</span>
+          <Select value={tuiValue} options={PERMISSION_OPTIONS} onChange={updateTuiMode} ariaLabel="TUI 默认权限模式" menuPreferredWidth={330} />
+          <small>交互式 REPL / 终端界面未传模式参数时使用。</small>
+        </div>
+        <div className="settings-field">
+          <span>CLI 默认模式</span>
+          <Select value={cliValue} options={PERMISSION_OPTIONS} onChange={updateCliMode} ariaLabel="CLI 默认权限模式" menuPreferredWidth={330} />
+          <small>ask / tool 等一次性命令未传 --yolo/--audited/--plan 时使用。</small>
         </div>
       </div>
     </SettingsGroup>

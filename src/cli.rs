@@ -121,11 +121,11 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
         Some(Command::Tool(args)) => {
-            run_tool(&paths, resolve_agent_mode(&paths, mode_override)?, args).await
+            run_tool(&paths, resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?, args).await
         }
         Some(Command::Web(args)) => crate::web::run(&paths, args).await,
         Some(Command::Ask(args)) => {
-            let mode = resolve_agent_mode(&paths, mode_override)?;
+            let mode = resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?;
             let input = parse_message_input_flags(args.message, args.clipb, args.web_search);
             run_chat_with_options(
                 &paths,
@@ -188,11 +188,12 @@ pub async fn run(cli: Cli) -> Result<()> {
             Ok(())
         }
         None => {
-            let mode = resolve_agent_mode(&paths, mode_override)?;
             let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
             if input.message.is_empty() && !input.clipb && !input.web_search {
+                let mode = resolve_agent_mode(&paths, mode_override, PermissionSurface::Tui)?;
                 run_repl(&paths, mode, thinking_override.clone()).await
             } else {
+                let mode = resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?;
                 run_chat_with_options(
                     &paths,
                     ChatRunOptions {
@@ -237,15 +238,32 @@ fn cli_mode_override(cli: &Cli) -> Option<AgentMode> {
 /// 参数:
 /// - `paths`: Miyu 路径集合
 /// - `mode_override`: 命令行显式模式
+/// - `surface`: 调用入口（TUI 或 CLI）
 ///
 /// 返回:
-/// - 当前 CLI 或 TUI 应采用的 Agent 模式
-fn resolve_agent_mode(paths: &MiyuPaths, mode_override: Option<AgentMode>) -> Result<AgentMode> {
+/// - 当前入口应采用的 Agent 模式
+fn resolve_agent_mode(
+    paths: &MiyuPaths,
+    mode_override: Option<AgentMode>,
+    surface: PermissionSurface,
+) -> Result<AgentMode> {
     if let Some(mode) = mode_override {
         return Ok(mode);
     }
     let config = AppConfig::load_or_default(paths)?;
-    Ok(config.permission.default_mode.into())
+    Ok(match surface {
+        PermissionSurface::Tui => config.permission.tui_mode().into(),
+        PermissionSurface::Cli => config.permission.cli_mode().into(),
+    })
+}
+
+/// 权限默认值适用的终端入口。
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum PermissionSurface {
+    /// 交互式 TUI REPL。
+    Tui,
+    /// 单次 ask/tool 等 CLI 命令。
+    Cli,
 }
 
 async fn run_tool(paths: &MiyuPaths, mode: AgentMode, args: ToolArgs) -> Result<()> {
@@ -401,7 +419,12 @@ fn prompt_permission_request_tui(
     request: &crate::permission::PermissionRequest,
     runtime: &std::cell::RefCell<&mut ReplRuntime>,
 ) -> Result<()> {
+    use crate::render::PermissionChoice;
+    let mut selected = PermissionChoice::Allow;
     let mut reply_draft: Option<String> = None;
+    runtime
+        .borrow_mut()
+        .update_permission_choice(&request.id, selected)?;
     loop {
         let event = event::read()?;
         if let Event::Resize(cols, rows) = event {
@@ -438,6 +461,9 @@ fn prompt_permission_request_tui(
                     runtime
                         .borrow_mut()
                         .update_permission_reply(&request.id, None)?;
+                    runtime
+                        .borrow_mut()
+                        .update_permission_choice(&request.id, selected)?;
                 }
                 KeyCode::Backspace => {
                     draft.pop();
@@ -455,25 +481,57 @@ fn prompt_permission_request_tui(
             }
             continue;
         }
-        // 1. 常用数字键和确认键直接提交决定
-        let decision = match key.code {
-            KeyCode::Char('1') | KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                crate::permission::PermissionDecision::Allow
+        // 1. Codex 风格：方向键选择，y/n/Enter 确认
+        match key.code {
+            KeyCode::Up | KeyCode::Char('k') => {
+                selected = selected.prev();
+                runtime
+                    .borrow_mut()
+                    .update_permission_choice(&request.id, selected)?;
+                continue;
             }
-            KeyCode::Char('2') | KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
-                crate::permission::PermissionDecision::Deny { reply: None }
+            KeyCode::Down | KeyCode::Char('j') => {
+                selected = selected.next();
+                runtime
+                    .borrow_mut()
+                    .update_permission_choice(&request.id, selected)?;
+                continue;
             }
-            // 2. 需要回复时进入 transcript 内联编辑状态
+            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
+                selected = PermissionChoice::Allow;
+            }
+            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('2') | KeyCode::Esc => {
+                selected = PermissionChoice::Deny;
+            }
             KeyCode::Char('3') => {
+                selected = PermissionChoice::DenyWithReply;
+            }
+            KeyCode::Enter => {}
+            _ => continue,
+        }
+        if selected == PermissionChoice::DenyWithReply && !matches!(key.code, KeyCode::Enter) {
+            // 快捷键 3 先进入回复编辑
+            reply_draft = Some(String::new());
+            runtime
+                .borrow_mut()
+                .update_permission_choice(&request.id, selected)?;
+            runtime
+                .borrow_mut()
+                .update_permission_reply(&request.id, reply_draft.clone())?;
+            continue;
+        }
+        let decision = match selected {
+            PermissionChoice::Allow => crate::permission::PermissionDecision::Allow,
+            PermissionChoice::Deny => crate::permission::PermissionDecision::Deny { reply: None },
+            PermissionChoice::DenyWithReply => {
                 reply_draft = Some(String::new());
                 runtime
                     .borrow_mut()
                     .update_permission_reply(&request.id, reply_draft.clone())?;
                 continue;
             }
-            _ => continue,
         };
-        // 3. Broker 接收决定后，Agent 会发送 permission.resolved 更新原 cell
+        // 2. Broker 接收决定后，Agent 会发送 permission.resolved 更新原 cell
         return crate::permission::decide_permission(&request.id, decision);
     }
 }
@@ -489,7 +547,7 @@ fn read_permission_decision(
     request: &crate::permission::PermissionRequest,
 ) -> Result<crate::permission::PermissionDecision> {
     // 1. 先输出语义化详情和三个稳定选择项
-    eprintln!("\n{}", crate::render::render_permission_prompt(request));
+    eprintln!("\n{}", crate::render::render_permission_prompt(request, crate::render::PermissionChoice::Allow));
     eprint!("选择 [1-3]，也可直接输入拒绝原因: ");
     io::stderr().flush()?;
     let mut answer = String::new();

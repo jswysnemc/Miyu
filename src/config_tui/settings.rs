@@ -16,8 +16,13 @@ use super::form::{parse_bool_field, run_form, Field};
 pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> Result<()> {
     let mut fields = vec![
         Field::new(
-            t("Default terminal permission mode", "终端默认权限模式"),
-            config.permission.default_mode.as_str().to_string(),
+            t("TUI default permission mode", "TUI 默认权限模式"),
+            config.permission.tui_mode().as_str().to_string(),
+        )
+        .choices(&["yolo", "audited", "plan"]),
+        Field::new(
+            t("CLI default permission mode", "CLI 默认权限模式"),
+            config.permission.cli_mode().as_str().to_string(),
         )
         .choices(&["yolo", "audited", "plan"]),
         Field::boolean(t("Tools enabled", "工具启用"), config.tools.enabled),
@@ -101,13 +106,17 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         t(" GLOBAL SETTINGS ", " 全局参数设置 "),
         &mut fields,
     )? {
-        let [permission_mode, tools_enabled, tool_max_rounds, command_shell, progressive_loading, background_commands, background_timeout, background_log_max, background_stop_grace, skills_enabled, skill_commands, reasoning, tool_calls, readable_names, wait_model, wait_thinking, transcript_rows] =
+        let [tui_mode, cli_mode, tools_enabled, tool_max_rounds, command_shell, progressive_loading, background_commands, background_timeout, background_log_max, background_stop_grace, skills_enabled, skill_commands, reasoning, tool_calls, readable_names, wait_model, wait_thinking, transcript_rows] =
             fields.as_slice()
         else {
             unreachable!("global settings field layout must remain complete")
         };
-        config.permission.default_mode =
-            crate::config::DefaultPermissionMode::parse_or_default(&permission_mode.value);
+        let tui = crate::config::DefaultPermissionMode::parse_or_default(&tui_mode.value);
+        let cli = crate::config::DefaultPermissionMode::parse_or_default(&cli_mode.value);
+        config.permission.tui_mode = Some(tui);
+        config.permission.cli_mode = Some(cli);
+        // 兼容旧字段：与 TUI 保持一致。
+        config.permission.default_mode = tui;
         config.tools.enabled = parse_bool_field(&tools_enabled.value)?;
         config.tools.max_rounds = tool_max_rounds.value.trim().parse::<usize>()?;
         config.tools.command_shell = command_shell.value.trim().to_string();

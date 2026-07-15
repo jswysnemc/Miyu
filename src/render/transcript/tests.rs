@@ -251,7 +251,7 @@ fn permission_cell_keeps_semantic_details_and_decision() {
         .iter()
         .map(|line| line.as_str())
         .collect::<String>();
-    assert!(pending.contains("1."));
+    assert!(pending.contains("❯"));
     assert!(pending.contains("允许一次"));
     assert!(!pending.contains("已允许一次"));
     assert!(store.set_permission_reply_draft("permission", Some("请改为只读检查".to_string())));

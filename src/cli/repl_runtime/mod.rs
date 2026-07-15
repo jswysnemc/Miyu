@@ -300,6 +300,23 @@ impl ReplRuntime {
         self.sync_transcript(false)
     }
 
+    /// 更新权限事件中的当前高亮选项。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `selected`: 高亮选项
+    ///
+    /// 返回:
+    /// - transcript 同步结果
+    pub(super) fn update_permission_choice(
+        &mut self,
+        request_id: &str,
+        selected: crate::render::PermissionChoice,
+    ) -> Result<()> {
+        self.transcript.set_permission_choice(request_id, selected);
+        self.sync_transcript(false)
+    }
+
     /// 记录本地 Shell 命令与输出。
     ///
     /// 参数:

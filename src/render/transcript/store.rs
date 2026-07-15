@@ -177,6 +177,31 @@ impl TranscriptStore {
         false
     }
 
+    /// 更新指定权限事件的当前高亮选项。
+    ///
+    /// 参数:
+    /// - `request_id`: 权限请求标识
+    /// - `selected`: 高亮选项
+    ///
+    /// 返回:
+    /// - 是否找到并更新了权限事件
+    pub(crate) fn set_permission_choice(
+        &mut self,
+        request_id: &str,
+        selected: crate::render::PermissionChoice,
+    ) -> bool {
+        for cell in self.cells.iter_mut().rev() {
+            let HistoryCell::Permission(cell) = cell else {
+                continue;
+            };
+            if cell.request.id == request_id {
+                cell.set_selected(selected);
+                return true;
+            }
+        }
+        false
+    }
+
     /// 记录 REPL 本地 Shell 命令与输出。
     ///
     /// 参数:
