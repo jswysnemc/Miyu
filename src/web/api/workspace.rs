@@ -2,6 +2,9 @@ use super::super::app_state::WebAppState;
 use super::super::error::{WebError, WebResult};
 use super::super::workspace;
 use axum::extract::{Query, State};
+use axum::http::header::CONTENT_TYPE;
+use axum::http::HeaderValue;
+use axum::response::Response;
 use axum::routing::get;
 use axum::{Json, Router};
 use serde::Deserialize;
@@ -54,6 +57,7 @@ pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/workspace/tree", get(tree))
         .route("/api/workspace/file", get(file).put(save_file))
+        .route("/api/workspace/image", get(image))
         .route(
             "/api/workspace/entry",
             axum::routing::post(create_entry)
@@ -62,6 +66,30 @@ pub(super) fn routes() -> Router<WebAppState> {
         )
         .route("/api/workspace/diff", get(diff))
         .route("/api/workspace/git", axum::routing::post(git_action))
+}
+
+/// 返回用于编辑器预览的图像文件。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `query`: 图像相对路径
+///
+/// 返回:
+/// - 带图像 MIME 的原始响应
+async fn image(
+    State(state): State<WebAppState>,
+    Query(query): Query<FileQuery>,
+) -> WebResult<Response> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let image = workspace::read_image(std::path::Path::new(&active.path), &query.path)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    let content_type = HeaderValue::from_str(&image.mime)
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Response::builder()
+        .header(CONTENT_TYPE, content_type)
+        .body(axum::body::Body::from(image.bytes))
+        .map_err(anyhow::Error::from)
+        .map_err(WebError::from)
 }
 
 /// 读取文件树。

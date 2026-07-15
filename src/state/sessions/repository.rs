@@ -15,6 +15,36 @@ use std::path::{Path, PathBuf};
 /// - 新会话信息
 pub fn create_session(paths: &MiyuPaths, title: Option<&str>) -> Result<SessionInfo> {
     let scope = current_session_scope(paths)?;
+    create_session_in_scope(&scope, title)
+}
+
+/// 在指定工作区创建新会话并设为该工作区当前会话。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 工作区目录
+/// - `title`: 可选会话标题
+///
+/// 返回:
+/// - 新会话信息
+pub fn create_session_for_workspace(
+    paths: &MiyuPaths,
+    workspace_path: &Path,
+    title: Option<&str>,
+) -> Result<SessionInfo> {
+    let scope = super::workspace::workspace_scope_for_path(paths, workspace_path);
+    create_session_in_scope(&scope, title)
+}
+
+/// 在指定会话作用域创建并切换会话。
+///
+/// 参数:
+/// - `scope`: 工作区会话作用域
+/// - `title`: 可选会话标题
+///
+/// 返回:
+/// - 新会话信息
+fn create_session_in_scope(scope: &WorkspaceScope, title: Option<&str>) -> Result<SessionInfo> {
     let now = Utc::now().to_rfc3339();
     let session = SessionInfo {
         id: new_session_id(),

@@ -30,6 +30,7 @@ struct WorkspaceSessionsResponse {
 #[derive(Deserialize)]
 struct CreateSessionRequest {
     title: Option<String>,
+    workspace_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -206,14 +207,24 @@ async fn create(
     State(state): State<WebAppState>,
     Json(request): Json<CreateSessionRequest>,
 ) -> WebResult<Json<SessionResponse>> {
-    let session = crate::state::create_session(&state.paths, request.title.as_deref())
-        .map_err(WebError::from)?;
+    let workspace_active = request.workspace_id.is_none();
+    let session = if let Some(workspace_id) = request.workspace_id.as_deref() {
+        let workspace = state.workspaces.get(workspace_id).map_err(WebError::from)?;
+        crate::state::create_session_for_workspace(
+            &state.paths,
+            FilePath::new(&workspace.path),
+            request.title.as_deref(),
+        )
+    } else {
+        crate::state::create_session(&state.paths, request.title.as_deref())
+    }
+    .map_err(WebError::from)?;
     Ok(Json(SessionResponse {
         id: session.id,
         title: session.title,
         created_at: session.created_at,
         updated_at: session.updated_at,
-        active: true,
+        active: workspace_active,
     }))
 }
 

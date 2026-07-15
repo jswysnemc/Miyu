@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { AppConfig } from "../../../api/contracts";
 import { useConfirm } from "../../../shared/ui/dialog/dialog-provider";
+import { Select } from "../../../shared/ui/select/select";
 import { buildDefaultAgent, DEFAULT_AGENT_ID, readAgentProfiles } from "../../agents/agent-options";
 import { fetchAgentOptions } from "./agents-api";
 import type { AgentOptions, AgentProfile, AgentToolOption } from "./agents-types";
 import { SkillAssignmentBoard } from "./skill-assignment-board";
+import { SubagentSettingsPanel } from "./subagent-settings-panel";
 import "./agents.css";
 
 type AgentSettingsSectionProps = {
@@ -75,7 +77,10 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
       system_prompt: "",
       enabled_tools: options.tools.map((tool) => tool.name),
       skills_full: options.skills.map((skill) => skill.name),
-      skills_named: []
+    skills_named: []
+      ,provider_id: "",
+      model: "",
+      thinking_level: "auto"
     };
     setAgents([...agents, next]);
     setSelectedId(id);
@@ -128,6 +133,9 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
                 onChange={(event) => updateSelected({ name: event.target.value })}
               />
             </label>
+            <label className="agent-field"><span className="agent-field-label">供应商</span><Select value={selected.provider_id || ""} options={[{ value: "", label: "沿用当前供应商" }, ...config.providers.map((provider) => ({ value: provider.id, label: provider.display_name || provider.id }))]} onChange={(value) => updateSelected({ provider_id: value, model: "" })} /></label>
+            <label className="agent-field"><span className="agent-field-label">模型</span><Select value={selected.model || ""} options={[{ value: "", label: "供应商默认" }, ...(config.providers.find((provider) => provider.id === selected.provider_id)?.models ?? []).map((model) => ({ value: model, label: model }))]} onChange={(value) => updateSelected({ model: value })} disabled={!selected.provider_id} /></label>
+            <label className="agent-field"><span className="agent-field-label">思考等级</span><Select value={selected.thinking_level || "auto"} options={THINKING_OPTIONS} onChange={(value) => updateSelected({ thinking_level: value })} /></label>
             <button type="button" className="agent-delete" onClick={removeSelected} disabled={selected.id === DEFAULT_AGENT_ID}>删除</button>
           </div>
           <label className="agent-field">
@@ -163,9 +171,12 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
       ) : (
         <div className="agent-editor agent-editor-empty">选择或新增一个 Agent 开始配置。</div>
       )}
+      <SubagentSettingsPanel config={config} onConfigChange={onConfigChange} />
     </div>
   );
 }
+
+const THINKING_OPTIONS = ["auto", "none", "low", "medium", "high", "xhigh", "max"].map((value) => ({ value, label: value }));
 
 type ToolGroupListProps = {
   /** 全部内置工具选项 */

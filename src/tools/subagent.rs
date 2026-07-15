@@ -6,13 +6,12 @@ use crate::config::AppConfig;
 use crate::i18n::text as t;
 use crate::llm::OpenAiCompatibleClient;
 use crate::paths::MiyuPaths;
-use anyhow::{bail, Result};
+use anyhow::{bail, Context, Result};
 use serde_json::{json, Value};
 use std::time::Duration;
 
 const EXPLORE_PROMPT: &str = include_str!("../prompts/subagent-explore.md");
 const GENERAL_PROMPT: &str = include_str!("../prompts/subagent-general.md");
-const DEFAULT_SUBAGENT_TYPE: &str = "general";
 const DEFAULT_MAX_STEPS: usize = 20;
 const MAX_MAX_STEPS: usize = 80;
 const SUBAGENT_TIMEOUT_SECONDS: u64 = 1800;
@@ -116,8 +115,7 @@ pub(crate) fn register(
                 },
                 "subagent_type": {
                     "type": "string",
-                    "enum": ["general", "explore"],
-                    "description": t("Subagent type. general can use normal tools; explore is read/search focused.", "子代理类型。general 可使用常规工具；explore 偏向只读搜索。")
+                    "description": format_subagent_profile_options(&context.config),
                 },
                 "max_steps": {
                     "type": "integer",
@@ -139,6 +137,24 @@ pub(crate) fn register(
             async move { run_subagent_action(args, context, progress).await }
         },
     ));
+}
+
+/// 生成主 Agent 可选择的子 Agent 描述列表。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+///
+/// 返回:
+/// - 供模型理解档案用途的描述
+fn format_subagent_profile_options(config: &AppConfig) -> String {
+    let profiles = config
+        .subagent
+        .resolved_profiles()
+        .into_iter()
+        .filter(|profile| profile.exposed)
+        .map(|profile| format!("{}: {}", profile.id, profile.description))
+        .collect::<Vec<_>>();
+    format!("选择子 Agent 档案 id。{}", profiles.join("；"))
 }
 
 /// 分发子智能体操作。
@@ -177,14 +193,22 @@ async fn run_subagent_action(
 /// - 已创建子智能体的快照
 async fn start_subagent(args: Value, context: SubagentContext) -> Result<String> {
     let prompt = string_arg(&args, "prompt")?;
+    let requested_type = optional_string_arg(&args, "subagent_type")?;
+    let profile = context
+        .config
+        .subagent
+        .resolve_profile(requested_type.as_deref())
+        .with_context(|| "requested subagent is not exposed or does not exist")?;
     let description = optional_string_arg(&args, "description")?
         .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| summarize_prompt(&prompt));
-    let subagent_type = optional_string_arg(&args, "subagent_type")?
-        .unwrap_or_else(|| DEFAULT_SUBAGENT_TYPE.into());
-    if !matches!(subagent_type.as_str(), "general" | "explore") {
-        bail!("unsupported subagent_type: {subagent_type}");
-    }
+        .unwrap_or_else(|| {
+            if profile.description.trim().is_empty() {
+                summarize_prompt(&prompt)
+            } else {
+                profile.description.clone()
+            }
+        });
+    let subagent_type = profile.id.clone();
     let max_steps = args
         .get("max_steps")
         .and_then(Value::as_u64)
@@ -425,15 +449,25 @@ async fn run_subagent(
     tool_progress: ToolProgress,
 ) -> Result<(String, Value)> {
     // 1. 按子智能体模型配置构造客户端,未配置时沿用主对话供应商与模型
-    let client = build_subagent_client(&context)?;
-    let (system_prompt, tools, excluded) = match subagent_type {
+    let profile = context
+        .config
+        .subagent
+        .resolve_profile(Some(subagent_type))
+        .with_context(|| format!("subagent profile is not exposed: {subagent_type}"))?;
+    let client = build_subagent_client(&context, &profile)?;
+    let (default_prompt, tools, excluded) = match subagent_type {
         "explore" => (
             EXPLORE_PROMPT,
             context.tools.clone_filtered(EXPLORE_ALLOWED),
             Vec::new(),
         ),
         "general" => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
-        _ => bail!("unsupported subagent_type: {subagent_type}"),
+        _ => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
+    };
+    let system_prompt = if profile.system_prompt.trim().is_empty() {
+        default_prompt
+    } else {
+        profile.system_prompt.as_str()
     };
     // 2. 以 Full 模式上报,时间线可拿到工具调用参数、结果与流式文本
     let progress = SubagentProgress::new(tool_progress, ProgressMode::Full, true);
@@ -464,25 +498,51 @@ async fn run_subagent(
 ///
 /// 返回:
 /// - LLM 客户端
-fn build_subagent_client(context: &SubagentContext) -> Result<OpenAiCompatibleClient> {
+fn build_subagent_client(
+    context: &SubagentContext,
+    profile: &crate::config::SubagentProfile,
+) -> Result<OpenAiCompatibleClient> {
     let subagent = &context.config.subagent;
     // 1. 未配置任何子智能体供应商与模型,沿用主对话配置
-    if subagent.provider_id.is_empty() && subagent.model.is_empty() {
+    if subagent.provider_id.is_empty()
+        && subagent.model.is_empty()
+        && profile.provider_id.is_empty()
+        && profile.model.is_empty()
+        && (profile.thinking_level.is_empty() || profile.thinking_level == "auto")
+    {
         return OpenAiCompatibleClient::from_config(&context.config, &context.paths);
     }
     let mut config = context.config.clone();
     // 2. 指定了供应商则切换 active_provider,否则在当前供应商上改模型
-    if !subagent.provider_id.is_empty() {
-        config.active_provider = subagent.provider_id.clone();
+    let provider_id = if profile.provider_id.is_empty() {
+        &subagent.provider_id
+    } else {
+        &profile.provider_id
+    };
+    if !provider_id.is_empty() {
+        config.active_provider = provider_id.clone();
     }
-    if !subagent.model.is_empty() {
-        let active = config.active_provider.clone();
-        if let Some(provider) = config
-            .providers
-            .iter_mut()
-            .find(|provider| provider.id == active)
-        {
-            provider.default_model = subagent.model.clone();
+    let active = config.active_provider.clone();
+    if let Some(provider) = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == active)
+    {
+        let model = if profile.model.is_empty() {
+            &subagent.model
+        } else {
+            &profile.model
+        };
+        if !model.is_empty() {
+            provider.default_model = model.clone();
+        }
+        let thinking = if profile.thinking_level.is_empty() || profile.thinking_level == "auto" {
+            &subagent.thinking_level
+        } else {
+            &profile.thinking_level
+        };
+        if !thinking.is_empty() && thinking != "auto" {
+            provider.thinking_level = thinking.clone();
         }
     }
     OpenAiCompatibleClient::from_config(&config, &context.paths)

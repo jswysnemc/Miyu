@@ -43,7 +43,8 @@ impl TerminalSession {
         let shell = crate::platform::shell::interactive_shell_invocation();
         let mut command = CommandBuilder::new(&shell.program);
         command.args(&shell.args);
-        command.cwd(cwd);
+        let cwd = crate::platform::windows_path::simplified(cwd);
+        command.cwd(&cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "Miyu Web");

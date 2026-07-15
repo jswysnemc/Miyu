@@ -6,6 +6,7 @@ use std::path::Path;
 use std::time::UNIX_EPOCH;
 
 const MAX_FILE_BYTES: u64 = 2 * 1024 * 1024;
+const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 const MAX_TREE_DEPTH: usize = 8;
 const IGNORED_DIRECTORIES: &[&str] = &[".git", "node_modules", "target", "dist", "build"];
 
@@ -32,6 +33,12 @@ pub(crate) struct FileContent {
 pub(crate) struct FileMutation {
     pub path: String,
     pub kind: &'static str,
+}
+
+/// 可在编辑器中预览的图像文件。
+pub(crate) struct ImageFile {
+    pub mime: String,
+    pub bytes: Vec<u8>,
 }
 
 /// 读取工作区文件树。
@@ -76,6 +83,51 @@ pub(crate) fn read_file(root: &Path, relative: &str) -> Result<FileContent> {
             .and_then(|time| time.duration_since(UNIX_EPOCH).ok())
             .map(|duration| duration.as_secs()),
     })
+}
+
+/// 读取工作区图像文件。
+///
+/// 参数:
+/// - `root`: 工作区根目录
+/// - `relative`: 图像相对路径
+///
+/// 返回:
+/// - 图像 MIME 与原始字节
+pub(crate) fn read_image(root: &Path, relative: &str) -> Result<ImageFile> {
+    let path = existing_path(root, relative)?;
+    let metadata = std::fs::metadata(&path)?;
+    if !metadata.is_file() {
+        bail!("path is not a file");
+    }
+    if metadata.len() > MAX_IMAGE_BYTES {
+        bail!("image exceeds {} bytes", MAX_IMAGE_BYTES);
+    }
+    let mime = mime_guess::from_path(&path)
+        .first()
+        .filter(|mime| mime.type_() == mime_guess::mime::IMAGE)
+        .context("file is not a supported image")?;
+    Ok(ImageFile {
+        mime: mime.to_string(),
+        bytes: std::fs::read(path)?,
+    })
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    /// 验证编辑器图像接口读取 PNG 字节和 MIME。
+    #[test]
+    fn reads_image_file_for_preview() {
+        let temp = tempfile::tempdir().unwrap();
+        let bytes = [0x89, b'P', b'N', b'G'];
+        std::fs::write(temp.path().join("preview.png"), bytes).unwrap();
+
+        let image = read_image(temp.path(), "preview.png").unwrap();
+
+        assert_eq!(image.mime, "image/png");
+        assert_eq!(image.bytes, bytes);
+    }
 }
 
 /// 原子保存 UTF-8 文本文件。

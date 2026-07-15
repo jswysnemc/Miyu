@@ -24,5 +24,5 @@ export function workspaceRelativePath(path: string, workspacePath: string): stri
  * @returns 使用正斜线的路径
  */
 function normalizePathSeparators(path: string): string {
-  return path.trim().replace(/\\/g, "/").replace(/\/{2,}/g, "/");
+  return path.trim().replace(/^\\\\\?\\/, "").replace(/^\/\/\?\//, "").replace(/\\/g, "/").replace(/\/{2,}/g, "/");
 }

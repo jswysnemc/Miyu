@@ -423,7 +423,11 @@ pub(super) fn is_default_timeout(value: &u64) -> bool {
 /// 返回:
 /// - 是否为默认空配置
 pub(super) fn is_default_subagent(value: &super::agents::SubagentConfig) -> bool {
-    value.provider_id.is_empty() && value.model.is_empty()
+    value.provider_id.is_empty()
+        && value.model.is_empty()
+        && (value.thinking_level.is_empty() || value.thinking_level == "auto")
+        && value.default_profile.is_empty()
+        && value.profiles.is_empty()
 }
 
 pub(super) fn is_default_temperature(value: &f32) -> bool {

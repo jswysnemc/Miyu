@@ -89,6 +89,22 @@ impl WorkspaceManager {
             .context("active workspace is missing")
     }
 
+    /// 返回指定工作区。
+    ///
+    /// 参数:
+    /// - `id`: 工作区 ID
+    ///
+    /// 返回:
+    /// - 工作区信息
+    pub(crate) fn get(&self, id: &str) -> Result<WorkspaceInfo> {
+        self.read_registry()?
+            .workspaces
+            .iter()
+            .find(|workspace| workspace.id == id)
+            .cloned()
+            .with_context(|| format!("workspace not found: {id}"))
+    }
+
     /// 添加工作区。
     ///
     /// 参数:
@@ -232,13 +248,12 @@ fn load_registry(path: &Path) -> Result<WorkspaceRegistry> {
 
 /// 规范化并校验工作区目录。
 fn canonical_directory(path: &Path) -> Result<PathBuf> {
-    let canonical = path
-        .canonicalize()
+    let canonical = crate::platform::windows_path::canonicalize(path)
         .with_context(|| format!("workspace does not exist: {}", path.display()))?;
     if !canonical.is_dir() {
         bail!("workspace is not a directory: {}", canonical.display());
     }
-    Ok(canonical)
+    Ok(crate::platform::windows_path::simplified(&canonical))
 }
 
 /// 构造工作区信息。

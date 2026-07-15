@@ -43,7 +43,23 @@ pub(super) fn apply_agent_override(
         config.system_prompt_file = None;
         config.system_prompt = Some(profile.system_prompt);
     }
-    // 2. 工具和 skills 策略仅用于本轮注册表与提示词组装
+    // 2. Agent 可独立覆盖供应商、模型和思考等级
+    if !profile.provider_id.trim().is_empty() {
+        config.active_provider = profile.provider_id.clone();
+    }
+    if let Some(provider) = config
+        .providers
+        .iter_mut()
+        .find(|provider| provider.id == config.active_provider)
+    {
+        if !profile.model.trim().is_empty() {
+            provider.default_model = profile.model.clone();
+        }
+        if !profile.thinking_level.trim().is_empty() && profile.thinking_level != "auto" {
+            provider.thinking_level = profile.thinking_level.clone();
+        }
+    }
+    // 3. 工具和 skills 策略仅用于本轮注册表与提示词组装
     config.agent_runtime = Some(AgentRuntimeOverride {
         enabled_tools: profile.enabled_tools,
         skills_full: profile.skills_full,
@@ -75,6 +91,7 @@ mod tests {
             enabled_tools: vec!["read_file".to_string()],
             skills_full: vec!["code-review".to_string()],
             skills_named: vec!["research".to_string()],
+            ..AgentProfile::default()
         });
         let resolved = apply_agent_override(config, Some("reviewer")).unwrap();
         assert_eq!(resolved.system_prompt.as_deref(), Some("只审查代码"));
@@ -100,6 +117,7 @@ mod tests {
             enabled_tools: vec!["read_file".to_string()],
             skills_full: Vec::new(),
             skills_named: Vec::new(),
+            ..AgentProfile::default()
         });
         config.default_agent = Some("writer".to_string());
         let resolved = apply_agent_override(config, None).unwrap();
@@ -116,6 +134,7 @@ mod tests {
             enabled_tools: Vec::new(),
             skills_full: Vec::new(),
             skills_named: Vec::new(),
+            ..AgentProfile::default()
         });
         config.default_agent = Some("writer".to_string());
         // 显式传入虚拟默认 agent 时,应忽略 default_agent 回退

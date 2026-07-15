@@ -9,6 +9,20 @@
   min-height: 0;
 }
 
+.subagent-settings-panel { grid-column: 1 / -1; display: grid; gap: 0.75rem; padding: 1rem; border-top: 1px solid var(--line); }
+.subagent-settings-panel header h3 { margin: 0; font-size: 1rem; }
+.subagent-settings-panel header p { margin: 0.2rem 0 0; color: var(--ink-soft); font-size: 0.75rem; }
+.subagent-default-row { max-width: 18rem; }
+.subagent-default-row label, .subagent-profile-editor > label, .subagent-profile-grid label { display: grid; gap: 0.3rem; color: var(--ink-soft); font-size: 0.75rem; }
+.subagent-profile-list { display: grid; gap: 0.75rem; }
+.subagent-profile-editor { display: grid; gap: 0.65rem; padding: 0.8rem; border: 1px solid var(--line); border-radius: 0.6rem; }
+.subagent-profile-head { display: flex; align-items: center; justify-content: space-between; }
+.subagent-profile-head em { font-style: normal; }
+.subagent-profile-editor input, .subagent-profile-editor textarea { width: 100%; padding: 0.55rem 0.65rem; border: 1px solid var(--line); border-radius: 0.45rem; background: transparent; color: var(--ink); font: inherit; }
+.subagent-profile-editor textarea { min-height: 5rem; resize: vertical; }
+.subagent-profile-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 0.65rem; }
+@media (max-width: 760px) { .subagent-profile-grid { grid-template-columns: 1fr; } }
+
 /* 左侧档案列表 */
 .agent-list {
   display: flex;

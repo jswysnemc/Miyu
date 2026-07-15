@@ -64,7 +64,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
     await queryClient.invalidateQueries({ queryKey: ["timeline"] });
   };
 
-  const create = useMutation({ mutationFn: () => api.sessions.create(), onSuccess: refresh });
+  const create = useMutation({ mutationFn: (workspaceId?: string) => api.sessions.create(undefined, workspaceId), onSuccess: refresh });
   const remove = useMutation({ mutationFn: api.sessions.remove, onSuccess: refresh });
   const rename = useMutation({
     mutationFn: ({ id, title }: { id: string; title: string }) => api.sessions.rename(id, title),
@@ -225,7 +225,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
         <button type="button" className="sidebar-rail-button" onClick={onToggleCollapsed} aria-label="展开会话侧栏" title="展开会话侧栏">
           <PanelLeftOpen size={17} />
         </button>
-        <button type="button" className="sidebar-rail-button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话">
+        <button type="button" className="sidebar-rail-button" onClick={() => create.mutate(undefined)} disabled={create.isPending} aria-label="新建会话" title="新建会话">
           <Plus size={17} />
         </button>
         <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => isActive ? "sidebar-rail-button active" : "sidebar-rail-button"} aria-label="打开配置" title="配置">
@@ -264,7 +264,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
                 {workspaceRunning && <ActiveAgentIndicator />}
               </button>
               <span className="workspace-tree-actions">
-                {workspace.active && !selecting && <button type="button" onClick={() => create.mutate()} disabled={create.isPending} aria-label="新建会话" title="新建会话"><Plus size={14} /></button>}
+                {!selecting && <button type="button" className="workspace-create-session" onClick={() => create.mutate(workspace.active ? undefined : workspace.workspace_id)} disabled={create.isPending} aria-label={`在 ${workspace.workspace_name} 新建会话`} title="新建会话"><Plus size={14} /></button>}
                 {workspace.active && selecting && <span className="workspace-selection-count">已选择 {selected.size} 项</span>}
                 {workspace.active && selecting && <button type="button" className={confirming ? "danger confirming" : "danger"} onClick={requestBulkDelete} disabled={selected.size === 0 || removeMany.isPending} aria-label={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"} title={confirming ? `确认删除 ${selected.size} 项` : "删除所选会话"}><Trash2 size={14} /></button>}
                 {workspace.active && selecting && <button type="button" onClick={closeSelection} aria-label="退出选择" title="退出选择"><X size={14} /></button>}

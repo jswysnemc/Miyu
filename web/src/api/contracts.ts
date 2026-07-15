@@ -294,11 +294,28 @@ export type AgentProfileConfig = {
   enabled_tools?: string[];
   skills_full?: string[];
   skills_named?: string[];
+  provider_id?: string;
+  model?: string;
+  thinking_level?: string;
+};
+
+export type SubagentProfileConfig = {
+  id: string;
+  name: string;
+  description?: string;
+  system_prompt?: string;
+  provider_id?: string;
+  model?: string;
+  thinking_level?: string;
+  exposed?: boolean;
 };
 
 export type SubagentConfig = {
   provider_id?: string;
   model?: string;
+  thinking_level?: string;
+  default_profile?: string;
+  profiles?: SubagentProfileConfig[];
 };
 
 export type ConfigResponse = {

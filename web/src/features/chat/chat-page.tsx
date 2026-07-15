@@ -146,6 +146,10 @@ export function ChatPage() {
     await run.start(activeSession.id, content, mode, chatModel.selection ?? undefined, liveImages, thinking.thinkingLevel, chatAgent.selection?.id);
   };
   const lastTurnId = timeline.data?.at(-1)?.turn_id;
+  const liveInputs = useMemo(
+    () => new Set(run.states.map((state) => state.userInput.trim()).filter(Boolean)),
+    [run.states]
+  );
   const historyRetry = run.states.length === 0 && !running ? () => void retry() : undefined;
   const emptySession = !timeline.isLoading && timeline.data?.length === 0 && run.states.length === 0;
   return (
@@ -157,11 +161,15 @@ export function ChatPage() {
         <div className="message-scroll" ref={scrollRef}>
           <div className="message-column">
             {timeline.isLoading && <div className="empty-chat">正在读取会话历史</div>}
-            {timeline.data?.map((turn) => (
+            {timeline.data?.map((turn) => {
+              // 1. 重试会先保留历史记录,再追加实时运行;相同用户输入只渲染实时消息一次
+              if (turn.turn_id === lastTurnId && liveInputs.has(turn.user.content.trim())) return null;
+              return (
               <section className="conversation-turn" data-overview-id={`turn-${turn.turn_id}`} key={turn.turn_id}>
                 <HistoryTurn turn={turn} onRetry={turn.turn_id === lastTurnId ? historyRetry : undefined} />
               </section>
-            ))}
+              );
+            })}
             {run.states.map((state) => (
               <section className="conversation-turn" data-overview-id={`live-${state.runId}`} key={state.runId}>
                 <LiveRunMessage

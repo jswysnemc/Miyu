@@ -29,8 +29,7 @@ pub fn current_workspace_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
 /// 返回:
 /// - 工作区作用域
 pub fn workspace_scope_for_path(paths: &MiyuPaths, workspace_path: &Path) -> WorkspaceScope {
-    let normalized = workspace_path
-        .canonicalize()
+    let normalized = crate::platform::windows_path::canonicalize(workspace_path)
         .unwrap_or_else(|_| workspace_path.to_path_buf());
     let workspace_id = workspace_id_for_path(&normalized);
     WorkspaceScope {

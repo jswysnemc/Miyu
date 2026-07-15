@@ -97,8 +97,8 @@ export const api = {
   sessions: {
     list: () => apiRequest<Session[]>("/api/sessions"),
     tree: () => apiRequest<WorkspaceSessions[]>("/api/sessions/tree"),
-    create: (title?: string) =>
-      apiRequest<Session>("/api/sessions", { method: "POST", body: JSON.stringify({ title }) }),
+    create: (title?: string, workspaceId?: string) =>
+      apiRequest<Session>("/api/sessions", { method: "POST", body: JSON.stringify({ title, workspace_id: workspaceId }) }),
     switch: (id: string) => apiRequest<Session>(`/api/sessions/${id}/switch`, { method: "POST" }),
     rename: (id: string, title: string) =>
       apiRequest<Session>(`/api/sessions/${id}`, { method: "PATCH", body: JSON.stringify({ title }) }),
@@ -160,6 +160,7 @@ export const api = {
       return apiRequest<FileNode[]>(`/api/workspace/tree?${query.toString()}`);
     },
     file: (path: string) => apiRequest<FileContent>(`/api/workspace/file?path=${encodeURIComponent(path)}`),
+    imageUrl: (path: string) => `/api/workspace/image?path=${encodeURIComponent(path)}`,
     save: (path: string, content: string, expectedModifiedAt?: number | null) =>
       apiRequest<FileContent>("/api/workspace/file", {
         method: "PUT",

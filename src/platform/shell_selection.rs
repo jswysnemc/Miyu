@@ -23,11 +23,12 @@ pub(super) fn select_windows_interactive_shell(
     if powershell_available {
         return OsString::from("powershell.exe");
     }
-    // 【Windows终端】【选择Shell】2. PowerShell 不可用时再使用显式 Shell 或系统命令解释器
-    if let Some(shell) = shell.filter(|value| !value.is_empty()) {
-        return shell.to_owned();
+    // 【Windows终端】【选择Shell】2. PowerShell 不可用时优先使用 Windows 系统命令解释器
+    if let Some(comspec) = comspec.filter(|value| !value.is_empty()) {
+        return comspec.to_owned();
     }
-    comspec
+    // 【Windows终端】【选择Shell】3. 最后才采用可能来自 MSYS 或 WSL 的 SHELL
+    shell
         .filter(|value| !value.is_empty())
         .map(OsStr::to_owned)
         .unwrap_or_else(|| OsString::from("cmd.exe"))
@@ -84,5 +85,17 @@ mod tests {
         let args = windows_interactive_shell_args(OsStr::new("powershell.exe"));
 
         assert_eq!(args, vec![OsString::from("-NoLogo")]);
+    }
+
+    #[test]
+    fn windows_terminal_prefers_comspec_over_posix_shell() {
+        let selected = select_windows_interactive_shell(
+            Some(OsStr::new("/usr/bin/bash")),
+            false,
+            false,
+            Some(OsStr::new("C:\\Windows\\System32\\cmd.exe")),
+        );
+
+        assert_eq!(selected, OsString::from("C:\\Windows\\System32\\cmd.exe"));
     }
 }

@@ -19,6 +19,9 @@ export function buildDefaultAgent(options: AgentOptions): AgentProfile {
     enabled_tools: options.tools.map((tool) => tool.name),
     skills_full: options.skills.map((skill) => skill.name),
     skills_named: []
+    ,provider_id: "",
+    model: "",
+    thinking_level: "auto"
   };
 }
 

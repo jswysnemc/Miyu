@@ -6,6 +6,7 @@ import { api } from "../../api/client";
 import { useTheme } from "../theme/theme";
 import { EditorBreadcrumbs } from "./editor-breadcrumbs";
 import { configureMonacoEnvironment } from "./monaco-environment";
+import { ImageFilePreview, isImageFile } from "./image-file-preview";
 
 type EditorPaneProps = {
   path: string | null;
@@ -22,8 +23,9 @@ type EditorPaneProps = {
  */
 export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree }: EditorPaneProps) {
   const { theme } = useTheme();
+  const imageFile = Boolean(path && isImageFile(path));
   const queryClient = useQueryClient();
-  const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) });
+  const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) && !imageFile });
   const [content, setContent] = useState("");
   const [externalChange, setExternalChange] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
@@ -114,9 +116,9 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
       <header className="editor-head">
         <EditorBreadcrumbs path={path} onSelectFile={onSelectFile} />
         {externalChange && <span className="editor-external-change">磁盘内容已变化</span>}
-        <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
+        {!imageFile && <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
           <Save size={14} /> 保存
-        </button>
+        </button>}
         {!fileTreeOpen && (
           <button type="button" className="editor-tree-toggle" onClick={onToggleFileTree} aria-label="打开文件树" aria-pressed={false}>
             <FolderTree size={15} />
@@ -124,6 +126,7 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
         )}
       </header>
       <div className="editor-area" ref={editorAreaRef}>
+        {imageFile && <ImageFilePreview path={path} />}
         {file.data && editorReady && (
           <Editor
             key={path}
@@ -138,7 +141,7 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
             options={{ minimap: { enabled: false }, fontFamily: "Fira Code", fontSize: 13, lineHeight: 21, padding: { top: 12 }, automaticLayout: false, scrollBeyondLastLine: false }}
           />
         )}
-        {(file.isLoading || !editorReady) && <div className="editor-state">加载编辑器</div>}
+        {!imageFile && (file.isLoading || !editorReady) && <div className="editor-state">加载编辑器</div>}
         {file.error && <div className="pane-error">{file.error.message}</div>}
         {save.error && <div className="pane-error">{save.error.message}</div>}
       </div>

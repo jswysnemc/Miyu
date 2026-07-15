@@ -36,10 +36,11 @@ pub use session_memory::summary::SessionMemorySummary;
 pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
 pub use session_timeline::{SessionTimelineTurn, TimelinePermissionDecision};
 pub use sessions::{
-    active_session_id_for_workspace, active_state_dir, create_session, delete_session,
-    delete_sessions, ensure_active_session as active_session, ensure_workspace_session,
-    list_sessions, list_sessions_for_workspace, rename_session, state_dir_for_workspace_session,
-    switch_session, workspace_id_for_path,
+    active_session_id_for_workspace, active_state_dir, create_session,
+    create_session_for_workspace, delete_session, delete_sessions,
+    ensure_active_session as active_session, ensure_workspace_session, list_sessions,
+    list_sessions_for_workspace, rename_session, state_dir_for_workspace_session, switch_session,
+    workspace_id_for_path,
 };
 #[allow(unused_imports)]
 pub use tool_history::{ToolCallStatus, ToolHistorySummary};
