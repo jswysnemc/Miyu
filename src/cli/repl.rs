@@ -534,8 +534,13 @@ mod tests {
         assert!(registry
             .requires_permission("edit_file", r#"{"path":"src/main.rs","content":"x"}"#)
             .unwrap());
+        let sensitive_read = if cfg!(windows) {
+            r#"{"path":"C:\\Windows\\System32\\drivers\\etc\\hosts"}"#
+        } else {
+            r#"{"path":"/etc/hosts"}"#
+        };
         assert!(registry
-            .requires_permission("read_file", r#"{"path":"/etc/hosts"}"#)
+            .requires_permission("read_file", sensitive_read)
             .unwrap());
         assert!(!registry
             .requires_permission("read_file", r#"{"path":"src/main.rs"}"#)

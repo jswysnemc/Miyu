@@ -108,31 +108,39 @@ fn is_sensitive_path(workspace: &Path, path: &Path) -> bool {
         return false;
     }
     let mut components = path.components();
-    if !matches!(components.next(), Some(Component::RootDir)) {
+    let mut first = components.next();
+    if matches!(first, Some(Component::Prefix(_))) {
+        first = components.next();
+    }
+    if !matches!(first, Some(Component::RootDir)) {
         return false;
     }
     let Some(Component::Normal(root)) = components.next() else {
         return false;
     };
+    let root = root.to_string_lossy().to_ascii_lowercase();
     matches!(
-        root.to_str(),
-        Some(
-            "etc"
-                | "boot"
-                | "dev"
-                | "home"
-                | "root"
-                | "run"
-                | "sys"
-                | "tmp"
-                | "var"
-                | "usr"
-                | "bin"
-                | "sbin"
-                | "lib"
-                | "lib64"
-                | "opt"
-        )
+        root.as_str(),
+        "etc"
+            | "boot"
+            | "dev"
+            | "home"
+            | "root"
+            | "run"
+            | "sys"
+            | "tmp"
+            | "var"
+            | "usr"
+            | "bin"
+            | "sbin"
+            | "lib"
+            | "lib64"
+            | "opt"
+            | "windows"
+            | "programdata"
+            | "program files"
+            | "program files (x86)"
+            | "users"
     )
 }
 
