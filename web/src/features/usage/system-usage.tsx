@@ -54,8 +54,8 @@ export function SystemUsage({ selection }: { selection: RunModelSelection | null
   return (
     <div className="system-usage" ref={rootRef}>
       <button ref={triggerRef} type="button" className="system-usage-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} aria-label="查看系统用量">
-        <span className="usage-ring" style={{ background: `conic-gradient(var(--signal) ${contextPercent}%, var(--paper-deep) 0)` }}><Gauge size={12} /></span>
-        <span><strong>{usage.data ? formatTokenCount(usage.data.session.context_prompt_tokens) : "--"}</strong><small>{contextPercent}% 上下文</small></span>
+        <span className="usage-ring" style={{ background: `conic-gradient(var(--signal) ${contextPercent}%, color-mix(in srgb, var(--ink) 12%, transparent) 0)` }}><Gauge size={10} /></span>
+        <span><strong>{usage.data ? formatTokenCount(usage.data.session.context_prompt_tokens) : "--"}</strong><small>{contextPercent}%</small></span>
       </button>
       {open && createPortal(
         <div ref={popoverRef} className="system-usage-popover" style={popoverStyle}>

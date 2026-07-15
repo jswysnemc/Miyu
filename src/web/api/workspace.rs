@@ -52,6 +52,32 @@ struct GitActionRequest {
     message: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct GitOpRequest {
+    action: String,
+    path: Option<String>,
+    message: Option<String>,
+    remote_url: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitDiffQuery {
+    mode: Option<String>,
+    path: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct GitLogQuery {
+    limit: Option<usize>,
+    skip: Option<usize>,
+}
+
+#[derive(Deserialize)]
+struct GitCommitQuery {
+    commit: String,
+    path: Option<String>,
+}
+
 /// 返回工作区文件与 Diff 路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
@@ -66,16 +92,16 @@ pub(super) fn routes() -> Router<WebAppState> {
         )
         .route("/api/workspace/diff", get(diff))
         .route("/api/workspace/git", axum::routing::post(git_action))
+        .route("/api/workspace/git/status", get(git_status))
+        .route("/api/workspace/git/branches", get(git_branches))
+        .route("/api/workspace/git/log", get(git_log))
+        .route("/api/workspace/git/commit", get(git_commit_details))
+        .route("/api/workspace/git/commit-diff", get(git_commit_diff))
+        .route("/api/workspace/git/diff", get(git_review_diff))
+        .route("/api/workspace/git/op", axum::routing::post(git_op))
 }
 
 /// 返回用于编辑器预览的图像文件。
-///
-/// 参数:
-/// - `state`: Web 应用状态
-/// - `query`: 图像相对路径
-///
-/// 返回:
-/// - 带图像 MIME 的原始响应
 async fn image(
     State(state): State<WebAppState>,
     Query(query): Query<FileQuery>,
@@ -192,7 +218,7 @@ async fn diff(State(state): State<WebAppState>) -> WebResult<Json<workspace::Git
     Ok(Json(diff))
 }
 
-/// 执行 Git 暂存、取消暂存、撤销或提交操作。
+/// 执行兼容版 Git 暂存、取消暂存、撤销或提交操作。
 async fn git_action(
     State(state): State<WebAppState>,
     Json(request): Json<GitActionRequest>,
@@ -207,4 +233,101 @@ async fn git_action(
     .await
     .map_err(|error| WebError::bad_request(error.to_string()))?;
     Ok(Json(git))
+}
+
+/// 读取增强版 Git 状态。
+async fn git_status(
+    State(state): State<WebAppState>,
+) -> WebResult<Json<workspace::GitRepositoryState>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let status = workspace::git_status(std::path::Path::new(&active.path))
+        .await
+        .map_err(WebError::from)?;
+    Ok(Json(status))
+}
+
+/// 读取分支列表。
+async fn git_branches(
+    State(state): State<WebAppState>,
+) -> WebResult<Json<workspace::GitBranchesResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let branches = workspace::git_branches(std::path::Path::new(&active.path))
+        .await
+        .map_err(WebError::from)?;
+    Ok(Json(branches))
+}
+
+/// 读取提交历史。
+async fn git_log(
+    State(state): State<WebAppState>,
+    Query(query): Query<GitLogQuery>,
+) -> WebResult<Json<workspace::GitLogResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let log = workspace::git_log(std::path::Path::new(&active.path), query.limit, query.skip)
+        .await
+        .map_err(WebError::from)?;
+    Ok(Json(log))
+}
+
+/// 读取提交详情。
+async fn git_commit_details(
+    State(state): State<WebAppState>,
+    Query(query): Query<GitCommitQuery>,
+) -> WebResult<Json<workspace::GitCommitDetailsResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let details = workspace::git_commit_details(std::path::Path::new(&active.path), &query.commit)
+        .await
+        .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(details))
+}
+
+/// 读取提交 Diff。
+async fn git_commit_diff(
+    State(state): State<WebAppState>,
+    Query(query): Query<GitCommitQuery>,
+) -> WebResult<Json<workspace::GitDiffResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let diff = workspace::git_commit_diff(
+        std::path::Path::new(&active.path),
+        &query.commit,
+        query.path.as_deref(),
+    )
+    .await
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(diff))
+}
+
+/// 读取工作树或分支 Diff。
+async fn git_review_diff(
+    State(state): State<WebAppState>,
+    Query(query): Query<GitDiffQuery>,
+) -> WebResult<Json<workspace::GitDiffResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let mode = query.mode.as_deref().unwrap_or("working_tree");
+    let diff = workspace::git_diff(
+        std::path::Path::new(&active.path),
+        mode,
+        query.path.as_deref(),
+    )
+    .await
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(diff))
+}
+
+/// 执行增强版 Git 操作。
+async fn git_op(
+    State(state): State<WebAppState>,
+    Json(request): Json<GitOpRequest>,
+) -> WebResult<Json<workspace::GitOperationResponse>> {
+    let active = state.workspaces.active().map_err(WebError::from)?;
+    let result = workspace::git_op(
+        std::path::Path::new(&active.path),
+        &request.action,
+        request.path.as_deref(),
+        request.message.as_deref(),
+        request.remote_url.as_deref(),
+    )
+    .await
+    .map_err(|error| WebError::bad_request(error.to_string()))?;
+    Ok(Json(result))
 }

@@ -18,8 +18,73 @@
 .todo-markdown-item.is-completed svg { color: var(--signal); }
 .todo-markdown-item.is-completed span, .todo-markdown-item.is-cancelled span { color: var(--ink-soft); text-decoration: line-through; }
 
-.todo-markdown-view.compact { position: relative; margin: 0; border: 0; }
-.todo-markdown-view.compact .todo-markdown-trigger { min-width: 168px; max-width: 240px; min-height: 30px; padding: 3px 9px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); }
-.todo-markdown-view.compact .todo-markdown-trigger:hover { background: var(--control-surface); border-color: var(--line-strong); }
-.todo-markdown-view.compact .todo-trigger-line strong { font-size: 11px; }
-.todo-markdown-view.compact .todo-markdown-list { position: absolute; right: 0; bottom: calc(100% + 7px); width: 300px; max-height: 300px; overflow: auto; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper-raised); box-shadow: var(--shadow); z-index: 70; }
+.todo-markdown-view.compact {
+  position: relative;
+  margin: 0;
+  border: 0;
+}
+
+.todo-markdown-view.compact .todo-markdown-trigger {
+  min-width: 0;
+  max-width: 180px;
+  min-height: 28px;
+  gap: 5px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+}
+
+.todo-markdown-view.compact .todo-markdown-trigger:hover,
+.todo-markdown-view.compact .todo-markdown-trigger[aria-expanded="true"] {
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
+  border-color: transparent;
+}
+
+.todo-markdown-view.compact .todo-trigger-icon {
+  color: inherit;
+  opacity: 0.72;
+}
+
+.todo-markdown-view.compact .todo-trigger-body {
+  gap: 2px;
+}
+
+.todo-markdown-view.compact .todo-trigger-line strong {
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.todo-markdown-view.compact .todo-trigger-count {
+  font-size: 10px;
+  color: inherit;
+  opacity: 0.68;
+}
+
+.todo-markdown-view.compact .todo-trigger-track {
+  height: 2px;
+  background: color-mix(in srgb, var(--ink) 10%, transparent);
+}
+
+.todo-markdown-view.compact .todo-markdown-trigger > svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+}
+
+.todo-markdown-view.compact .todo-markdown-list {
+  position: absolute;
+  right: 0;
+  bottom: calc(100% + 7px);
+  width: 300px;
+  max-height: 300px;
+  overflow: auto;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper-raised);
+  box-shadow: var(--shadow);
+  z-index: 70;
+}

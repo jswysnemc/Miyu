@@ -2,24 +2,38 @@
   display: inline-flex;
   flex: none;
   align-items: center;
-  gap: 3px;
+  gap: 1px;
   min-width: 0;
   color: var(--ink-soft);
 }
 
+.agent-selector > svg {
+  flex-shrink: 0;
+  opacity: 0.72;
+}
+
 .agent-selector .ui-select {
   width: auto;
-  min-width: 112px;
+  min-width: 0;
 }
 
 .agent-selector .ui-select > button {
-  min-height: 32px;
-  max-width: 156px;
-  padding: 0 8px;
-  border: 1px solid var(--line);
+  min-height: 28px;
+  max-width: 148px;
+  gap: 4px;
+  padding: 0 6px;
+  border: 0;
   border-radius: 7px;
-  background: var(--paper);
+  background: transparent;
+  color: var(--ink-soft);
   font-size: 11px;
+}
+
+.agent-selector .ui-select > button:hover:not(:disabled),
+.agent-selector .ui-select > button[aria-expanded="true"] {
+  border: 0;
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
+  color: var(--ink);
 }
 
 .agent-selector .ui-select > button > span {
@@ -28,22 +42,27 @@
   white-space: nowrap;
 }
 
+.agent-selector .ui-select > button svg {
+  width: 12px;
+  height: 12px;
+  opacity: 0.55;
+}
+
 .agent-selector-config {
   display: grid;
   flex-shrink: 0;
   width: 28px;
   height: 28px;
   place-items: center;
-  border: 1px solid var(--line);
+  border: 0;
   border-radius: 7px;
-  background: var(--paper);
+  background: transparent;
   color: var(--ink-soft);
 }
 
 .agent-selector-config:hover {
   color: var(--ink);
-  border-color: var(--line-strong);
-  background: var(--control-surface);
+  background: color-mix(in srgb, var(--ink) 7%, transparent);
 }
 
 @media (max-width: 900px) {
@@ -57,12 +76,8 @@
 }
 
 @media (max-width: 760px) {
-  .agent-selector .ui-select {
-    min-width: 84px;
-  }
-
   .agent-selector .ui-select > button {
     max-width: 96px;
-    padding: 0 6px;
+    padding: 0 4px;
   }
 }

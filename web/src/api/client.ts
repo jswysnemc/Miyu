@@ -8,7 +8,13 @@ import type {
   FileMutation,
   FileNode,
   GatewayStatus,
+  GitBranchesResponse,
+  GitCommitDetailsResponse,
   GitDiff,
+  GitDiffResponse,
+  GitLogResponse,
+  GitOperationResponse,
+  GitRepositoryState,
   HistoryEntry,
   PromptDocument,
   PromptKind,
@@ -186,6 +192,27 @@ export const api = {
       apiRequest<GitDiff>("/api/workspace/git", {
         method: "POST",
         body: JSON.stringify({ action, paths, message })
+      }),
+    gitStatus: () => apiRequest<GitRepositoryState>("/api/workspace/git/status"),
+    gitBranches: () => apiRequest<GitBranchesResponse>("/api/workspace/git/branches"),
+    gitLog: (limit = 50, skip = 0) =>
+      apiRequest<GitLogResponse>(`/api/workspace/git/log?limit=${limit}&skip=${skip}`),
+    gitCommitDetails: (commit: string) =>
+      apiRequest<GitCommitDetailsResponse>(`/api/workspace/git/commit?commit=${encodeURIComponent(commit)}`),
+    gitCommitDiff: (commit: string, path?: string) => {
+      const query = new URLSearchParams({ commit });
+      if (path) query.set("path", path);
+      return apiRequest<GitDiffResponse>(`/api/workspace/git/commit-diff?${query}`);
+    },
+    gitReviewDiff: (mode: "working_tree" | "branch" = "working_tree", path?: string) => {
+      const query = new URLSearchParams({ mode });
+      if (path) query.set("path", path);
+      return apiRequest<GitDiffResponse>(`/api/workspace/git/diff?${query}`);
+    },
+    gitOp: (action: string, options: { path?: string; message?: string; remote_url?: string } = {}) =>
+      apiRequest<GitOperationResponse>("/api/workspace/git/op", {
+        method: "POST",
+        body: JSON.stringify({ action, ...options })
       })
   },
   config: {

@@ -1,11 +1,10 @@
-import { ArrowRight, AtSign, Bot, BriefcaseBusiness, GitBranch, ListTree, Paperclip, ShieldCheck, Square, SquareTerminal, Undo2 } from "lucide-react";
+import { ArrowRight, Bot, GitBranch, Paperclip, Square, SquareTerminal, Undo2 } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { RunMode, RunModelSelection, ThinkingLevel } from "../../api/contracts";
 import type { ChatModelChoice } from "./chat-model-options";
 import { AttachmentStrip } from "./composer/attachment-strip";
 import { ComposerTextarea } from "./composer/composer-textarea";
-import type { ComposerTextareaHandle } from "./composer/composer-textarea";
 import type { ComposerAttachment } from "./composer/use-composer-attachments";
 import { resolveComposerAvailability } from "./composer-availability";
 import { ModelThinkingSelector } from "./model-thinking-selector";
@@ -20,7 +19,14 @@ import { TodoMarkdownView } from "../todo/todo-markdown-view";
 import { useRuntimeActivity } from "../runtime-activity/use-runtime-activity";
 import { PermissionAuditDialog } from "../permission/permission-audit-dialog";
 import { Button } from "../../shared/ui/button/button";
+import { Select } from "../../shared/ui/select/select";
 import "./chat-composer.css";
+
+const RUN_MODE_OPTIONS = [
+  { value: "yolo", label: "工作", description: "直接执行，不逐次询问工具权限" },
+  { value: "audited", label: "审核", description: "写入工具逐次询问，限制在工作区沙盒" },
+  { value: "plan", label: "规划", description: "仅只读工具，禁止修改与写操作" }
+] satisfies Array<{ value: RunMode; label: string; description: string }>;
 
 type ChatComposerProps = {
   value: string;
@@ -61,7 +67,6 @@ export function ChatComposer(props: ChatComposerProps) {
   const git = useQuery({ queryKey:["workspace-diff"], queryFn:api.workspace.diff, staleTime:20_000 });
   const runtimeActivity = useRuntimeActivity();
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const textareaRef = useRef<ComposerTextareaHandle>(null);
 
   /**
    * 提交当前输入内容。
@@ -102,10 +107,17 @@ export function ChatComposer(props: ChatComposerProps) {
         <TodoMarkdownView sessionId={props.sessionId} compact />
         <PermissionAuditDialog sessionId={props.sessionId} />
         <Button className="composer-rail-button" onClick={props.onUndo} disabled={!props.undoAvailable || props.running} title="撤销最后一轮及其工作树修改" aria-label="撤销最后一轮"><Undo2 size={14} /></Button>
-        <div className="composer-mode" aria-label="运行模式">
-          <Button className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></Button>
-          <Button className={props.mode === "audited" ? "active" : ""} onClick={() => props.onModeChange("audited")} disabled={props.running} title="权限审计与工作区沙盒"><ShieldCheck size={13} /><span>审计</span></Button>
-          <Button className={props.mode === "plan" ? "active" : ""} onClick={() => props.onModeChange("plan")} disabled={props.running} title="规划模式"><ListTree size={13} /><span>规划</span></Button>
+        <div className="composer-mode">
+          <Select
+            value={props.mode}
+            options={RUN_MODE_OPTIONS}
+            disabled={props.running}
+            ariaLabel="运行模式"
+            menuPreferredWidth={240}
+            menuMinimumWidth={200}
+            menuAlign="right"
+            onChange={props.onModeChange}
+          />
         </div>
         <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
           <SquareTerminal size={14} />
@@ -121,7 +133,6 @@ export function ChatComposer(props: ChatComposerProps) {
       <form className="composer" onSubmit={handleSubmit}>
         <AttachmentStrip attachments={props.attachments} onRemove={props.onRemoveAttachment} />
         <ComposerTextarea
-          ref={textareaRef}
           value={props.value}
           historyEntries={props.historyEntries}
           disabled={availability.inputDisabled}
@@ -145,15 +156,15 @@ export function ChatComposer(props: ChatComposerProps) {
                 onThinkingLevelChange={props.onThinkingLevelChange}
               />
             </div>
-            <button type="button" className="composer-rail-button" onClick={() => textareaRef.current?.openMentionPicker()} disabled={availability.inputDisabled} title="插入引用" aria-label="插入引用"><AtSign size={14} /></button>
           </div>
           <div className="composer-actions">
             <input ref={fileInputRef} type="file" accept="image/*" multiple onChange={handleFileChange} hidden />
             <button type="button" className="composer-icon-button" onClick={() => fileInputRef.current?.click()} disabled={availability.inputDisabled} aria-label="添加图片"><Paperclip size={18} /></button>
-            {availability.showStop && (
+            {availability.showStop ? (
               <button type="button" className="composer-send stop" onClick={props.onStop} aria-label="停止运行"><Square size={13} fill="currentColor" /></button>
+            ) : (
+              <button type="submit" className="composer-send" disabled={availability.sendDisabled} aria-label="发送消息"><ArrowRight size={18} /></button>
             )}
-            <button type="submit" className="composer-send" disabled={availability.sendDisabled} aria-label={availability.showStop ? "加入会话队列" : "发送消息"}><ArrowRight size={18} /></button>
           </div>
         </div>
       </form>

@@ -23,7 +23,7 @@ export function AgentSelector({ choices, selection, loading, disabled, onSelect 
   const [configOpen, setConfigOpen] = useState(false);
   return (
     <div className="agent-selector">
-      <Bot size={13} />
+      <Bot size={13} aria-hidden />
       <Select
         value={selection?.id ?? ""}
         options={choices.map((choice) => ({ value: choice.id, label: choice.name }))}

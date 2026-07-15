@@ -49,7 +49,7 @@ export function WorkspaceSwitcher() {
   return (
     <div className="workspace-switcher" ref={rootRef}>
       <button ref={triggerRef} className="workspace-trigger" type="button" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <FolderGit2 size={15} /><strong>{active?.name ?? "工作区"}</strong><ChevronDown size={13} className={open ? "open" : ""} />
+        <FolderGit2 size={13} /><strong>{active?.name ?? "工作区"}</strong><ChevronDown size={12} className={open ? "open" : ""} />
       </button>
       {open && createPortal(
         <div ref={menuRef} className="workspace-menu" style={menuStyle}>

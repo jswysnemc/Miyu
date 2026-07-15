@@ -23,7 +23,7 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
   return (
     <section ref={rootRef} className={`todo-markdown-view${compact ? " compact" : ""}`}>
       <button type="button" className="todo-markdown-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
-        <span className="todo-trigger-icon"><ListChecks size={14} /></span>
+        <span className="todo-trigger-icon"><ListChecks size={compact ? 13 : 14} /></span>
         <span className="todo-trigger-body">
           <span className="todo-trigger-line">
             <strong>{summary.allDone ? "计划已完成" : summary.activeText || "计划"}</strong>
@@ -31,7 +31,7 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
           </span>
           <span className="todo-trigger-track" aria-hidden><span className="todo-trigger-fill" style={{ width: `${percent}%` }} /></span>
         </span>
-        <ChevronDown size={15} className={open ? "open" : ""} />
+        <ChevronDown size={compact ? 12 : 15} className={open ? "open" : ""} />
       </button>
       {open && (
         <ul className="todo-markdown-list">

@@ -1,123 +1,432 @@
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Check, GitBranch, Minus, Plus, RefreshCw, RotateCcw, Trash2 } from "lucide-react";
-import { useState } from "react";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  Check,
+  ChevronDown,
+  CloudDownload,
+  CloudUpload,
+  GitBranch,
+  GitCommitHorizontal,
+  History,
+  Minus,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Trash2
+} from "lucide-react";
+import { useMemo, useState } from "react";
 import { api } from "../../api/client";
-import type { GitFileStatus } from "../../api/contracts";
+import type { GitStatusEntry } from "../../api/contracts";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
+import { DiffView } from "../chat/tool-renderers/diff-view";
+
+type ReviewMode = "changes" | "history";
 
 /**
- * 渲染 Git 状态、暂存操作、提交输入和完整差异。
+ * 渲染 LiveAgent 风格的 Git 变更与历史面板。
  *
  * @returns Git 管理面板
  */
 export function DiffPane() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
-  const git = useQuery({ queryKey: ["workspace-diff"], queryFn: api.workspace.diff });
+  const [mode, setMode] = useState<ReviewMode>("changes");
   const [message, setMessage] = useState("");
-  const [pending, setPending] = useState("");
+  const [branchName, setBranchName] = useState("main");
+  const [remoteUrl, setRemoteUrl] = useState("");
+  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+  const [selectedCommitPath, setSelectedCommitPath] = useState<string | null>(null);
   const [error, setError] = useState("");
-  const [branch, setBranch] = useState("main");
+  const [notice, setNotice] = useState("");
 
-  /** 执行 Git 操作并刷新文件树。 */
-  const act = async (action: "stage" | "unstage" | "discard" | "commit", paths: string[] = []) => {
-    if (action === "discard") {
-      const confirmed = await confirm({ title: "撤销工作区修改", description: `将恢复 ${paths.join("、")}，未保存修改无法恢复。`, confirmLabel: "撤销修改", danger: true });
+  const status = useQuery({
+    queryKey: ["git-status"],
+    queryFn: api.workspace.gitStatus,
+    refetchInterval: 8_000
+  });
+  const history = useQuery({
+    queryKey: ["git-log"],
+    queryFn: () => api.workspace.gitLog(40, 0),
+    enabled: mode === "history" || status.data?.status === "ready",
+    staleTime: 10_000
+  });
+  const worktreeDiff = useQuery({
+    queryKey: ["git-review-diff", "working_tree", selectedPath],
+    queryFn: () => api.workspace.gitReviewDiff("working_tree", selectedPath ?? undefined),
+    enabled: status.data?.status === "ready" && mode === "changes"
+  });
+  const commitDetails = useQuery({
+    queryKey: ["git-commit-details", selectedCommit],
+    queryFn: () => api.workspace.gitCommitDetails(selectedCommit!),
+    enabled: Boolean(selectedCommit)
+  });
+  const commitDiff = useQuery({
+    queryKey: ["git-commit-diff", selectedCommit, selectedCommitPath],
+    queryFn: () => api.workspace.gitCommitDiff(selectedCommit!, selectedCommitPath ?? undefined),
+    enabled: Boolean(selectedCommit)
+  });
+
+  const state = status.data;
+  const ready = state?.status === "ready";
+  const staged = useMemo(
+    () => (state?.entries ?? []).filter((entry) => entry.staged && !entry.untracked),
+    [state?.entries]
+  );
+  const changes = useMemo(
+    () =>
+      (state?.entries ?? []).filter(
+        (entry) => entry.untracked || entry.worktree_status !== "." || entry.conflicted
+      ),
+    [state?.entries]
+  );
+
+  const refreshAll = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["git-status"] }),
+      queryClient.invalidateQueries({ queryKey: ["git-log"] }),
+      queryClient.invalidateQueries({ queryKey: ["git-review-diff"] }),
+      queryClient.invalidateQueries({ queryKey: ["git-commit-details"] }),
+      queryClient.invalidateQueries({ queryKey: ["git-commit-diff"] }),
+      queryClient.invalidateQueries({ queryKey: ["workspace-diff"] }),
+      queryClient.invalidateQueries({ queryKey: ["file-tree"] })
+    ]);
+  };
+
+  const op = useMutation({
+    mutationFn: (input: { action: string; path?: string; message?: string; remote_url?: string }) =>
+      api.workspace.gitOp(input.action, {
+        path: input.path,
+        message: input.message,
+        remote_url: input.remote_url
+      }),
+    onSuccess: async (result) => {
+      if (!result.ok) {
+        setError(result.message || result.stderr || "Git 操作失败");
+        setNotice("");
+        return;
+      }
+      setError("");
+      setNotice(result.message);
+      queryClient.setQueryData(["git-status"], result.state);
+      await refreshAll();
+    },
+    onError: (reason) => {
+      setError(reason instanceof Error ? reason.message : String(reason));
+      setNotice("");
+    }
+  });
+
+  const runOp = async (
+    action: string,
+    options: { path?: string; message?: string; remote_url?: string; confirmTitle?: string; confirmDescription?: string } = {}
+  ) => {
+    if (options.confirmTitle) {
+      const confirmed = await confirm({
+        title: options.confirmTitle,
+        description: options.confirmDescription ?? "此操作可能无法撤销。",
+        confirmLabel: "继续",
+        danger: true
+      });
       if (!confirmed) return;
     }
-    setPending(`${action}:${paths.join("|")}`);
     setError("");
-    try {
-      const next = await api.workspace.gitAction(action, paths, action === "commit" ? message : undefined);
-      queryClient.setQueryData(["workspace-diff"], next);
-      if (action === "commit") setMessage("");
-      await queryClient.invalidateQueries({ queryKey: ["file-tree"] });
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setPending("");
-    }
+    setNotice("");
+    await op.mutateAsync({
+      action,
+      path: options.path,
+      message: options.message,
+      remote_url: options.remote_url
+    });
+    if (action === "commit") setMessage("");
   };
 
-  /** 删除未跟踪文件。 */
-  const removeUntracked = async (path: string) => {
-    const confirmed = await confirm({ title: "删除未跟踪文件", description: `将永久删除“${path}”。`, confirmLabel: "删除文件", danger: true });
-    if (!confirmed) return;
-    setPending(`delete:${path}`);
-    try {
-      await api.workspace.remove(path);
-      await Promise.all([git.refetch(), queryClient.invalidateQueries({ queryKey: ["file-tree"] })]);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setPending("");
-    }
-  };
+  if (status.isLoading && !state) {
+    return <section className="diff-pane git-manager"><div className="git-clean">正在读取 Git 状态…</div></section>;
+  }
 
-  /** 初始化当前工作区 Git 仓库。 */
-  const initializeRepository = async () => {
-    setPending("init");
-    setError("");
-    try {
-      const next = await api.workspace.gitAction("init", [], branch);
-      queryClient.setQueryData(["workspace-diff"], next);
-    } catch (reason) {
-      setError(reason instanceof Error ? reason.message : String(reason));
-    } finally {
-      setPending("");
-    }
-  };
+  if (!ready) {
+    return (
+      <section className="diff-pane git-manager">
+        <header className="panel-head">
+          <div><span className="eyebrow">Git 工作区</span><h2><GitBranch size={15} />版本管理</h2></div>
+          <button type="button" className="icon-button" onClick={() => void status.refetch()} aria-label="刷新"><RefreshCw size={14} /></button>
+        </header>
+        <div className="git-init-panel">
+          <GitBranch size={24} />
+          <h3>初始化 Git 仓库</h3>
+          <p>为当前工作区创建本地版本历史，并支持后续 fetch / pull / push。</p>
+          <label>
+            <span>默认分支</span>
+            <input value={branchName} onChange={(event) => setBranchName(event.target.value)} spellCheck={false} />
+          </label>
+          <button type="button" onClick={() => void runOp("init", { message: branchName })} disabled={!branchName.trim() || op.isPending}>
+            初始化仓库
+          </button>
+        </div>
+        {(status.error || error) && <div className="pane-error">{error || status.error?.message}</div>}
+      </section>
+    );
+  }
+
+  const busy = op.isPending;
+  const commits = history.data?.commits ?? [];
+  const activeCommit = selectedCommit ?? commits[0]?.sha ?? null;
 
   return (
-    <section className="diff-pane git-manager">
-      <header className="panel-head">
-        <div><span className="eyebrow">Git 工作区</span><h2><GitBranch size={15} />{git.data?.branch || "版本管理"}</h2></div>
-        <button type="button" className="icon-button" onClick={() => void git.refetch()} aria-label="刷新变更"><RefreshCw size={14} /></button>
+    <section className="diff-pane git-manager git-review">
+      <header className="git-review-toolbar">
+        <div className="git-review-branch">
+          <GitBranch size={14} />
+          <strong title={state?.head}>{state?.head || "HEAD"}</strong>
+          {(state?.ahead || state?.behind) ? (
+            <span className="git-review-sync">
+              {state.ahead > 0 && <b>↑{state.ahead}</b>}
+              {state.behind > 0 && <i>↓{state.behind}</i>}
+            </span>
+          ) : null}
+          {state?.upstream && <small title={state.upstream}>{state.upstream}</small>}
+        </div>
+        <div className="git-review-actions">
+          <button type="button" className={mode === "changes" ? "active" : ""} onClick={() => setMode("changes")}>变更</button>
+          <button type="button" className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}><History size={13} />历史</button>
+          <button type="button" disabled={busy} onClick={() => void runOp("fetch")} title="Fetch"><CloudDownload size={13} /></button>
+          <button type="button" disabled={busy} onClick={() => void runOp("pull")} title="Pull"><RefreshCw size={13} /></button>
+          <button type="button" disabled={busy} onClick={() => void runOp("push")} title="Push"><CloudUpload size={13} /></button>
+          <button type="button" disabled={busy} onClick={() => void refreshAll()} title="刷新" aria-label="刷新"><RefreshCw size={13} /></button>
+        </div>
       </header>
-      {!git.data?.repository && !git.isLoading && <div className="git-init-panel"><GitBranch size={24} /><h3>初始化 Git 仓库</h3><p>为当前工作区创建本地版本历史，不会配置远程仓库。</p><label><span>默认分支</span><input value={branch} onChange={(event) => setBranch(event.target.value)} spellCheck={false} /></label><button type="button" onClick={() => void initializeRepository()} disabled={!branch.trim() || Boolean(pending)}>初始化仓库</button></div>}
-      {git.data?.repository && (
+
+      {mode === "changes" ? (
         <div className="git-manager-body">
           <section className="git-change-panel">
-            <div className="git-commit-box"><textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="提交说明" /><button type="button" onClick={() => void act("commit")} disabled={!message.trim() || Boolean(pending)}><Check size={13} />提交已暂存变更</button></div>
-            <div className="git-change-head"><span>变更 {git.data.files.length}</span><span><button type="button" onClick={() => void act("unstage")} title="取消全部暂存"><Minus size={12} /></button><button type="button" onClick={() => void act("stage")} title="暂存全部"><Plus size={12} /></button></span></div>
+            <div className="git-commit-box">
+              <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="提交说明" />
+              <button type="button" onClick={() => void runOp("commit", { message })} disabled={!message.trim() || busy || (state?.dirty_counts.staged ?? 0) === 0}>
+                <Check size={13} />提交已暂存变更
+              </button>
+            </div>
+
+            <ChangeSection
+              title={`已暂存 ${staged.length}`}
+              entries={staged}
+              selectedPath={selectedPath}
+              busy={busy}
+              onSelect={setSelectedPath}
+              onStageAll={() => void runOp("stage_all")}
+              onUnstageAll={() => void runOp("unstage_all")}
+              onStage={(path) => void runOp("stage", { path })}
+              onUnstage={(path) => void runOp("unstage", { path })}
+              onDiscard={(path) => void runOp("discard", {
+                path,
+                confirmTitle: "撤销工作区修改",
+                confirmDescription: `将恢复 ${path}，未保存修改无法恢复。`
+              })}
+              section="staged"
+            />
+            <ChangeSection
+              title={`更改 ${changes.length}`}
+              entries={changes}
+              selectedPath={selectedPath}
+              busy={busy}
+              onSelect={setSelectedPath}
+              onStageAll={() => void runOp("stage_all")}
+              onUnstageAll={() => void runOp("unstage_all")}
+              onStage={(path) => void runOp("stage", { path })}
+              onUnstage={(path) => void runOp("unstage", { path })}
+              onDiscard={(path) => void runOp("discard", {
+                path,
+                confirmTitle: entryIsUntracked(changes, path) ? "删除未跟踪文件" : "撤销工作区修改",
+                confirmDescription: entryIsUntracked(changes, path)
+                  ? `将永久删除“${path}”。`
+                  : `将恢复 ${path}，未保存修改无法恢复。`
+              })}
+              section="changes"
+            />
+
+            {!state?.remote_url && (
+              <div className="git-remote-box">
+                <span>设置 origin 远端</span>
+                <input value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="git@github.com:org/repo.git" spellCheck={false} />
+                <button type="button" disabled={!remoteUrl.trim() || busy} onClick={() => void runOp("set_remote", { remote_url: remoteUrl })}>保存远端</button>
+              </div>
+            )}
+          </section>
+
+          <div className="diff-scroll">
+            {worktreeDiff.isLoading && <div className="git-clean diff-clean">正在读取差异…</div>}
+            {worktreeDiff.data?.patch ? (
+              <div className="git-diff-shell">
+                {worktreeDiff.data.stat && <pre className="git-diff-stat">{worktreeDiff.data.stat}</pre>}
+                <DiffView source={worktreeDiff.data.patch} headerPath={selectedPath ?? undefined} />
+                {worktreeDiff.data.truncated && <div className="git-clean">差异已截断</div>}
+              </div>
+            ) : (
+              !worktreeDiff.isLoading && <div className="git-clean diff-clean">没有可显示的差异</div>
+            )}
+          </div>
+        </div>
+      ) : (
+        <div className="git-manager-body">
+          <section className="git-history-panel">
+            <div className="git-change-head">
+              <span>历史 {commits.length}</span>
+              {(history.data?.history_ahead || history.data?.history_behind) ? (
+                <small>↑{history.data?.history_ahead ?? 0} ↓{history.data?.history_behind ?? 0}</small>
+              ) : null}
+            </div>
             <div className="git-file-list">
-              {git.data.files.map((file) => <GitFileRow file={file} pending={pending} onAction={act} onRemoveUntracked={removeUntracked} key={`${file.index_status}${file.worktree_status}${file.path}`} />)}
-              {git.data.files.length === 0 && <div className="git-clean">工作区没有变更</div>}
+              {commits.map((commit) => (
+                <button
+                  type="button"
+                  key={commit.sha}
+                  className={`git-history-row${activeCommit === commit.sha ? " active" : ""}`}
+                  onClick={() => {
+                    setSelectedCommit(commit.sha);
+                    setSelectedCommitPath(null);
+                  }}
+                >
+                  <GitCommitHorizontal size={13} />
+                  <span>
+                    <strong>{commit.subject || commit.short_sha}</strong>
+                    <small>{commit.short_sha} · {commit.author_name} · {formatDate(commit.author_date)}</small>
+                  </span>
+                  {commit.local_only && <em>local</em>}
+                </button>
+              ))}
+              {commits.length === 0 && <div className="git-clean">暂无提交记录</div>}
             </div>
           </section>
           <div className="diff-scroll">
-            {git.data.diff ? <div className="workspace-diff">{git.data.diff.split("\n").map((line, index) => <div className={diffLineClass(line)} key={`${index}-${line}`}>{line || " "}</div>)}</div> : <div className="git-clean diff-clean">没有可显示的差异</div>}
+            {activeCommit && commitDetails.data ? (
+              <div className="git-diff-shell">
+                <div className="git-commit-meta">
+                  <h3>{commitDetails.data.commit.subject}</h3>
+                  <p>{commitDetails.data.commit.short_sha} · {commitDetails.data.commit.author_name} · {formatDate(commitDetails.data.commit.author_date)}</p>
+                  {commitDetails.data.commit.body && <pre>{commitDetails.data.commit.body}</pre>}
+                  <div className="git-commit-files">
+                    {commitDetails.data.commit.files.map((file) => (
+                      <button
+                        type="button"
+                        key={`${file.status}:${file.path}`}
+                        className={selectedCommitPath === file.path ? "active" : ""}
+                        onClick={() => setSelectedCommitPath(file.path)}
+                      >
+                        <span>{file.status}</span>
+                        <strong>{file.path}</strong>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                {commitDiff.data?.patch ? (
+                  <>
+                    {commitDiff.data.stat && <pre className="git-diff-stat">{commitDiff.data.stat}</pre>}
+                    <DiffView source={commitDiff.data.patch} headerPath={selectedCommitPath ?? undefined} />
+                  </>
+                ) : (
+                  <div className="git-clean">没有可显示的提交差异</div>
+                )}
+              </div>
+            ) : (
+              <div className="git-clean diff-clean">选择一条提交查看详情</div>
+            )}
           </div>
         </div>
       )}
-      {(git.error || error) && <div className="pane-error">{error || git.error?.message}</div>}
+
+      {(error || notice || status.error) && (
+        <div className={error || status.error ? "pane-error" : "pane-notice"}>
+          {error || status.error?.message || notice}
+        </div>
+      )}
     </section>
   );
 }
 
-/** 渲染单个 Git 文件及可用操作。 */
-function GitFileRow({ file, pending, onAction, onRemoveUntracked }: { file: GitFileStatus; pending: string; onAction: (action: "stage" | "unstage" | "discard", paths?: string[]) => Promise<void>; onRemoveUntracked: (path: string) => Promise<void> }) {
-  const untracked = file.index_status === "?" && file.worktree_status === "?";
-  const staged = file.index_status !== " " && file.index_status !== "?";
-  const changed = file.worktree_status !== " " || untracked;
+function ChangeSection(props: {
+  title: string;
+  entries: GitStatusEntry[];
+  selectedPath: string | null;
+  busy: boolean;
+  section: "staged" | "changes";
+  onSelect: (path: string) => void;
+  onStageAll: () => void;
+  onUnstageAll: () => void;
+  onStage: (path: string) => void;
+  onUnstage: (path: string) => void;
+  onDiscard: (path: string) => void;
+}) {
+  const [open, setOpen] = useState(true);
   return (
-    <div className="git-file-row">
-      <span className="git-file-status">{`${file.index_status}${file.worktree_status}`}</span><span title={file.path}>{file.path}</span>
-      <span className="git-file-actions">
-        {staged && <button type="button" disabled={Boolean(pending)} onClick={() => void onAction("unstage", [file.path])} title="取消暂存"><Minus size={12} /></button>}
-        {changed && <button type="button" disabled={Boolean(pending)} onClick={() => void onAction("stage", [file.path])} title="暂存"><Plus size={12} /></button>}
-        {changed && !untracked && <button type="button" disabled={Boolean(pending)} onClick={() => void onAction("discard", [file.path])} title="撤销修改"><RotateCcw size={12} /></button>}
-        {untracked && <button type="button" disabled={Boolean(pending)} onClick={() => void onRemoveUntracked(file.path)} title="删除未跟踪文件"><Trash2 size={12} /></button>}
-      </span>
+    <div className="git-section">
+      <div className="git-change-head">
+        <button type="button" className="git-section-toggle" onClick={() => setOpen((value) => !value)}>
+          <ChevronDown size={12} className={open ? "open" : ""} />
+          <span>{props.title}</span>
+        </button>
+        <span>
+          {props.section === "staged" ? (
+            <button type="button" onClick={props.onUnstageAll} title="取消全部暂存" disabled={props.busy}><Minus size={12} /></button>
+          ) : (
+            <button type="button" onClick={props.onStageAll} title="暂存全部" disabled={props.busy}><Plus size={12} /></button>
+          )}
+        </span>
+      </div>
+      {open && (
+        <div className="git-file-list">
+          {props.entries.map((entry) => (
+            <div
+              className={`git-file-row${props.selectedPath === entry.path ? " active" : ""}`}
+              key={`${entry.index_status}${entry.worktree_status}${entry.path}`}
+            >
+              <button type="button" className="git-file-main" onClick={() => props.onSelect(entry.path)}>
+                <span className={`git-file-status tone-${statusTone(entry)}`}>{statusLabel(entry)}</span>
+                <span title={entry.path}>{entry.path}</span>
+              </button>
+              <span className="git-file-actions">
+                {entry.staged && (
+                  <button type="button" disabled={props.busy} onClick={() => props.onUnstage(entry.path)} title="取消暂存"><Minus size={12} /></button>
+                )}
+                {(entry.untracked || entry.worktree_status !== "." || entry.conflicted) && !entry.staged && (
+                  <button type="button" disabled={props.busy} onClick={() => props.onStage(entry.path)} title="暂存"><Plus size={12} /></button>
+                )}
+                {(entry.untracked || entry.worktree_status !== ".") && (
+                  <button type="button" disabled={props.busy} onClick={() => props.onDiscard(entry.path)} title={entry.untracked ? "删除未跟踪文件" : "撤销修改"}>
+                    {entry.untracked ? <Trash2 size={12} /> : <RotateCcw size={12} />}
+                  </button>
+                )}
+              </span>
+            </div>
+          ))}
+          {props.entries.length === 0 && <div className="git-clean">无文件</div>}
+        </div>
+      )}
     </div>
   );
 }
 
-/** 返回差异行样式。 */
-function diffLineClass(line: string): string {
-  if (line.startsWith("+") && !line.startsWith("+++")) return "diff-line added";
-  if (line.startsWith("-") && !line.startsWith("---")) return "diff-line removed";
-  if (line.startsWith("@@")) return "diff-line hunk";
-  if (line.startsWith("# ")) return "diff-line section";
-  return "diff-line";
+function entryIsUntracked(entries: GitStatusEntry[], path: string) {
+  return entries.some((entry) => entry.path === path && entry.untracked);
+}
+
+function statusLabel(entry: GitStatusEntry) {
+  if (entry.conflicted) return "U";
+  if (entry.untracked) return "U";
+  if (entry.staged && entry.worktree_status !== ".") return "M*";
+  if (entry.staged) return entry.index_status === "A" ? "A" : entry.index_status === "D" ? "D" : "M";
+  if (entry.worktree_status === "D") return "D";
+  return "M";
+}
+
+function statusTone(entry: GitStatusEntry) {
+  if (entry.conflicted) return "conflict";
+  if (entry.untracked) return "untracked";
+  if (entry.worktree_status === "D" || entry.index_status === "D") return "deleted";
+  if (entry.index_status === "A") return "added";
+  return "modified";
+}
+function formatDate(value: string) {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
 }

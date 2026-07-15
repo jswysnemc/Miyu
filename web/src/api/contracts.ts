@@ -137,6 +137,128 @@ export type GitFileStatus = {
   worktree_status: string;
 };
 
+export type GitDirtyCounts = {
+  staged: number;
+  unstaged: number;
+  untracked: number;
+  conflicted: number;
+};
+
+export type GitStatusEntry = {
+  path: string;
+  old_path?: string | null;
+  index_status: string;
+  worktree_status: string;
+  kind: string;
+  staged: boolean;
+  conflicted: boolean;
+  untracked: boolean;
+};
+
+export type GitRepositoryState = {
+  repo_root: string;
+  workdir: string;
+  head: string;
+  upstream: string;
+  remote_name: string;
+  remote_url: string;
+  ahead: number;
+  behind: number;
+  stash_count: number;
+  dirty_counts: GitDirtyCounts;
+  entries: GitStatusEntry[];
+  status: string;
+  error?: string | null;
+};
+
+export type GitBranch = {
+  name: string;
+  full_name: string;
+  kind: string;
+  current: boolean;
+  upstream: string;
+  ahead: number;
+  behind: number;
+};
+
+export type GitBranchesResponse = {
+  state: GitRepositoryState;
+  branches: GitBranch[];
+};
+
+export type GitDiffResponse = {
+  base_ref: string;
+  head_ref: string;
+  mode: string;
+  files: string[];
+  patch: string;
+  stat: string;
+  truncated: boolean;
+  binary_files: string[];
+};
+
+export type GitCommitFile = {
+  path: string;
+  old_path?: string | null;
+  status: string;
+  kind: string;
+};
+
+export type GitCommitSummary = {
+  sha: string;
+  short_sha: string;
+  parents: string[];
+  refs: string[];
+  subject: string;
+  author_name: string;
+  author_email: string;
+  author_date: string;
+  files: GitCommitFile[];
+  file_count: number;
+  local_only: boolean;
+};
+
+export type GitLogResponse = {
+  state: GitRepositoryState;
+  commits: GitCommitSummary[];
+  history_base_ref: string;
+  history_remote_ref: string;
+  history_ahead: number;
+  history_behind: number;
+  merge_base: string;
+};
+
+export type GitCommitDetails = {
+  sha: string;
+  short_sha: string;
+  subject: string;
+  body: string;
+  author_name: string;
+  author_email: string;
+  author_date: string;
+  files: GitCommitFile[];
+  file_count: number;
+  files_changed: number;
+  insertions: number;
+  deletions: number;
+  stat: string;
+  remote_name: string;
+  remote_url: string;
+};
+
+export type GitCommitDetailsResponse = {
+  state: GitRepositoryState;
+  commit: GitCommitDetails;
+};
+
+export type GitOperationResponse = {
+  ok: boolean;
+  state: GitRepositoryState;
+  stdout: string;
+  stderr: string;
+  message: string;
+};
+
 export type FileMutation = {
   path: string;
   kind: "file" | "directory";
