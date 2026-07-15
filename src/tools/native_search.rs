@@ -169,7 +169,6 @@ fn visit_files(
         .git_ignore(true)
         .git_global(true)
         .git_exclude(true)
-        .require_git(false)
         .parents(true)
         .follow_links(false)
         .filter_entry(move |entry| !excluded_directory(&filter_root, entry.path()));
@@ -317,6 +316,7 @@ mod tests {
     #[test]
     fn glob_respects_gitignore_rules() {
         let temp = tempfile::tempdir().unwrap();
+        std::fs::create_dir(temp.path().join(".git")).unwrap();
         std::fs::write(temp.path().join(".gitignore"), "ignored/\n").unwrap();
         std::fs::create_dir_all(temp.path().join("ignored")).unwrap();
         std::fs::write(temp.path().join("ignored/file.rs"), "content").unwrap();
