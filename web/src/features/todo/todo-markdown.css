@@ -75,10 +75,7 @@
 }
 
 .todo-markdown-view.compact .todo-markdown-list {
-  position: absolute;
-  right: 0;
-  bottom: calc(100% + 7px);
-  width: 300px;
+  width: min(300px, calc(100vw - 24px));
   max-height: 300px;
   overflow: auto;
   padding: 10px;
@@ -86,5 +83,5 @@
   border-radius: 8px;
   background: var(--paper-raised);
   box-shadow: var(--shadow);
-  z-index: 70;
+  z-index: 120;
 }

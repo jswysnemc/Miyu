@@ -1,9 +1,11 @@
 import { useQuery } from "@tanstack/react-query";
 import { Ban, CheckCircle2, ChevronDown, Circle, CircleDot, ListChecks } from "lucide-react";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { api } from "../../api/client";
 import type { TodoStatus } from "../../api/contracts";
 import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
+import { useAnchoredPopover } from "../../shared/ui/popover/use-anchored-popover";
 import { summarizeTodos } from "./todo-summary";
 import "./todo-markdown.css";
 
@@ -13,16 +15,40 @@ const statusIcons = { pending: Circle, in_progress: CircleDot, completed: CheckC
 export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: string; compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const rootRef = useRef<HTMLElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const listRef = useRef<HTMLUListElement>(null);
   // 1. 紧凑弹窗模式下点击外部关闭清单
   useOutsidePointerDown(rootRef, () => setOpen(false), compact && open);
+  useOutsidePointerDown(listRef, () => setOpen(false), compact && open);
+  const menuStyle = useAnchoredPopover({
+    open: compact && open,
+    anchorRef: triggerRef,
+    preferredWidth: 300,
+    minimumWidth: 240,
+    align: "right",
+    maxHeight: 300
+  });
   const query = useQuery({ queryKey: ["todos", sessionId], queryFn: api.todos.list, enabled: Boolean(sessionId), refetchInterval: 2000 });
   if (!sessionId || !query.data?.length) return null;
   const items = query.data;
   const summary = summarizeTodos(items);
   const percent = Math.round(summary.ratio * 100);
+  const list = open ? (
+    <ul ref={listRef} className="todo-markdown-list" style={compact ? menuStyle : undefined}>
+      {items.map((item) => {
+        const Icon = statusIcons[item.status];
+        return (
+          <li key={item.id} className={`todo-markdown-item is-${item.status}`}>
+            <Icon size={15} />
+            <span>{item.text}</span>
+          </li>
+        );
+      })}
+    </ul>
+  ) : null;
   return (
     <section ref={rootRef} className={`todo-markdown-view${compact ? " compact" : ""}`}>
-      <button type="button" className="todo-markdown-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <button ref={triggerRef} type="button" className="todo-markdown-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span className="todo-trigger-icon"><ListChecks size={compact ? 13 : 14} /></span>
         <span className="todo-trigger-body">
           <span className="todo-trigger-line">
@@ -33,19 +59,7 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
         </span>
         <ChevronDown size={compact ? 12 : 15} className={open ? "open" : ""} />
       </button>
-      {open && (
-        <ul className="todo-markdown-list">
-          {items.map((item) => {
-            const Icon = statusIcons[item.status];
-            return (
-              <li key={item.id} className={`todo-markdown-item is-${item.status}`}>
-                <Icon size={15} />
-                <span>{item.text}</span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
+      {compact && list ? createPortal(list, document.body) : list}
       {query.error && <div className="run-error">{query.error.message}</div>}
     </section>
   );
