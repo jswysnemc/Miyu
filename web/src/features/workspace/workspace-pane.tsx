@@ -41,11 +41,10 @@ export function WorkspacePane({
 }: WorkspacePaneProps) {
   const [fileTreeOpen, setFileTreeOpen] = useState(false);
   const [tabs, setTabs] = useState<WorkspacePanelTab[]>(() => [
-    createWorkspacePanelTab("files", { title: "编辑器", closable: false })
+    createWorkspacePanelTab("files", { title: "编辑器", closable: true })
   ]);
   const [activeTabId, setActiveTabId] = useState(tabs[0]?.id ?? null);
 
-  // 打开文件时：复用同路径标签 / 填充空编辑器 / 新建文件标签。
   useEffect(() => {
     if (!selectedFile) return;
     setTabs((current) => {
@@ -75,7 +74,6 @@ export function WorkspacePane({
     onActiveTypeChange("files");
   }, [onActiveTypeChange, selectedFile]);
 
-  // 外部入口切换到非终端类型时，激活已有同类型标签或补一个。
   useEffect(() => {
     if (activeType === "terminal") return;
     setTabs((current) => {
@@ -90,7 +88,6 @@ export function WorkspacePane({
     });
   }, [activeType]);
 
-  // 同步活动终端标签标题。
   useEffect(() => {
     setTabs((current) =>
       current.map((tab) => {
@@ -105,11 +102,6 @@ export function WorkspacePane({
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
 
-  /**
-   * 添加指定类型的工作区标签。
-   *
-   * @param type 面板类型
-   */
   const addTab = async (type: PaneTab) => {
     if (type === "files") {
       const created = createWorkspacePanelTab("files", { title: "编辑器" });
@@ -142,14 +134,8 @@ export function WorkspacePane({
     onActiveTypeChange(type);
   };
 
-  /**
-   * 关闭指定标签。
-   *
-   * @param id 标签 ID
-   */
   const closeTab = (id: string) => {
     setTabs((current) => {
-      if (current.length <= 1) return current;
       const index = current.findIndex((tab) => tab.id === id);
       if (index < 0) return current;
       const closing = current[index];
@@ -158,7 +144,7 @@ export function WorkspacePane({
       }
       const next = current.filter((tab) => tab.id !== id);
       if (activeTabId === id) {
-        const fallback = next[Math.max(0, index - 1)] ?? next[0];
+        const fallback = next[Math.max(0, index - 1)] ?? next[0] ?? null;
         setActiveTabId(fallback?.id ?? null);
         if (fallback) onActiveTypeChange(fallback.type);
       }
@@ -193,6 +179,12 @@ export function WorkspacePane({
         onCollapse={onCollapse}
       />
       <div className="pane-body">
+        {!activeTab && (
+          <div className="workspace-pane-empty">
+            <p>没有打开的面板</p>
+            <span>点右上角 + 添加编辑器、Git、终端或后台任务</span>
+          </div>
+        )}
         {activeTab?.type === "files" && (
           <div className={fileTreeOpen ? "files-layout file-tree-open" : "files-layout file-tree-closed"}>
             <EditorPane

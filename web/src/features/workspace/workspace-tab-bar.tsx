@@ -26,7 +26,7 @@ const addable: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> =
 /**
  * 渲染 Cursor 风格的工作区顶部标签栏。
  *
- * 左侧为可关闭标签与新增菜单；右侧仅保留全屏与收起。
+ * 标签可横向滚动，`+` 与全屏/收起始终固定在栏上，不会被滚走。
  *
  * @param props 标签列表、当前标签与布局操作
  * @returns 工作区标签导航
@@ -70,39 +70,39 @@ export function WorkspaceTabBar(props: WorkspaceTabBarProps) {
             </div>
           );
         })}
-        <div className="workspace-tab-actions" ref={menuRef}>
-          <button
-            type="button"
-            className="workspace-tab-add"
-            aria-label="添加面板"
-            title="添加面板"
-            aria-expanded={menuOpen}
-            onClick={() => setMenuOpen((value) => !value)}
-          >
-            <Plus size={14} />
-          </button>
-          {menuOpen && (
-            <div className="workspace-tab-add-menu" role="menu">
-              {addable.map((item) => {
-                const Icon = item.icon;
-                return (
-                  <button
-                    type="button"
-                    role="menuitem"
-                    key={item.type}
-                    onClick={() => {
-                      props.onAdd(item.type);
-                      setMenuOpen(false);
-                    }}
-                  >
-                    <Icon size={14} />
-                    <span>{item.label}</span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
-        </div>
+      </div>
+      <div className="workspace-tab-actions" ref={menuRef}>
+        <button
+          type="button"
+          className="workspace-tab-add"
+          aria-label="添加面板"
+          title="添加面板"
+          aria-expanded={menuOpen}
+          onClick={() => setMenuOpen((value) => !value)}
+        >
+          <Plus size={14} />
+        </button>
+        {menuOpen && (
+          <div className="workspace-tab-add-menu" role="menu">
+            {addable.map((item) => {
+              const Icon = item.icon;
+              return (
+                <button
+                  type="button"
+                  role="menuitem"
+                  key={item.type}
+                  onClick={() => {
+                    props.onAdd(item.type);
+                    setMenuOpen(false);
+                  }}
+                >
+                  <Icon size={14} />
+                  <span>{item.label}</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="workspace-tab-layout">
         <button
