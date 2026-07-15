@@ -190,6 +190,12 @@ pub(super) fn git_bytes(repository_root: &Path, args: &[&str]) -> Result<Vec<u8>
 }
 
 /// 查找工作目录所属 Git 仓库根目录。
+///
+/// 参数:
+/// - `workspace`: 当前工作目录
+///
+/// 返回:
+/// - 仓库根目录；未安装 Git 或当前目录不属于仓库时返回空
 fn repository_root(workspace: &Path) -> Result<Option<PathBuf>> {
     repository_root_with_program(workspace, "git")
 }

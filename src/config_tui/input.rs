@@ -14,13 +14,22 @@ pub(crate) fn read_key_event() -> Result<KeyEvent> {
     read_key_event_with_timeout(None).map(|key| key.expect("blocking read should return a key"))
 }
 
+/// 读取一个可操作的键盘事件，可选设置等待超时。
+///
+/// 参数:
+/// - `timeout`: 等待终端事件的时长；为空时持续等待
+///
+/// 返回:
+/// - 按键事件；超时或没有可操作事件时返回空
 pub(crate) fn read_key_event_with_timeout(timeout: Option<Duration>) -> Result<Option<KeyEvent>> {
     loop {
+        // 1. 按需等待终端输入，超时后返回空值
         if let Some(timeout) = timeout {
             if !event::poll(timeout)? {
                 return Ok(None);
             }
         }
+        // 2. 读取事件并过滤非键盘输入和按键释放事件
         if let Event::Key(event) = event::read()? {
             if !is_actionable_key_event(event) {
                 continue;
