@@ -5,8 +5,10 @@ import { useEffect, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { useTheme } from "../theme/theme";
 import { EditorBreadcrumbs } from "./editor-breadcrumbs";
+import { EditorPreviewToggle } from "./editor-preview-toggle";
 import { configureMonacoEnvironment } from "./monaco-environment";
 import { ImageFilePreview, isImageFile } from "./image-file-preview";
+import { isMarkdownFile, MarkdownFilePreview } from "./markdown-file-preview";
 
 type EditorPaneProps = {
   path: string | null;
@@ -24,11 +26,13 @@ type EditorPaneProps = {
 export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree }: EditorPaneProps) {
   const { theme } = useTheme();
   const imageFile = Boolean(path && isImageFile(path));
+  const markdownFile = Boolean(path && isMarkdownFile(path));
   const queryClient = useQueryClient();
   const file = useQuery({ queryKey: ["file", path], queryFn: () => api.workspace.file(path!), enabled: Boolean(path) && !imageFile });
   const [content, setContent] = useState("");
   const [externalChange, setExternalChange] = useState(false);
   const [editorReady, setEditorReady] = useState(false);
+  const [preview, setPreview] = useState(false);
   const editorAreaRef = useRef<HTMLDivElement>(null);
   const editorRef = useRef<Parameters<OnMount>[0] | null>(null);
   useEffect(() => {
@@ -44,6 +48,7 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
   useEffect(() => {
     setContent("");
     setExternalChange(false);
+    setPreview(false);
     return () => {
       editorRef.current = null;
     };
@@ -116,6 +121,7 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
       <header className="editor-head">
         <EditorBreadcrumbs path={path} onSelectFile={onSelectFile} />
         {externalChange && <span className="editor-external-change">磁盘内容已变化</span>}
+        {markdownFile && <EditorPreviewToggle preview={preview} onChange={setPreview} />}
         {!imageFile && <button type="button" className="editor-save" onClick={() => save.mutate()} disabled={!file.data || content === file.data.content || save.isPending}>
           <Save size={14} /> 保存
         </button>}
@@ -127,7 +133,8 @@ export function EditorPane({ path, onSelectFile, fileTreeOpen, onToggleFileTree 
       </header>
       <div className="editor-area" ref={editorAreaRef}>
         {imageFile && <ImageFilePreview path={path} />}
-        {file.data && editorReady && (
+        {markdownFile && preview && file.data && <MarkdownFilePreview source={content} />}
+        {file.data && editorReady && !(markdownFile && preview) && (
           <Editor
             key={path}
             path={path}

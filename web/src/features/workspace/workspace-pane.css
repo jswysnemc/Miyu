@@ -40,6 +40,11 @@
 .editor-external-change + .editor-save { margin-left: 0; }
 .editor-save { display: flex; align-items: center; gap: 5px; height: 27px; padding: 0 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--paper-deep); font-size: 11px; }
 .editor-save:disabled { cursor: not-allowed; opacity: 0.35; }
+.editor-preview-toggle { display: flex; align-items: center; gap: 0.125rem; margin-left: auto; padding: 0.125rem; border: 1px solid var(--line); border-radius: 0.4375rem; background: var(--paper-deep); }
+.editor-preview-toggle button { display: flex; align-items: center; gap: 0.25rem; min-height: 1.4375rem; padding: 0 0.4375rem; border: 0; border-radius: 0.3125rem; background: transparent; color: var(--ink-soft); font-size: 0.6875rem; }
+.editor-preview-toggle button:hover,
+.editor-preview-toggle button.active { background: var(--paper); color: var(--ink); }
+.editor-preview-toggle + .editor-save { margin-left: 0; }
 .editor-tree-toggle { display: grid; flex: 0 0 auto; width: 29px; height: 29px; padding: 0; place-items: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--ink-soft); }
 .editor-tree-toggle:hover,
 .editor-tree-toggle.active { border-color: var(--line); background: var(--paper-deep); color: var(--ink); }
@@ -47,6 +52,8 @@
 .editor-area > div { max-width: 100%; overflow: hidden; }
 .editor-image-preview { display: grid; width: 100%; height: 100%; padding: 1rem; overflow: auto !important; place-items: center; background: var(--paper-deep); }
 .editor-image-preview img { display: block; max-width: 100%; max-height: 100%; object-fit: contain; border-radius: 0.5rem; box-shadow: 0 0.25rem 1rem rgb(20 28 23 / 10%); }
+.editor-markdown-preview { width: 100%; height: 100%; padding: clamp(0.875rem, 2vw, 1.5rem); overflow: auto !important; background: var(--paper); }
+.editor-markdown-preview > .markdown-body { width: min(100%, 52rem); margin: 0 auto; font-size: clamp(0.875rem, 0.82rem + 0.12vw, 1rem); }
 .editor-state,
 .editor-empty { display: grid; height: 100%; place-content: center; justify-items: center; color: var(--ink-soft); }
 .file-code-placeholder { font: 500 28px var(--font-code); color: var(--line-strong); }

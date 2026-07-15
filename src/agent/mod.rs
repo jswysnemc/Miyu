@@ -5,6 +5,7 @@ mod message_context;
 mod mode;
 mod model_context;
 mod recovery;
+mod subagent_completion;
 mod system_prompt;
 mod tool_history;
 mod tool_visibility;
