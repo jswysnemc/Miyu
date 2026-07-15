@@ -21,14 +21,15 @@
 .cron-form label > span,
 .cron-schedule-field legend { color: var(--ink-soft); font-size: 12px; }
 .cron-form input,
-.cron-form select,
-.cron-form textarea { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
+.cron-form textarea,
+.cron-form .ui-select > button { width: 100%; border: 1px solid var(--line); border-radius: 7px; background: var(--paper); }
 .cron-form input,
-.cron-form select { height: 38px; padding: 0 10px; }
+.cron-form .ui-select > button { height: 38px; min-height: 38px; padding: 0 10px; }
 .cron-form textarea { min-height: 94px; padding: 9px 10px; resize: vertical; line-height: 1.5; }
 .cron-form input:hover,
-.cron-form select:hover,
-.cron-form textarea:hover { border-color: var(--line-strong); }
+.cron-form textarea:hover,
+.cron-form .ui-select > button:hover:not(:disabled) { border-color: var(--line-strong); }
+.cron-form .ui-select > button[aria-expanded="true"] { border-color: var(--line-strong); }
 .cron-field-wide { grid-column: 1 / -1; }
 .cron-schedule-field { display: grid; grid-column: 1 / -1; gap: 6px; min-width: 0; margin: 0; padding: 0; border: 0; }
 .cron-segmented { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); padding: 3px; border: 1px solid var(--line); border-radius: 7px; background: var(--paper-deep); }

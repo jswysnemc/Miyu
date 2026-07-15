@@ -1,6 +1,7 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { CalendarPlus, LoaderCircle } from "lucide-react";
 import type { CreateCronJobRequest, Session } from "../../api/contracts";
+import { Select } from "../../shared/ui/select/select";
 
 type CronJobFormProps = {
   sessions: Session[];
@@ -35,6 +36,17 @@ export function CronJobForm({ sessions, pending, onSubmit }: CronJobFormProps) {
   const [scheduleKind, setScheduleKind] = useState<ScheduleKind>("once");
   const [runAt, setRunAt] = useState(defaultRunAt);
   const [intervalMinutes, setIntervalMinutes] = useState(60);
+  const sessionOptions = useMemo(
+    () => [
+      { value: "", label: sessions.length === 0 ? "暂无可用会话" : "选择会话" },
+      ...sessions.map((session) => ({
+        value: session.id,
+        label: session.title,
+        description: session.active ? "当前会话" : undefined
+      }))
+    ],
+    [sessions]
+  );
 
   useEffect(() => {
     if (!sessionId && sessions.length > 0) {
@@ -69,7 +81,18 @@ export function CronJobForm({ sessions, pending, onSubmit }: CronJobFormProps) {
       </div>
       <div className="cron-form-grid">
         <label><span>任务名称</span><input value={name} onChange={(event) => setName(event.target.value)} placeholder="例如：每日项目摘要" maxLength={120} /></label>
-        <label><span>目标会话</span><select value={sessionId} onChange={(event) => setSessionId(event.target.value)} disabled={sessions.length === 0}><option value="">选择会话</option>{sessions.map((session) => <option key={session.id} value={session.id}>{session.title}</option>)}</select></label>
+        <label>
+          <span>目标会话</span>
+          <Select
+            value={sessionId}
+            options={sessionOptions}
+            disabled={sessions.length === 0}
+            ariaLabel="目标会话"
+            menuPreferredWidth={320}
+            menuMinimumWidth={220}
+            onChange={setSessionId}
+          />
+        </label>
         <label className="cron-field-wide"><span>执行提示词</span><textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} placeholder="输入任务执行时发送给智能体的指令" rows={4} /></label>
         <fieldset className="cron-field-wide cron-schedule-field"><legend>调度方式</legend><div className="cron-segmented"><button type="button" className={scheduleKind === "once" ? "active" : ""} onClick={() => setScheduleKind("once")}>单次</button><button type="button" className={scheduleKind === "interval" ? "active" : ""} onClick={() => setScheduleKind("interval")}>固定间隔</button></div></fieldset>
         <label><span>{scheduleKind === "once" ? "执行时间" : "首次执行时间"}</span><input type="datetime-local" value={runAt} onChange={(event) => setRunAt(event.target.value)} /></label>
