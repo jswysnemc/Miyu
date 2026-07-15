@@ -187,8 +187,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
           <aside className="coding-workspace">
             <WorkspacePane
               selectedFile={selectedFile}
-              tab={paneTab}
-              onTabChange={setPaneTab}
+              activeType={paneTab}
+              onActiveTypeChange={setPaneTab}
               onSelectFile={onSelectFile}
               onClearFile={onClearFile}
               terminalManager={terminalManager}

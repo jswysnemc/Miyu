@@ -36,7 +36,6 @@
   min-height: 0;
   background: var(--paper);
 }
-}
 
 .workspace-open.chat-open:not(.workspace-maximized) .workbench-main {
   grid-template-columns: minmax(360px, 1fr) 7px var(--workspace-panel-width);
