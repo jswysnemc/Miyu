@@ -7,9 +7,8 @@ use crate::cli::repl_input_render::{
 };
 use crate::cli::repl_text::{repl_input_lines, visible_width};
 use crate::cli::REPL_MAX_VISIBLE_INPUT_ROWS;
-use crate::render::PermissionChoice;
 use anyhow::Result;
-use crossterm::cursor::{Hide, MoveTo, Show};
+use crossterm::cursor::{MoveTo, Show};
 use crossterm::queue;
 use crossterm::style::Print;
 use crossterm::terminal::{Clear, ClearType};
@@ -23,10 +22,6 @@ pub(super) struct ComposerFrame {
     cursor: usize,
     is_pasted: bool,
     slash_selection: usize,
-    /// 权限确认接管输入区时的高亮选项；None 表示普通输入。
-    permission_choice: Option<PermissionChoice>,
-    /// 权限拒绝回复草稿。
-    permission_reply: Option<String>,
 }
 
 impl ComposerFrame {
@@ -54,49 +49,7 @@ impl ComposerFrame {
             cursor,
             is_pasted,
             slash_selection,
-            permission_choice: None,
-            permission_reply: None,
         }
-    }
-
-    /// 创建权限交互接管态的 composer。
-    ///
-    /// 参数:
-    /// - `chrome`: 底栏状态
-    /// - `choice`: 当前高亮选项
-    /// - `reply`: 拒绝回复草稿
-    ///
-    /// 返回:
-    /// - 权限接管态 composer
-    pub(super) fn permission(
-        chrome: ReplChrome,
-        choice: PermissionChoice,
-        reply: Option<String>,
-    ) -> Self {
-        Self {
-            chrome,
-            input: String::new(),
-            cursor: 0,
-            is_pasted: false,
-            slash_selection: 0,
-            permission_choice: Some(choice),
-            permission_reply: reply,
-        }
-    }
-
-    /// 是否处于权限接管态。
-    pub(super) fn is_permission(&self) -> bool {
-        self.permission_choice.is_some()
-    }
-
-    /// 更新权限高亮与回复草稿。
-    pub(super) fn set_permission_state(
-        &mut self,
-        choice: PermissionChoice,
-        reply: Option<String>,
-    ) {
-        self.permission_choice = Some(choice);
-        self.permission_reply = reply;
     }
 
     /// 返回 composer 在指定终端宽度下的视觉行数。
@@ -107,15 +60,6 @@ impl ComposerFrame {
     /// 返回:
     /// - composer 所需视觉行数
     pub(super) fn height(&self, cols: usize) -> u16 {
-        if self.permission_choice.is_some() {
-            // 顶线 + 标题 + 3 选项 + 可选回复 + 底线 + 提示
-            let mut rows = 7u16;
-            if self.permission_reply.is_some() {
-                rows = rows.saturating_add(1);
-            }
-            let _ = cols;
-            return rows;
-        }
         let layout = self.layout(cols);
         if layout.slash_panel.is_visible() {
             return 2u16
@@ -134,9 +78,6 @@ impl ComposerFrame {
     /// 返回:
     /// - 绘制是否成功
     pub(super) fn draw<W: Write>(&self, output: &mut W, viewport: &InlineViewport) -> Result<()> {
-        if self.permission_choice.is_some() {
-            return self.draw_permission(output, viewport);
-        }
         let cols = usize::from(viewport.size().cols);
         let top = viewport.composer_top();
         let height = viewport.composer_height();
@@ -178,77 +119,6 @@ impl ComposerFrame {
                 input_start_row.saturating_add(layout.cursor_row_offset)
             ),
             Show
-        )?;
-        output.flush()?;
-        Ok(())
-    }
-
-    /// 在底部绘制权限接管面板，并隐藏编辑光标避免与输入框冲突。
-    ///
-    /// 参数:
-    /// - `output`: 终端输出句柄
-    /// - `viewport`: 当前历史与 composer 分区
-    ///
-    /// 返回:
-    /// - 绘制是否成功
-    fn draw_permission<W: Write>(
-        &self,
-        output: &mut W,
-        viewport: &InlineViewport,
-    ) -> Result<()> {
-        let cols = usize::from(viewport.size().cols).max(1);
-        let top = viewport.composer_top();
-        let height = viewport.composer_height();
-        let selected = self.permission_choice.unwrap_or(PermissionChoice::Allow);
-
-        for row_offset in 0..height {
-            queue!(
-                output,
-                MoveTo(0, top.saturating_add(row_offset)),
-                Clear(ClearType::CurrentLine)
-            )?;
-        }
-
-        let mut row = top;
-        queue!(output, MoveTo(0, row), Print(chrome_rule(cols)))?;
-        row = row.saturating_add(1);
-        queue!(
-            output,
-            MoveTo(0, row),
-            Print(truncate_ansi(
-                "\x1b[1;33m需要权限 · 选择操作\x1b[0m",
-                cols
-            ))
-        )?;
-        row = row.saturating_add(1);
-        for choice in PermissionChoice::all() {
-            let active = choice == selected;
-            let marker = if active { "❯" } else { " " };
-            let line = if active {
-                format!("\x1b[1;36m{marker} {}\x1b[0m", choice.label())
-            } else {
-                format!("{marker} {}", choice.label())
-            };
-            queue!(output, MoveTo(0, row), Print(truncate_ansi(&line, cols)))?;
-            row = row.saturating_add(1);
-        }
-        if let Some(draft) = &self.permission_reply {
-            let line = format!("回复: {draft}\x1b[36m▌\x1b[0m");
-            queue!(output, MoveTo(0, row), Print(truncate_ansi(&line, cols)))?;
-            row = row.saturating_add(1);
-        }
-        queue!(output, MoveTo(0, row), Print(chrome_rule(cols)))?;
-        row = row.saturating_add(1);
-        let hint = if self.permission_reply.is_some() {
-            "Enter 提交 · Esc 返回"
-        } else {
-            "↑↓ 选择 · Enter 确认 · y 允许 · n 拒绝"
-        };
-        queue!(
-            output,
-            MoveTo(0, row),
-            Print(format!("\x1b[2m{}\x1b[0m", truncate_to_width(hint, cols))),
-            Hide
         )?;
         output.flush()?;
         Ok(())
@@ -300,54 +170,6 @@ fn placeholder_text() -> String {
         "输入消息，/ 查看命令，! 执行 Shell",
     );
     format!("\x1b[2m{text}\x1b[0m")
-}
-
-/// 按可见宽度截断纯文本。
-fn truncate_to_width(value: &str, width: usize) -> String {
-    if visible_width(value) <= width {
-        return value.to_string();
-    }
-    let mut out = String::new();
-    let mut used = 0usize;
-    for ch in value.chars() {
-        let next = if ch.is_ascii() { 1 } else { 2 };
-        if used + next > width.saturating_sub(1) {
-            break;
-        }
-        out.push(ch);
-        used += next;
-    }
-    out.push('…');
-    out
-}
-
-/// 对含 ANSI 的文本做保守截断（按字节可见近似，保留常见颜色码）。
-fn truncate_ansi(value: &str, width: usize) -> String {
-    // 权限面板文案很短，通常无需截断；仅在极窄终端时裁剪。
-    if visible_width(&strip_ansi_for_width(value)) <= width {
-        return value.to_string();
-    }
-    truncate_to_width(&strip_ansi_for_width(value), width)
-}
-
-fn strip_ansi_for_width(value: &str) -> String {
-    let mut out = String::new();
-    let mut chars = value.chars().peekable();
-    while let Some(ch) = chars.next() {
-        if ch == '\u{1b}' {
-            if chars.peek() == Some(&'[') {
-                chars.next();
-                while let Some(next) = chars.next() {
-                    if next.is_ascii_alphabetic() {
-                        break;
-                    }
-                }
-            }
-            continue;
-        }
-        out.push(ch);
-    }
-    out
 }
 
 /// composer 在单一终端宽度下的计算结果。

@@ -124,7 +124,19 @@ impl TranscriptStore {
         &mut self,
         request: crate::permission::PermissionRequest,
     ) {
-        self.push_cell(HistoryCell::permission(request));
+        self.finalize_live_tail();
+        let Some(index) = self.active_tool_index else {
+            return;
+        };
+        match self.cells.get_mut(index) {
+            Some(HistoryCell::Tool(ToolCell::Invocation(view))) if view.name == request.tool => {
+                view.request_permission(request.id);
+            }
+            Some(HistoryCell::Diff(cell)) if request.tool == "edit_file" => {
+                cell.request_permission(request.id);
+            }
+            _ => {}
+        }
     }
 
     /// 更新指定权限事件的最终决定。
@@ -141,12 +153,18 @@ impl TranscriptStore {
         decision: crate::permission::PermissionDecision,
     ) -> bool {
         for cell in self.cells.iter_mut().rev() {
-            let HistoryCell::Permission(cell) = cell else {
-                continue;
-            };
-            if cell.request.id == request_id {
-                cell.resolve(decision);
-                return true;
+            match cell {
+                HistoryCell::Tool(ToolCell::Invocation(view)) => {
+                    if view.resolve_permission(request_id, decision.clone()) {
+                        return true;
+                    }
+                }
+                HistoryCell::Diff(cell) => {
+                    if cell.resolve_permission(request_id, decision.clone()) {
+                        return true;
+                    }
+                }
+                _ => {}
             }
         }
         false
@@ -166,12 +184,18 @@ impl TranscriptStore {
         draft: Option<String>,
     ) -> bool {
         for cell in self.cells.iter_mut().rev() {
-            let HistoryCell::Permission(cell) = cell else {
-                continue;
-            };
-            if cell.request.id == request_id {
-                cell.set_reply_draft(draft);
-                return true;
+            match cell {
+                HistoryCell::Tool(ToolCell::Invocation(view)) => {
+                    if view.set_permission_reply(request_id, draft.clone()) {
+                        return true;
+                    }
+                }
+                HistoryCell::Diff(cell) => {
+                    if cell.set_permission_reply(request_id, draft.clone()) {
+                        return true;
+                    }
+                }
+                _ => {}
             }
         }
         false
@@ -191,12 +215,18 @@ impl TranscriptStore {
         selected: crate::render::PermissionChoice,
     ) -> bool {
         for cell in self.cells.iter_mut().rev() {
-            let HistoryCell::Permission(cell) = cell else {
-                continue;
-            };
-            if cell.request.id == request_id {
-                cell.set_selected(selected);
-                return true;
+            match cell {
+                HistoryCell::Tool(ToolCell::Invocation(view)) => {
+                    if view.set_permission_choice(request_id, selected) {
+                        return true;
+                    }
+                }
+                HistoryCell::Diff(cell) => {
+                    if cell.set_permission_choice(request_id, selected) {
+                        return true;
+                    }
+                }
+                _ => {}
             }
         }
         false
@@ -315,8 +345,9 @@ impl TranscriptStore {
         self.finalize_live_tail();
         self.live_tool_call = None;
         if name == "edit_file" {
-            self.active_tool_index = None;
-            self.push_cell(HistoryCell::diff(arguments));
+            let index = self.cells.len();
+            self.cells.push(HistoryCell::diff(arguments));
+            self.active_tool_index = Some(index);
         } else if name == "subagent" {
             let index = self.cells.len();
             self.cells

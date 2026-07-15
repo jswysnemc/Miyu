@@ -430,8 +430,9 @@ impl Agent {
                         call.function.name
                     );
                 }
-                if self.mode == AgentMode::Audited
-                    && self.tools.permission(&call.function.name)? == ToolPermission::Writes
+                if self
+                    .tools
+                    .requires_permission(&call.function.name, &call.function.arguments)?
                 {
                     self.tools.record_permission_requested(
                         &call.function.name,

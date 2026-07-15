@@ -1,4 +1,4 @@
-use super::model::ToolView;
+use super::model::{PermissionAuditView, ToolView};
 use crate::render::command_output::render_command_block_with_action;
 use crate::render::tool_event_line::{tool_event_label, tool_event_text};
 use crate::render::ToolCallDisplayMode;
@@ -25,9 +25,11 @@ pub(crate) fn render(view: &ToolView, mode: ToolCallDisplayMode) -> String {
         } else {
             "Run"
         };
-        return render_command_block_with_action(&view.arguments, action)
+        let mut output = render_command_block_with_action(&view.arguments, action)
             .trim_end()
             .to_string();
+        output.push_str(&render_permission(view.permission.as_ref()));
+        return output;
     }
     if view.name == "todo" {
         if let Some(rendered) = super::todo::render(view, mode) {
@@ -52,6 +54,7 @@ pub(crate) fn render(view: &ToolView, mode: ToolCallDisplayMode) -> String {
         if let Some(progress) = visible_progress(view.progress.as_deref()) {
             output.push_str(&format!("\n\x1b[2m  └─ {progress}\x1b[0m"));
         }
+        output.push_str(&render_permission(view.permission.as_ref()));
         return output;
     }
 
@@ -67,7 +70,28 @@ pub(crate) fn render(view: &ToolView, mode: ToolCallDisplayMode) -> String {
         output.push('\n');
         output.push_str(&render_payload("output", &outcome.output));
     }
+    output.push_str(&render_permission(view.permission.as_ref()));
     output
+}
+
+/// 渲染附着在工具生命周期中的权限审计状态。
+///
+/// 参数:
+/// - `permission`: 可选权限审计状态
+///
+/// 返回:
+/// - 不重复工具内容的权限交互文本
+fn render_permission(permission: Option<&PermissionAuditView>) -> String {
+    let Some(permission) = permission else {
+        return String::new();
+    };
+    match &permission.decision {
+        Some(decision) => crate::render::render_permission_decision(decision),
+        None => crate::render::render_permission_controls(
+            permission.selected,
+            permission.reply_draft.as_deref(),
+        ),
+    }
 }
 
 /// 渲染单次工具调用，供普通 CLI 使用。

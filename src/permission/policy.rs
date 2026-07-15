@@ -1,8 +1,11 @@
+use super::path_policy::{
+    contains_sensitive_read_path, path_is_within_workspace, resolve_without_io,
+};
 use super::{AuditDecision, PermissionAuditLog};
 use crate::tools::ToolPermission;
 use anyhow::{bail, Result};
 use serde_json::Value;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// 工具权限策略模式。
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -115,7 +118,11 @@ impl PermissionProfile {
         if self.mode == PermissionProfileMode::Yolo {
             return Ok(false);
         }
-        // 2. 规划模式和审计模式先阻止不允许的工具类别
+        // 2. TODO 仅维护会话计划，不参与权限审计交互或日志记录
+        if self.mode == PermissionProfileMode::Audited && tool == "todo" {
+            return Ok(false);
+        }
+        // 3. 规划模式和审计模式先阻止不允许的工具类别
         if self.mode == PermissionProfileMode::Plan && permission == ToolPermission::Writes {
             self.record(
                 tool,
@@ -134,7 +141,7 @@ impl PermissionProfile {
             );
             bail!("permission audit blocked background command outside the foreground sandbox")
         }
-        // 3. 写入工具必须先通过工作区路径边界检查
+        // 4. 写入工具必须先通过工作区路径边界检查
         if permission == ToolPermission::Writes {
             self.ensure_workspace_paths(arguments).map_err(|error| {
                 self.record(
@@ -146,9 +153,34 @@ impl PermissionProfile {
                 error
             })?;
         }
-        // 4. 记录允许结果，并仅为前台命令启用审计沙盒
+        // 5. 记录允许结果，并仅为前台命令启用审计沙盒
         self.record(tool, AuditDecision::Allowed, arguments, None);
         Ok(self.mode == PermissionProfileMode::Audited && tool == "run_command")
+    }
+
+    /// 判断工具执行前是否需要等待用户完成交互式审计。
+    ///
+    /// 参数:
+    /// - `tool`: 工具名称
+    /// - `permission`: 工具声明的权限等级
+    /// - `arguments`: 工具参数
+    ///
+    /// 返回:
+    /// - 审计模式下写入工具或敏感路径读取工具返回 `true`
+    pub(crate) fn requires_interactive_audit(
+        &self,
+        tool: &str,
+        permission: ToolPermission,
+        arguments: &Value,
+    ) -> bool {
+        if self.mode != PermissionProfileMode::Audited || tool == "todo" {
+            return false;
+        }
+        if permission == ToolPermission::Writes {
+            return true;
+        }
+        permission == ToolPermission::ReadOnly
+            && contains_sensitive_read_path(&self.workspace, arguments)
     }
 
     /// 记录工具最终执行结果。
@@ -161,7 +193,9 @@ impl PermissionProfile {
     /// 返回:
     /// - 无
     pub(crate) fn record_result(&self, tool: &str, arguments: &Value, result: &Result<String>) {
-        if self.mode == PermissionProfileMode::Yolo {
+        if self.mode == PermissionProfileMode::Yolo
+            || (self.mode == PermissionProfileMode::Audited && tool == "todo")
+        {
             return;
         }
         match result {
@@ -261,56 +295,6 @@ impl PermissionProfile {
     }
 }
 
-/// 不访问文件系统地规范化工作区相对路径。
-///
-/// 参数:
-/// - `workspace`: 工作区根目录
-/// - `path`: 待解析路径
-///
-/// 返回:
-/// - 消除当前目录和父目录段后的路径
-fn resolve_without_io(workspace: &Path, path: &Path) -> PathBuf {
-    let mut output = if path.is_absolute() {
-        PathBuf::new()
-    } else {
-        workspace.to_path_buf()
-    };
-    for component in path.components() {
-        match component {
-            Component::Prefix(prefix) => output.push(prefix.as_os_str()),
-            Component::RootDir => output.push(Path::new("/")),
-            Component::CurDir => {}
-            Component::ParentDir => {
-                output.pop();
-            }
-            Component::Normal(value) => output.push(value),
-        }
-    }
-    output
-}
-
-/// 校验目标路径及其最近存在祖先没有通过符号链接逃逸工作区。
-///
-/// 参数:
-/// - `workspace`: 工作区根目录
-/// - `path`: 待校验路径
-///
-/// 返回:
-/// - 路径是否位于工作区
-fn path_is_within_workspace(workspace: &Path, path: &Path) -> bool {
-    let mut ancestor = path;
-    while !ancestor.exists() {
-        let Some(parent) = ancestor.parent() else {
-            return false;
-        };
-        ancestor = parent;
-    }
-    ancestor
-        .canonicalize()
-        .map(|canonical| canonical.starts_with(workspace))
-        .unwrap_or(false)
-}
-
 /// 限制审计结果摘要长度。
 ///
 /// 参数:
@@ -391,6 +375,66 @@ mod tests {
         assert!(profile
             .authorize("edit_file", ToolPermission::Writes, &json!({"patch":patch}))
             .is_err());
+    }
+
+    /// 验证 TODO 工具不需要交互式权限审计。
+    #[test]
+    fn audited_profile_skips_todo_audit() {
+        let profile = PermissionProfile::new(
+            PermissionProfileMode::Audited,
+            PathBuf::from("/workspace/project"),
+            None,
+        );
+        assert!(!profile.requires_interactive_audit(
+            "todo",
+            ToolPermission::Writes,
+            &json!({"action":"add", "text":"检查"}),
+        ));
+    }
+
+    /// 验证普通工作区读取不需要审计，但工作区内凭据文件仍需审计。
+    #[test]
+    fn audited_profile_skips_workspace_read_audit_but_catches_credentials() {
+        let profile = PermissionProfile::new(
+            PermissionProfileMode::Audited,
+            PathBuf::from("/workspace/project"),
+            None,
+        );
+        assert!(!profile.requires_interactive_audit(
+            "read_file",
+            ToolPermission::ReadOnly,
+            &json!({"path":"src/main.rs"}),
+        ));
+        assert!(profile.requires_interactive_audit(
+            "read_file",
+            ToolPermission::ReadOnly,
+            &json!({"path":".env.local"}),
+        ));
+    }
+
+    /// 验证读取系统敏感文件需要交互式权限审计。
+    #[test]
+    fn audited_profile_requires_sensitive_read_audit() {
+        let profile = PermissionProfile::new(
+            PermissionProfileMode::Audited,
+            PathBuf::from("/workspace/project"),
+            None,
+        );
+        assert!(profile.requires_interactive_audit(
+            "read_file",
+            ToolPermission::ReadOnly,
+            &json!({"path":"/etc/hosts"}),
+        ));
+        assert!(profile.requires_interactive_audit(
+            "read_file",
+            ToolPermission::ReadOnly,
+            &json!({"files":[{"path":"src/lib.rs"}, {"path":"/etc/passwd"}]}),
+        ));
+        assert!(profile.requires_interactive_audit(
+            "read_file",
+            ToolPermission::ReadOnly,
+            &json!({"path":"~/.ssh/id_rsa"}),
+        ));
     }
 
     #[cfg(unix)]

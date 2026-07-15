@@ -230,7 +230,7 @@ fn row_cap_trims_prewrapped_rows_not_source_cells() {
     assert!(lines[1].as_str().contains("third"));
 }
 
-/// 验证权限 cell 在完成选择后保留语义详情和决定。
+/// 验证权限交互附着在既有命令视图并保留最终决定。
 ///
 /// 参数:
 /// - 无
@@ -238,8 +238,12 @@ fn row_cap_trims_prewrapped_rows_not_source_cells() {
 /// 返回:
 /// - 无
 #[test]
-fn permission_cell_keeps_semantic_details_and_decision() {
+fn permission_audit_stays_inside_existing_command_view() {
     let mut store = TranscriptStore::new(100);
+    store.push_tool_call(
+        "run_command".to_string(),
+        r#"{"command":"cargo test","cwd":"/workspace"}"#.to_string(),
+    );
     store.push_permission_request(crate::permission::PermissionRequest {
         id: "permission".to_string(),
         session_id: "session".to_string(),
@@ -270,9 +274,49 @@ fn permission_cell_keeps_semantic_details_and_decision() {
         .map(|line| line.as_str())
         .collect::<String>();
 
-    assert!(rendered.contains("cargo test"));
+    assert!(rendered.contains("cargo"));
+    assert!(rendered.contains("test"));
     assert!(rendered.contains("已允许一次"));
     assert!(!rendered.contains(r#"{"command""#));
+    assert!(!rendered.contains("需要权限"));
+}
+
+/// 验证 edit_file 权限选择直接附着在 diff 视图下方。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
+#[test]
+fn permission_audit_stays_inside_existing_diff_view() {
+    let temp = tempfile::tempdir().unwrap();
+    let path = temp.path().join("audit.txt");
+    std::fs::write(&path, "old\n").unwrap();
+    let arguments = serde_json::json!({
+        "path": path.to_string_lossy(),
+        "content": "new\n"
+    })
+    .to_string();
+    let mut store = TranscriptStore::new(100);
+    store.push_tool_call("edit_file".to_string(), arguments.clone());
+    store.push_permission_request(crate::permission::PermissionRequest {
+        id: "permission".to_string(),
+        session_id: "session".to_string(),
+        tool: "edit_file".to_string(),
+        arguments,
+    });
+
+    let rendered = store
+        .display_tail(100, &options())
+        .iter()
+        .map(|line| line.as_str())
+        .collect::<String>();
+
+    assert!(rendered.contains("old"));
+    assert!(rendered.contains("new"));
+    assert!(rendered.contains("允许一次"));
+    assert!(!rendered.contains("需要权限"));
 }
 
 #[test]

@@ -3,7 +3,6 @@ mod diff_cell;
 mod line;
 mod markdown_cell;
 mod meta_cell;
-mod permission_cell;
 mod reasoning_cell;
 mod shell_cell;
 mod store;

@@ -1,7 +1,7 @@
 mod audit;
 mod broker;
+mod path_policy;
 mod policy;
-mod presentation;
 
 pub(crate) use audit::{AuditDecision, PermissionAuditLog};
 pub(crate) use broker::{
@@ -9,4 +9,3 @@ pub(crate) use broker::{
     PermissionRequest,
 };
 pub(crate) use policy::{PermissionProfile, PermissionProfileMode};
-pub(crate) use presentation::PermissionPresentation;

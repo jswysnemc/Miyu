@@ -356,7 +356,7 @@ pub(super) async fn run_repl(
                     runtime
                         .borrow_mut()
                         .record_permission_request(request.clone())?;
-                    prompt_permission_request_tui(request, &runtime, &chrome)?;
+                    prompt_permission_request_tui(request, &runtime)?;
                 }
                 runtime.borrow_mut().record_runner_event(&event)
             };
@@ -514,5 +514,34 @@ mod tests {
                 ..
             }) if image_urls.len() == 1
         ));
+    }
+
+    /// 验证 REPL 审计模式构造的工具注册表绑定了权限配置。
+    #[test]
+    fn audited_repl_registry_intercepts_tools_before_execution() {
+        let paths = MiyuPaths::new().unwrap();
+        let config = AppConfig::load_or_default(&paths).unwrap();
+        let state_dir = tempfile::tempdir().unwrap();
+        let registry = build_repl_tool_registry_for_session(
+            &config,
+            &paths,
+            AgentMode::Audited,
+            "test-session",
+            state_dir.path(),
+        )
+        .unwrap();
+
+        assert!(registry
+            .requires_permission("edit_file", r#"{"path":"src/main.rs","content":"x"}"#)
+            .unwrap());
+        assert!(registry
+            .requires_permission("read_file", r#"{"path":"/etc/hosts"}"#)
+            .unwrap());
+        assert!(!registry
+            .requires_permission("read_file", r#"{"path":"src/main.rs"}"#)
+            .unwrap());
+        assert!(!registry
+            .requires_permission("todo", r#"{"action":"add","text":"检查"}"#)
+            .unwrap());
     }
 }

@@ -44,3 +44,26 @@ fn todo_result_renders_items_instead_of_raw_json() {
     assert!(output.contains("[>] 构建项目"));
     assert!(!output.contains("\"items\""));
 }
+
+/// 验证命令审计选择附着在既有命令块下方。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
+#[test]
+fn command_permission_uses_existing_command_view() {
+    let mut view = ToolView::running(
+        "run_command".to_string(),
+        r#"{"command":"cargo test"}"#.to_string(),
+    );
+    view.request_permission("permission".to_string());
+
+    let output = render(&view, ToolCallDisplayMode::Full);
+
+    assert!(output.contains("cargo"));
+    assert!(output.contains("test"));
+    assert!(output.contains("允许一次"));
+    assert!(!output.contains("需要权限"));
+}

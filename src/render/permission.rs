@@ -1,4 +1,4 @@
-use crate::permission::{PermissionDecision, PermissionPresentation, PermissionRequest};
+use crate::permission::PermissionDecision;
 
 /// 权限选择项索引。
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
@@ -48,117 +48,83 @@ impl PermissionChoice {
     }
 }
 
-/// 渲染终端中的权限请求详情和选择项。
+/// 渲染附着在既有工具视图下方的权限选择。
 ///
 /// 参数:
-/// - `request`: 待处理权限请求
 /// - `selected`: 当前高亮选项
+/// - `reply_draft`: 可选拒绝回复草稿
 ///
 /// 返回:
-/// - Codex 风格的 ANSI 文本块
-pub(crate) fn render_permission_prompt(request: &PermissionRequest, selected: PermissionChoice) -> String {
-    let mut output = render_request_body(request);
-    output.push('\n');
+/// - 不重复工具参数的 ANSI 交互文本
+pub(crate) fn render_permission_controls(
+    selected: PermissionChoice,
+    reply_draft: Option<&str>,
+) -> String {
+    let mut output = String::new();
     for choice in PermissionChoice::all() {
         let active = choice == selected;
         if active {
-            output.push_str(&format!(
-                "\n  \x1b[1;36m❯ {}\x1b[0m",
-                choice.label()
-            ));
+            output.push_str(&format!("\n  \x1b[1;36m❯ {}\x1b[0m", choice.label()));
         } else {
             output.push_str(&format!("\n    {}", choice.label()));
         }
     }
-    output.push_str("\n  \x1b[2m↑↓ 选择 · Enter 确认 · y 允许 · n 拒绝\x1b[0m");
+    if let Some(draft) = reply_draft {
+        output.push_str("\n  \x1b[2m回复 Miyu\x1b[0m\n    ");
+        output.push_str(draft);
+        output.push_str("\x1b[36m▌\x1b[0m");
+    }
+    if reply_draft.is_some() {
+        output.push_str("\n  \x1b[2mEnter 提交 · Esc 返回\x1b[0m");
+    } else {
+        output.push_str("\n  \x1b[2m↑↓ 选择 · Enter 确认 · y 允许 · n 拒绝\x1b[0m");
+    }
     output
 }
 
-/// 渲染已经完成选择的权限事件。
+/// 渲染附着在既有工具视图下方的权限决定。
 ///
 /// 参数:
-/// - `request`: 已处理权限请求
 /// - `decision`: 用户权限决定
 ///
 /// 返回:
-/// - 可写入 TUI transcript 的 ANSI 文本块
-pub(crate) fn render_permission_event(
-    request: &PermissionRequest,
-    decision: &PermissionDecision,
-) -> String {
-    let mut output = render_request_body(request);
+/// - 权限决定 ANSI 文本
+pub(crate) fn render_permission_decision(decision: &PermissionDecision) -> String {
     match decision {
-        PermissionDecision::Allow => {
-            output.push_str("\n  \x1b[32m已允许一次\x1b[0m");
-        }
+        PermissionDecision::Allow => "\n  \x1b[32m已允许一次\x1b[0m".to_string(),
         PermissionDecision::Deny { reply } => {
-            output.push_str("\n  \x1b[31m已拒绝\x1b[0m");
+            let mut output = "\n  \x1b[31m已拒绝\x1b[0m".to_string();
             if let Some(reply) = reply.as_deref().filter(|value| !value.trim().is_empty()) {
                 output.push_str("\n  \x1b[2m回复: \x1b[0m");
                 output.push_str(reply.trim());
             }
+            output
         }
     }
-    output
-}
-
-/// 渲染权限请求的语义化主体（不含完整 patch 正文）。
-///
-/// 参数:
-/// - `request`: 权限请求
-///
-/// 返回:
-/// - 不含选择项和最终决定的 ANSI 文本块
-fn render_request_body(request: &PermissionRequest) -> String {
-    let presentation = PermissionPresentation::from_request(request);
-    let mut output = format!(
-        "\x1b[1;33m需要权限\x1b[0m\n  \x1b[1m{}\x1b[0m  {}",
-        presentation.action, presentation.summary
-    );
-    for detail in presentation.details {
-        // patch / content 已有独立 diff 视图，权限确认处不再重复铺全文。
-        if detail.label == "变更" || detail.label == "内容" {
-            continue;
-        }
-        output.push_str(&format!("\n\n  \x1b[2m{}\x1b[0m\n", detail.label));
-        for line in detail.value.lines() {
-            output.push_str("    ");
-            output.push_str(line);
-            output.push('\n');
-        }
-        output.pop();
-    }
-    output
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// 验证终端权限提示使用语义化字段和可导航选择项。
+    /// 验证内嵌权限选择不重复绘制工具参数。
     #[test]
-    fn permission_prompt_does_not_render_raw_json() {
-        let request = PermissionRequest {
-            id: "id".to_string(),
-            session_id: "session".to_string(),
-            tool: "edit_file".to_string(),
-            arguments: r#"{"path":"src/main.rs","content":"fn main() {}"}"#.to_string(),
-        };
+    fn permission_controls_do_not_render_tool_content() {
+        let output = render_permission_controls(PermissionChoice::Allow, None);
 
-        let output = render_permission_prompt(&request, PermissionChoice::Allow);
-
-        assert!(output.contains("src/main.rs"));
-        assert!(!output.contains(r#"{"path""#));
         assert!(output.contains("❯"));
         assert!(output.contains("允许一次"));
-        // 内容详情已折叠，避免与 diff 视图重复。
-        assert!(!output.contains("fn main() {}"));
+        assert!(!output.contains("需要权限"));
+        assert!(!output.contains("args:"));
     }
 
     #[test]
     fn permission_choice_moves_with_wrap_limits() {
         assert_eq!(PermissionChoice::Allow.next(), PermissionChoice::Deny);
-        assert_eq!(PermissionChoice::DenyWithReply.next(), PermissionChoice::DenyWithReply);
+        assert_eq!(
+            PermissionChoice::DenyWithReply.next(),
+            PermissionChoice::DenyWithReply
+        );
         assert_eq!(PermissionChoice::Allow.prev(), PermissionChoice::Allow);
         assert_eq!(PermissionChoice::Deny.prev(), PermissionChoice::Allow);
     }

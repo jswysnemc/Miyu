@@ -121,7 +121,12 @@ pub async fn run(cli: Cli) -> Result<()> {
     match cli.command {
         Some(Command::AlarmWorker(args)) => run_alarm_worker(args),
         Some(Command::Tool(args)) => {
-            run_tool(&paths, resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?, args).await
+            run_tool(
+                &paths,
+                resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?,
+                args,
+            )
+            .await
         }
         Some(Command::Web(args)) => crate::web::run(&paths, args).await,
         Some(Command::Ask(args)) => {
@@ -281,9 +286,36 @@ async fn run_tool(paths: &MiyuPaths, mode: AgentMode, args: ToolArgs) -> Result<
         crate::runtime_cwd::current_dir()?,
         audit,
     ));
-    let output = registry
-        .call(&args.name, args.arguments.as_deref().unwrap_or("{}"))
-        .await?;
+    let arguments = args.arguments.as_deref().unwrap_or("{}");
+    if registry.requires_permission(&args.name, arguments)? {
+        // 1. 先绘制既有工具视图，再在其下方补充权限选择
+        println!(
+            "{}",
+            crate::render::render_tool_call(
+                &args.name,
+                arguments,
+                crate::render::ToolCallDisplayMode::Full,
+            )
+        );
+        registry.record_permission_requested(&args.name, arguments)?;
+        let (request, receiver) =
+            crate::permission::request_permission("cli-tool", &args.name, arguments);
+        prompt_permission_request(&request)?;
+        // 2. 只有批准后才进入工具注册表执行路径
+        match receiver.await? {
+            crate::permission::PermissionDecision::Allow => {
+                registry.record_permission_approved(&args.name, arguments)?;
+            }
+            crate::permission::PermissionDecision::Deny { reply } => {
+                registry.record_permission_denied(&args.name, arguments, reply.as_deref())?;
+                let message = reply
+                    .filter(|value| !value.trim().is_empty())
+                    .unwrap_or_else(|| "用户拒绝了此工具调用".to_string());
+                bail!(message)
+            }
+        }
+    }
+    let output = registry.call(&args.name, arguments).await?;
     println!("{output}");
     Ok(())
 }
@@ -354,6 +386,18 @@ pub(crate) fn build_repl_tool_registry_for_session(
             session_id.to_string(),
         );
     }
+    let workspace = crate::runtime_cwd::current_dir()?;
+    let audit = (mode != AgentMode::Yolo).then(|| {
+        crate::permission::PermissionAuditLog::new(
+            state_dir.join("permission-audit.jsonl"),
+            session_id.to_string(),
+        )
+    });
+    registry.set_permission_profile(crate::permission::PermissionProfile::new(
+        mode.permission_profile_mode(),
+        workspace,
+        audit,
+    ));
     Ok(registry)
 }
 
@@ -400,11 +444,7 @@ fn prompt_permission_request(
 ) -> Result<crate::permission::PermissionDecision> {
     let decision = read_permission_decision(request)?;
     crate::permission::decide_permission(&request.id, decision.clone())?;
-    let status = match &decision {
-        crate::permission::PermissionDecision::Allow => "已允许一次",
-        crate::permission::PermissionDecision::Deny { .. } => "已拒绝",
-    };
-    eprintln!("\n{status}");
+    eprintln!("{}", crate::render::render_permission_decision(&decision));
     Ok(decision)
 }
 
@@ -416,15 +456,12 @@ fn prompt_permission_request(
 /// 返回:
 /// - 用户选择的权限决定
 fn read_permission_decision(
-    request: &crate::permission::PermissionRequest,
+    _request: &crate::permission::PermissionRequest,
 ) -> Result<crate::permission::PermissionDecision> {
-    // 1. 先输出语义化详情和可导航选择项
+    // 1. 工具内容已经绘制，仅在其下方补充可导航选择项
     eprintln!(
-        "\n{}",
-        crate::render::render_permission_prompt(
-            request,
-            crate::render::PermissionChoice::Allow
-        )
+        "{}",
+        crate::render::render_permission_controls(crate::render::PermissionChoice::Allow, None)
     );
     eprint!("选择 [1-3]，也可直接输入拒绝原因: ");
     io::stderr().flush()?;
@@ -457,19 +494,16 @@ fn read_permission_decision(
     Ok(decision)
 }
 
-/// 在 TUI 原始模式中读取权限选择；底部输入区被权限面板接管。
+/// 在 TUI 原始模式中读取权限选择，并更新既有工具视图。
 ///
 /// 参数:
 /// - `request`: 已经写入 transcript 的权限请求
 /// - `runtime`: REPL 运行期
-/// - `chrome`: 底栏状态（用于接管输入区 chrome）
-///
 /// 返回:
 /// - 权限决定提交结果
 fn prompt_permission_request_tui(
     request: &crate::permission::PermissionRequest,
     runtime: &std::cell::RefCell<&mut ReplRuntime>,
-    chrome: &repl_chrome::ReplChrome,
 ) -> Result<()> {
     use crate::render::PermissionChoice;
     use repl_input::{disable_repl_terminal_input, enable_repl_terminal_input};
@@ -477,14 +511,12 @@ fn prompt_permission_request_tui(
     let mut selected = PermissionChoice::Allow;
     let mut reply_draft: Option<String> = None;
     let mut stdout = io::stdout();
-    // 1. 独占 raw 输入，避免与主循环输入框事件竞争。
+    // 1. 独占 raw 输入，避免与主循环输入框事件竞争
     enable_repl_terminal_input(&mut stdout)?;
-    // 2. 底部输入区改为权限面板，普通输入提示被覆盖。
-    {
-        let mut rt = runtime.borrow_mut();
-        rt.update_permission_choice(&request.id, selected)?;
-        rt.begin_permission_composer(chrome, selected, None)?;
-    }
+    // 2. 选择项直接附着在当前 diff、命令或普通工具视图下方
+    runtime
+        .borrow_mut()
+        .update_permission_choice(&request.id, selected)?;
 
     let result = (|| -> Result<()> {
         loop {
@@ -492,7 +524,7 @@ fn prompt_permission_request_tui(
             if let Event::Resize(cols, rows) = event {
                 let mut rt = runtime.borrow_mut();
                 rt.observe_input_resize(cols, rows);
-                rt.set_permission_composer_state(selected, reply_draft.clone())?;
+                rt.update_permission_choice(&request.id, selected)?;
                 continue;
             }
             if let Event::Paste(text) = event {
@@ -500,7 +532,6 @@ fn prompt_permission_request_tui(
                     draft.push_str(&text);
                     let mut rt = runtime.borrow_mut();
                     rt.update_permission_reply(&request.id, Some(draft.clone()))?;
-                    rt.set_permission_composer_state(selected, Some(draft.clone()))?;
                 }
                 continue;
             }
@@ -524,19 +555,16 @@ fn prompt_permission_request_tui(
                         let mut rt = runtime.borrow_mut();
                         rt.update_permission_reply(&request.id, None)?;
                         rt.update_permission_choice(&request.id, selected)?;
-                        rt.set_permission_composer_state(selected, None)?;
                     }
                     KeyCode::Backspace => {
                         draft.pop();
                         let mut rt = runtime.borrow_mut();
                         rt.update_permission_reply(&request.id, Some(draft.clone()))?;
-                        rt.set_permission_composer_state(selected, Some(draft.clone()))?;
                     }
                     KeyCode::Char(value) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
                         draft.push(value);
                         let mut rt = runtime.borrow_mut();
                         rt.update_permission_reply(&request.id, Some(draft.clone()))?;
-                        rt.set_permission_composer_state(selected, Some(draft.clone()))?;
                     }
                     _ => {}
                 }
@@ -545,16 +573,16 @@ fn prompt_permission_request_tui(
             match key.code {
                 KeyCode::Up | KeyCode::Char('k') => {
                     selected = selected.prev();
-                    let mut rt = runtime.borrow_mut();
-                    rt.update_permission_choice(&request.id, selected)?;
-                    rt.set_permission_composer_state(selected, None)?;
+                    runtime
+                        .borrow_mut()
+                        .update_permission_choice(&request.id, selected)?;
                     continue;
                 }
                 KeyCode::Down | KeyCode::Char('j') => {
                     selected = selected.next();
-                    let mut rt = runtime.borrow_mut();
-                    rt.update_permission_choice(&request.id, selected)?;
-                    rt.set_permission_composer_state(selected, None)?;
+                    runtime
+                        .borrow_mut()
+                        .update_permission_choice(&request.id, selected)?;
                     continue;
                 }
                 KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
@@ -574,7 +602,6 @@ fn prompt_permission_request_tui(
                 let mut rt = runtime.borrow_mut();
                 rt.update_permission_choice(&request.id, selected)?;
                 rt.update_permission_reply(&request.id, reply_draft.clone())?;
-                rt.set_permission_composer_state(selected, reply_draft.clone())?;
                 continue;
             }
             let decision = match selected {
@@ -584,9 +611,9 @@ fn prompt_permission_request_tui(
                 }
                 PermissionChoice::DenyWithReply => {
                     reply_draft = Some(String::new());
-                    let mut rt = runtime.borrow_mut();
-                    rt.update_permission_reply(&request.id, reply_draft.clone())?;
-                    rt.set_permission_composer_state(selected, reply_draft.clone())?;
+                    runtime
+                        .borrow_mut()
+                        .update_permission_reply(&request.id, reply_draft.clone())?;
                     continue;
                 }
             };
@@ -594,11 +621,7 @@ fn prompt_permission_request_tui(
         }
     })();
 
-    // 3. 结束权限面板并恢复终端模式，交回后续流式输出/下一轮输入。
-    {
-        let mut rt = runtime.borrow_mut();
-        let _ = rt.end_composer();
-    }
+    // 3. 恢复终端模式，交回后续流式输出和下一轮输入
     let _ = disable_repl_terminal_input(&mut stdout);
     result
 }

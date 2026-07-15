@@ -219,6 +219,25 @@ impl ToolRegistry {
         Ok(tool.permission)
     }
 
+    /// 判断工具执行前是否需要交互式权限审计。
+    ///
+    /// 参数:
+    /// - `name`: 工具名称
+    /// - `arguments`: 原始 JSON 参数
+    ///
+    /// 返回:
+    /// - 当前权限配置要求等待用户决定时返回 `true`
+    pub(crate) fn requires_permission(&self, name: &str, arguments: &str) -> Result<bool> {
+        let name = local_tool_name(name);
+        let Some(tool) = self.tools.get(name) else {
+            bail!("unknown tool: {name}");
+        };
+        let arguments = parse_arguments(arguments)?;
+        Ok(self.permission_profile.as_ref().is_some_and(|profile| {
+            profile.requires_interactive_audit(name, tool.permission, &arguments)
+        }))
+    }
+
     /// 记录工具权限请求已经展示给用户。
     pub(crate) fn record_permission_requested(&self, name: &str, arguments: &str) -> Result<()> {
         let arguments = parse_arguments(arguments)?;
