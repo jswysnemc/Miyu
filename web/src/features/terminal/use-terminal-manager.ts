@@ -22,7 +22,11 @@ export function useTerminalManager() {
     if (!terminals.isFetching && !items.some((item) => item.id === activeId)) setActiveId(items[0]?.id ?? null);
   }, [terminals.data, terminals.isFetching, activeId]);
 
-  /** 创建并选中新终端。 */
+  /**
+   * 创建并选中新终端。
+   *
+   * @returns 新建终端信息
+   */
   const createTerminal = async () => {
     const terminal = await api.terminals.create(100, 28);
     queryClient.setQueryData<{ terminals: TerminalInfo[] }>(["terminals"], (current) => ({
@@ -30,6 +34,7 @@ export function useTerminalManager() {
     }));
     setActiveId(terminal.id);
     await queryClient.invalidateQueries({ queryKey: ["terminals"] });
+    return terminal;
   };
 
   /** 显式终止并移除终端。 */

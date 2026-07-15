@@ -13,24 +13,30 @@ import "./workspace-pane.css";
 type WorkspacePaneProps = {
   selectedFile: string | null;
   activeType: PaneTab;
+  maximized: boolean;
   onActiveTypeChange: (tab: PaneTab) => void;
   onSelectFile: (path: string) => void;
   onClearFile: () => void;
+  onToggleMaximized: () => void;
+  onCollapse: () => void;
   terminalManager: TerminalManager;
 };
 
 /**
  * 渲染带 Cursor 风格顶部标签栏的右侧工作区。
  *
- * @param props 文件选择、活动类型与终端状态
+ * @param props 文件选择、活动类型、布局操作与终端状态
  * @returns 工作区面板
  */
 export function WorkspacePane({
   selectedFile,
   activeType,
+  maximized,
   onActiveTypeChange,
   onSelectFile,
   onClearFile,
+  onToggleMaximized,
+  onCollapse,
   terminalManager
 }: WorkspacePaneProps) {
   const [fileTreeOpen, setFileTreeOpen] = useState(false);
@@ -69,21 +75,33 @@ export function WorkspacePane({
     onActiveTypeChange("files");
   }, [onActiveTypeChange, selectedFile]);
 
-  // 外部活动栏切换类型时，激活已有同类型标签或补一个。
+  // 外部入口切换到非终端类型时，激活已有同类型标签或补一个。
   useEffect(() => {
+    if (activeType === "terminal") return;
     setTabs((current) => {
       const existing = current.find((tab) => tab.type === activeType);
       if (existing) {
         setActiveTabId((id) => (id === existing.id ? id : existing.id));
         return current;
       }
-      const created = createWorkspacePanelTab(activeType, {
-        closable: true
-      });
+      const created = createWorkspacePanelTab(activeType, { closable: true });
       setActiveTabId(created.id);
       return [...current, created];
     });
   }, [activeType]);
+
+  // 同步活动终端标签标题。
+  useEffect(() => {
+    setTabs((current) =>
+      current.map((tab) => {
+        if (tab.type !== "terminal" || !tab.terminalId) return tab;
+        const terminal = terminalManager.terminals.find((item) => item.id === tab.terminalId);
+        if (!terminal) return tab;
+        const title = terminal.title || "终端";
+        return tab.title === title ? tab : { ...tab, title };
+      })
+    );
+  }, [terminalManager.terminals]);
 
   const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
 
@@ -92,13 +110,24 @@ export function WorkspacePane({
    *
    * @param type 面板类型
    */
-  const addTab = (type: PaneTab) => {
+  const addTab = async (type: PaneTab) => {
     if (type === "files") {
       const created = createWorkspacePanelTab("files", { title: "编辑器" });
       setTabs((current) => [...current, created]);
       setActiveTabId(created.id);
       onActiveTypeChange("files");
       onClearFile();
+      return;
+    }
+    if (type === "terminal") {
+      const terminal = await terminalManager.createTerminal();
+      const created = createWorkspacePanelTab("terminal", {
+        title: terminal.title || "终端",
+        terminalId: terminal.id
+      });
+      setTabs((current) => [...current, created]);
+      setActiveTabId(created.id);
+      onActiveTypeChange("terminal");
       return;
     }
     const existing = tabs.find((tab) => tab.type === type);
@@ -124,6 +153,9 @@ export function WorkspacePane({
       const index = current.findIndex((tab) => tab.id === id);
       if (index < 0) return current;
       const closing = current[index];
+      if (closing?.type === "terminal" && closing.terminalId) {
+        void terminalManager.closeTerminal(closing.terminalId);
+      }
       const next = current.filter((tab) => tab.id !== id);
       if (activeTabId === id) {
         const fallback = next[Math.max(0, index - 1)] ?? next[0];
@@ -144,15 +176,21 @@ export function WorkspacePane({
       <WorkspaceTabBar
         tabs={tabs}
         activeTabId={activeTab?.id ?? null}
+        maximized={maximized}
         onActivate={(id) => {
           setActiveTabId(id);
           const tab = tabs.find((item) => item.id === id);
           if (!tab) return;
           onActiveTypeChange(tab.type);
           if (tab.type === "files" && tab.path) onSelectFile(tab.path);
+          if (tab.type === "terminal" && tab.terminalId) terminalManager.setActiveId(tab.terminalId);
         }}
         onClose={closeTab}
-        onAdd={addTab}
+        onAdd={(type) => {
+          void addTab(type);
+        }}
+        onToggleMaximized={onToggleMaximized}
+        onCollapse={onCollapse}
       />
       <div className="pane-body">
         {activeTab?.type === "files" && (
@@ -175,7 +213,7 @@ export function WorkspacePane({
         )}
         {activeTab?.type === "diff" && <DiffPane />}
         {activeTab?.type === "terminal" && (
-          <TerminalDock manager={terminalManager} onClose={() => closeTab(activeTab.id)} />
+          <TerminalDock terminalId={activeTab.terminalId} error={terminalManager.error} />
         )}
         {activeTab?.type === "tasks" && <BackgroundTasksPanel />}
         {activeTab?.type === "subagents" && <SubagentWorkspace />}

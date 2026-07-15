@@ -5,6 +5,8 @@ export type WorkspacePanelTab = {
   type: PaneTab;
   title: string;
   path?: string;
+  /** 终端会话 ID，仅 terminal 类型使用。 */
+  terminalId?: string;
   closable: boolean;
 };
 
@@ -12,12 +14,12 @@ export type WorkspacePanelTab = {
  * 创建工作区面板标签。
  *
  * @param type 面板类型
- * @param options 标题与文件路径
+ * @param options 标题、文件路径或终端会话
  * @returns 工作区标签
  */
 export function createWorkspacePanelTab(
   type: PaneTab,
-  options: { title?: string; path?: string; closable?: boolean } = {}
+  options: { title?: string; path?: string; terminalId?: string; closable?: boolean } = {}
 ): WorkspacePanelTab {
   const path = options.path;
   if (type === "files") {
@@ -30,9 +32,18 @@ export function createWorkspacePanelTab(
       closable: options.closable ?? true
     };
   }
-  const defaults: Record<Exclude<PaneTab, "files">, string> = {
+  if (type === "terminal") {
+    const terminalId = options.terminalId ?? crypto.randomUUID();
+    return {
+      id: `terminal:${terminalId}`,
+      type,
+      title: options.title ?? "终端",
+      terminalId,
+      closable: options.closable ?? true
+    };
+  }
+  const defaults: Record<Exclude<PaneTab, "files" | "terminal">, string> = {
     diff: "Git",
-    terminal: "终端",
     tasks: "后台任务",
     subagents: "子智能体"
   };

@@ -1,4 +1,4 @@
-import { Activity, Bot, FileCode2, GitCompareArrows, Plus, SquareTerminal, X } from "lucide-react";
+import { Activity, Bot, FileCode2, GitCompareArrows, Maximize2, Minimize2, PanelRightClose, Plus, SquareTerminal, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import type { PaneTab, WorkspacePanelTab } from "./workspace-tab";
@@ -7,9 +7,12 @@ import { paneTabLabel } from "./workspace-tab";
 type WorkspaceTabBarProps = {
   tabs: WorkspacePanelTab[];
   activeTabId: string | null;
+  maximized: boolean;
   onActivate: (id: string) => void;
   onClose: (id: string) => void;
   onAdd: (type: PaneTab) => void;
+  onToggleMaximized: () => void;
+  onCollapse: () => void;
 };
 
 const addable: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> = [
@@ -23,7 +26,9 @@ const addable: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> =
 /**
  * 渲染 Cursor 风格的工作区顶部标签栏。
  *
- * @param props 标签列表、当前标签与增删回调
+ * 左侧为可关闭标签与新增菜单；右侧仅保留全屏与收起。
+ *
+ * @param props 标签列表、当前标签与布局操作
  * @returns 工作区标签导航
  */
 export function WorkspaceTabBar(props: WorkspaceTabBarProps) {
@@ -65,39 +70,54 @@ export function WorkspaceTabBar(props: WorkspaceTabBarProps) {
             </div>
           );
         })}
+        <div className="workspace-tab-actions" ref={menuRef}>
+          <button
+            type="button"
+            className="workspace-tab-add"
+            aria-label="添加面板"
+            title="添加面板"
+            aria-expanded={menuOpen}
+            onClick={() => setMenuOpen((value) => !value)}
+          >
+            <Plus size={14} />
+          </button>
+          {menuOpen && (
+            <div className="workspace-tab-add-menu" role="menu">
+              {addable.map((item) => {
+                const Icon = item.icon;
+                return (
+                  <button
+                    type="button"
+                    role="menuitem"
+                    key={item.type}
+                    onClick={() => {
+                      props.onAdd(item.type);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    <Icon size={14} />
+                    <span>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
-      <div className="workspace-tab-actions" ref={menuRef}>
+      <div className="workspace-tab-layout">
         <button
           type="button"
-          className="workspace-tab-add"
-          aria-label="添加面板"
-          title="添加面板"
-          aria-expanded={menuOpen}
-          onClick={() => setMenuOpen((value) => !value)}
+          className={props.maximized ? "active" : ""}
+          onClick={props.onToggleMaximized}
+          title={props.maximized ? "退出全屏" : "全屏"}
+          aria-label={props.maximized ? "退出全屏" : "全屏"}
+          aria-pressed={props.maximized}
         >
-          <Plus size={14} />
+          {props.maximized ? <Minimize2 size={14} /> : <Maximize2 size={14} />}
         </button>
-        {menuOpen && (
-          <div className="workspace-tab-add-menu" role="menu">
-            {addable.map((item) => {
-              const Icon = item.icon;
-              return (
-                <button
-                  type="button"
-                  role="menuitem"
-                  key={item.type}
-                  onClick={() => {
-                    props.onAdd(item.type);
-                    setMenuOpen(false);
-                  }}
-                >
-                  <Icon size={14} />
-                  <span>{item.label}</span>
-                </button>
-              );
-            })}
-          </div>
-        )}
+        <button type="button" onClick={props.onCollapse} title="收起工作区" aria-label="收起工作区">
+          <PanelRightClose size={14} />
+        </button>
       </div>
     </div>
   );

@@ -7,7 +7,6 @@ import { ChatPage } from "../chat/chat-page";
 import { SessionSidebar } from "../sessions/session-sidebar";
 import { SessionSidebarResizeHandle } from "../sessions/session-sidebar-resize-handle";
 import { useSessionSidebarLayout } from "../sessions/use-session-sidebar-layout";
-import { WorkspaceActivityRail } from "./workspace-activity-rail";
 import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
@@ -87,7 +86,6 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     const handleOpenFile = (event: Event) => {
       const path = (event as CustomEvent<{ path?: string }>).detail?.path;
       if (!path) return;
-      // 1. 选中文件并确保右侧工作区可见
       onSelectFile(workspaceRelativePath(path, activeWorkspace?.path ?? ""));
       layout.openWorkspace();
       if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
@@ -100,39 +98,24 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
 
   useEffect(() => {
     /** 响应聊天区发出的终端/后台任务入口，打开右侧同级面板。 */
-    const handleToggleTerminal = () => {
+    const openPanel = (tab: PaneTab) => {
       layout.openWorkspace();
-      setPaneTab("terminal");
+      setPaneTab(tab);
       if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
         dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
       }
     };
-    const handleOpenTasks = () => {
-      layout.openWorkspace();
-      setPaneTab("tasks");
-      if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
-        dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
-      }
-    };
+    const handleToggleTerminal = () => openPanel("terminal");
+    const handleOpenTasks = () => openPanel("tasks");
+    const handleOpenSubagents = () => openPanel("subagents");
     window.addEventListener("miyu:toggle-terminal", handleToggleTerminal);
     window.addEventListener("miyu:open-tasks", handleOpenTasks);
+    window.addEventListener("miyu:open-subagents", handleOpenSubagents);
     return () => {
       window.removeEventListener("miyu:toggle-terminal", handleToggleTerminal);
       window.removeEventListener("miyu:open-tasks", handleOpenTasks);
+      window.removeEventListener("miyu:open-subagents", handleOpenSubagents);
     };
-  }, [layout.openWorkspace]);
-
-  useEffect(() => {
-    // 响应聊天区"查看子智能体"请求,打开右侧工作区并切到子智能体视图
-    const handleOpenSubagents = () => {
-      layout.openWorkspace();
-      setPaneTab("subagents");
-      if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
-        dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
-      }
-    };
-    window.addEventListener("miyu:open-subagents", handleOpenSubagents);
-    return () => window.removeEventListener("miyu:open-subagents", handleOpenSubagents);
   }, [layout.openWorkspace]);
 
   /**
@@ -151,20 +134,10 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     dispatchMobileLayout({ type: "show-pane", pane });
   };
 
-  /** 关闭编辑器，并在移动端回到聊天面板。 */
+  /** 关闭工作区，并在移动端回到聊天面板。 */
   const closeWorkspace = () => {
     layout.closeWorkspace();
     dispatchMobileLayout({ type: "show-pane", pane: "chat" });
-  };
-
-  /**
-   * 打开工作区并切换到指定视图,悬浮活动栏使用。
-   *
-   * @param tab 目标工作区视图
-   */
-  const showWorkspaceTab = (tab: PaneTab) => {
-    layout.openWorkspace();
-    setPaneTab(tab);
   };
 
   return (
@@ -199,26 +172,17 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
             <WorkspacePane
               selectedFile={selectedFile}
               activeType={paneTab}
+              maximized={layout.workspaceMaximized}
               onActiveTypeChange={setPaneTab}
               onSelectFile={onSelectFile}
               onClearFile={onClearFile}
+              onToggleMaximized={layout.toggleWorkspaceMaximized}
+              onCollapse={closeWorkspace}
               terminalManager={terminalManager}
             />
           </aside>
         )}
       </div>
-      <WorkspaceActivityRail
-        tab={paneTab}
-        workspaceOpen={layout.workspaceOpen}
-        chatOpen={layout.chatOpen}
-        maximized={layout.workspaceMaximized}
-        onSelectTab={showWorkspaceTab}
-        onCollapse={closeWorkspace}
-        onExpand={layout.openWorkspace}
-        onToggleChat={layout.toggleChat}
-        onToggleMaximized={layout.toggleWorkspaceMaximized}
-        onToggleSwapped={layout.toggleSwapped}
-      />
     </div>
   );
 }
