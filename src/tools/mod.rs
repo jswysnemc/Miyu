@@ -22,6 +22,7 @@ mod man;
 pub(crate) mod memes;
 mod memory;
 mod moegirl;
+mod native_search;
 mod package_advisor;
 pub(crate) mod progressive;
 mod protondb_query;

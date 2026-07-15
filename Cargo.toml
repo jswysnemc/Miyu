@@ -39,6 +39,7 @@ portable-pty = "0.9"
 qrcode = "0.14"
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls", "stream"] }
 rand = "0.8"
+regex = "1.12"
 rodio = { version = "0.19", default-features = false, features = ["mp3", "wav"] }
 ratex-layout = "0.1.12"
 ratex-parser = "0.1.12"

@@ -5,8 +5,9 @@ use crate::paths::MiyuPaths;
 use anyhow::{bail, Result};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
+use std::process::{Output, Stdio};
 use tokio::process::Command;
 
 const MAX_COMMAND_OUTPUT_CHARS: usize = 20_000;
@@ -186,29 +187,55 @@ fn plist_value(raw: &str, key: &str) -> Option<String> {
 }
 
 async fn glob_files(args: Value) -> Result<String> {
+    glob_files_with_program(args, "rg").await
+}
+
+/// 使用指定 ripgrep 程序查找文件，程序不存在时使用内置实现。
+///
+/// 参数:
+/// - `args`: 工具调用参数
+/// - `program`: ripgrep 程序名或路径
+///
+/// 返回:
+/// - 文件查找结果 JSON
+async fn glob_files_with_program(args: Value, program: &str) -> Result<String> {
     let path = optional_path(&args).unwrap_or(crate::runtime_cwd::current_dir()?);
     let search_path = prepare_search_path(&path)?;
     let pattern = required(&args, "pattern")?;
     let max_results = max_results(&args);
-    let output = tokio::time::timeout(
-        std::time::Duration::from_secs(SEARCH_TIMEOUT_SECONDS),
-        Command::new("rg")
-            .arg("--no-config")
-            .arg("--files")
-            .arg("--no-messages")
-            .arg("--hidden")
-            .arg(format!("--iglob={pattern}"))
-            .args(search_exclude_args(&search_path))
-            .arg(".")
-            .current_dir(&search_path)
-            .stdin(Stdio::null())
-            .output(),
-    )
-    .await??;
-    search_output_limited(output, max_results)
+    let mut command = Command::new(program);
+    command
+        .arg("--no-config")
+        .arg("--files")
+        .arg("--no-messages")
+        .arg("--hidden")
+        .arg(format!("--iglob={pattern}"))
+        .args(search_exclude_args(&search_path))
+        .arg(".")
+        .current_dir(&search_path)
+        .stdin(Stdio::null());
+    // 1. 优先使用 ripgrep 保持大型目录搜索性能
+    if let Some(output) = run_search_command(command).await? {
+        return search_output_limited(output, max_results);
+    }
+    // 2. Windows 发布环境缺少 ripgrep 时使用内置文件遍历
+    let result = super::native_search::glob_files(&search_path, &pattern, max_results)?;
+    native_search_output(result, max_results)
 }
 
 async fn grep_text(args: Value) -> Result<String> {
+    grep_text_with_program(args, "rg").await
+}
+
+/// 使用指定 ripgrep 程序搜索文本，程序不存在时使用内置实现。
+///
+/// 参数:
+/// - `args`: 工具调用参数
+/// - `program`: ripgrep 程序名或路径
+///
+/// 返回:
+/// - 文本搜索结果 JSON
+async fn grep_text_with_program(args: Value, program: &str) -> Result<String> {
     let path = optional_path(&args).unwrap_or(crate::runtime_cwd::current_dir()?);
     let is_file = path.is_file();
     let search_root = if is_file {
@@ -221,20 +248,21 @@ async fn grep_text(args: Value) -> Result<String> {
     let search_root = prepare_search_path(&search_root)?;
     let pattern = required(&args, "pattern")?;
     let max_results = max_results(&args);
-    let mut command = Command::new("rg");
+    let include = args
+        .get("include")
+        .and_then(Value::as_str)
+        .filter(|value| !value.trim().is_empty())
+        .map(str::trim);
+    let mut command = Command::new(program);
     command
         .arg("--no-config")
         .arg("--line-number")
         .arg("--no-messages")
         .arg("--hidden")
         .args(search_exclude_args(&search_root))
-        .arg(pattern);
-    if let Some(include) = args
-        .get("include")
-        .and_then(Value::as_str)
-        .filter(|value| !value.trim().is_empty())
-    {
-        command.arg("--iglob").arg(include.trim());
+        .arg(&pattern);
+    if let Some(include) = include {
+        command.arg("--iglob").arg(include);
     }
     if is_file {
         if let Some(name) = path.file_name() {
@@ -243,15 +271,66 @@ async fn grep_text(args: Value) -> Result<String> {
     } else {
         command.arg(".");
     }
-    let output = tokio::time::timeout(
+    command.current_dir(&search_root).stdin(Stdio::null());
+    // 1. 优先使用 ripgrep 保持正则搜索性能与兼容性
+    if let Some(output) = run_search_command(command).await? {
+        return search_output_limited(output, max_results);
+    }
+    // 2. Windows 发布环境缺少 ripgrep 时使用内置正则搜索
+    let result = super::native_search::grep_text(
+        &search_root,
+        is_file.then_some(path.as_path()),
+        &pattern,
+        include,
+        max_results,
+    )?;
+    native_search_output(result, max_results)
+}
+
+/// 执行搜索命令，程序不存在时返回空以触发内置回退。
+///
+/// 参数:
+/// - `command`: 已完成参数配置的搜索命令
+///
+/// 返回:
+/// - ripgrep 输出；程序不存在时返回空
+async fn run_search_command(mut command: Command) -> Result<Option<Output>> {
+    match tokio::time::timeout(
         std::time::Duration::from_secs(SEARCH_TIMEOUT_SECONDS),
-        command
-            .current_dir(search_root)
-            .stdin(Stdio::null())
-            .output(),
+        command.output(),
     )
-    .await??;
-    search_output_limited(output, max_results)
+    .await
+    {
+        Ok(Ok(output)) => Ok(Some(output)),
+        Ok(Err(err)) if err.kind() == ErrorKind::NotFound => Ok(None),
+        Ok(Err(err)) => Err(err.into()),
+        Err(_) => bail!("search timed out after {SEARCH_TIMEOUT_SECONDS}s"),
+    }
+}
+
+/// 将内置搜索结果转换为工具统一 JSON 输出。
+///
+/// 参数:
+/// - `result`: 内置搜索结果
+/// - `max_results`: 最大结果数
+///
+/// 返回:
+/// - 工具结果 JSON
+fn native_search_output(
+    result: super::native_search::NativeSearchResult,
+    max_results: usize,
+) -> Result<String> {
+    let stdout = result.lines.join("\n");
+    Ok(serde_json::to_string_pretty(&json!({
+        "success": true,
+        "exit_code": 0,
+        "stdout": clip_output(&stdout),
+        "stderr": "",
+        "truncated": result.truncated,
+        "max_results": max_results,
+        "matches": result.lines.len(),
+        "note": if result.lines.is_empty() { "no matches" } else { "native fallback" }
+    }))?)
 }
 
 fn command_output_limited(output: std::process::Output, max_lines: usize) -> Result<String> {
@@ -423,6 +502,65 @@ mod tests {
         assert_eq!(data["exit_code"], 0);
         assert_eq!(data["stdout"], "");
         assert_eq!(data["note"], "no matches");
+    }
+
+    /// 验证缺少 ripgrep 时文本搜索使用内置回退实现。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[tokio::test]
+    async fn grep_falls_back_when_ripgrep_is_missing() {
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
+        let temp = tempfile::tempdir_in(cwd).unwrap();
+        std::fs::write(temp.path().join("sample.txt"), "first\nneedle\nthird\n").unwrap();
+
+        let result = grep_text_with_program(
+            json!({
+                "path": temp.path().display().to_string(),
+                "pattern": "needle",
+            }),
+            "miyu-missing-rg",
+        )
+        .await
+        .unwrap();
+
+        let data: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(data["success"], true);
+        assert!(data["stdout"]
+            .as_str()
+            .unwrap()
+            .contains("sample.txt:2:needle"));
+    }
+
+    /// 验证缺少 ripgrep 时文件查找使用内置回退实现。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[tokio::test]
+    async fn glob_falls_back_when_ripgrep_is_missing() {
+        let cwd = crate::runtime_cwd::current_dir().unwrap();
+        let temp = tempfile::tempdir_in(cwd).unwrap();
+        std::fs::write(temp.path().join("Example.RS"), "content").unwrap();
+
+        let result = glob_files_with_program(
+            json!({
+                "path": temp.path().display().to_string(),
+                "pattern": "*.rs",
+            }),
+            "miyu-missing-rg",
+        )
+        .await
+        .unwrap();
+
+        let data: Value = serde_json::from_str(&result).unwrap();
+        assert_eq!(data["success"], true);
+        assert!(data["stdout"].as_str().unwrap().contains("Example.RS"));
     }
 
     #[test]
