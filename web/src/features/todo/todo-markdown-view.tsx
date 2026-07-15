@@ -102,9 +102,11 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
               {summary.completed}/{summary.total}
             </span>
           </span>
-          <span className="todo-trigger-track" aria-hidden>
-            <span className="todo-trigger-fill" style={{ width: `${percent}%` }} />
-          </span>
+          {!compact && (
+            <span className="todo-trigger-track" aria-hidden>
+              <span className="todo-trigger-fill" style={{ width: `${percent}%` }} />
+            </span>
+          )}
         </span>
         <ChevronDown size={compact ? 12 : 15} className={open ? "open" : ""} />
       </button>

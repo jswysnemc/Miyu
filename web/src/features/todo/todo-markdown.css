@@ -165,8 +165,7 @@
 }
 
 .todo-markdown-view.compact .todo-trigger-track {
-  height: 2px;
-  background: color-mix(in srgb, var(--ink) 10%, transparent);
+  display: none;
 }
 
 .todo-markdown-view.compact .todo-markdown-trigger > svg {

@@ -184,8 +184,7 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
         )}
         {!layout.workspaceOpen && (
           <button type="button" className="workspace-reopen" onClick={layout.openWorkspace} title="打开工作区" aria-label="打开工作区">
-            <Plus size={14} />
-            <span>工作区</span>
+            <Plus size={16} />
           </button>
         )}
       </div>

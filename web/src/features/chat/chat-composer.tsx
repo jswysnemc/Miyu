@@ -102,6 +102,7 @@ export function ChatComposer(props: ChatComposerProps) {
       <div className="composer-context-strip">
         <WorkspaceSwitcher />
         {git.data?.status === "ready" && git.data.head && <span className="composer-context-chip" title={git.data.upstream || git.data.head}><GitBranch size={13}/><span>{git.data.head}</span></span>}
+        <SystemUsage selection={props.selection} />
         <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
         <TodoMarkdownView sessionId={props.sessionId} compact />
         <PermissionAuditDialog sessionId={props.sessionId} />
