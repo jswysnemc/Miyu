@@ -64,7 +64,7 @@ type ChatComposerProps = {
  * @returns 聊天输入区
  */
 export function ChatComposer(props: ChatComposerProps) {
-  const git = useQuery({ queryKey:["workspace-diff"], queryFn:api.workspace.diff, staleTime:20_000 });
+  const git = useQuery({ queryKey:["git-status"], queryFn:api.workspace.gitStatus, staleTime:20_000 });
   const runtimeActivity = useRuntimeActivity();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -101,8 +101,7 @@ export function ChatComposer(props: ChatComposerProps) {
     <div className="composer-shell">
       <div className="composer-context-strip">
         <WorkspaceSwitcher />
-        {git.data?.repository && <span className="composer-context-chip" title={git.data.branch}><GitBranch size={13}/><span>{git.data.branch || "Git"}</span></span>}
-        <SystemUsage selection={props.selection} />
+        {git.data?.status === "ready" && git.data.head && <span className="composer-context-chip" title={git.data.upstream || git.data.head}><GitBranch size={13}/><span>{git.data.head}</span></span>}
         <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
         <TodoMarkdownView sessionId={props.sessionId} compact />
         <PermissionAuditDialog sessionId={props.sessionId} />

@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  Archive,
   Check,
   ChevronDown,
   CloudDownload,
@@ -13,13 +14,14 @@ import {
   RotateCcw,
   Trash2
 } from "lucide-react";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { api } from "../../api/client";
-import type { GitStatusEntry } from "../../api/contracts";
+import type { GitBranch as GitBranchInfo, GitCommitSummary, GitStatusEntry } from "../../api/contracts";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 import { DiffView } from "../chat/tool-renderers/diff-view";
 
 type ReviewMode = "changes" | "history";
+type DiffMode = "working_tree" | "branch";
 
 /**
  * 渲染 LiveAgent 风格的 Git 变更与历史面板。
@@ -30,12 +32,16 @@ export function DiffPane() {
   const confirm = useConfirm();
   const queryClient = useQueryClient();
   const [mode, setMode] = useState<ReviewMode>("changes");
+  const [diffMode, setDiffMode] = useState<DiffMode>("working_tree");
   const [message, setMessage] = useState("");
-  const [branchName, setBranchName] = useState("main");
+  const [initBranch, setInitBranch] = useState("main");
+  const [createBranchName, setCreateBranchName] = useState("");
   const [remoteUrl, setRemoteUrl] = useState("");
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [selectedCommitPath, setSelectedCommitPath] = useState<string | null>(null);
+  const [historyLimit, setHistoryLimit] = useState(40);
+  const [branchMenuOpen, setBranchMenuOpen] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
 
@@ -44,15 +50,21 @@ export function DiffPane() {
     queryFn: api.workspace.gitStatus,
     refetchInterval: 8_000
   });
-  const history = useQuery({
-    queryKey: ["git-log"],
-    queryFn: () => api.workspace.gitLog(40, 0),
-    enabled: mode === "history" || status.data?.status === "ready",
+  const branches = useQuery({
+    queryKey: ["git-branches"],
+    queryFn: api.workspace.gitBranches,
+    enabled: status.data?.status === "ready",
     staleTime: 10_000
   });
-  const worktreeDiff = useQuery({
-    queryKey: ["git-review-diff", "working_tree", selectedPath],
-    queryFn: () => api.workspace.gitReviewDiff("working_tree", selectedPath ?? undefined),
+  const history = useQuery({
+    queryKey: ["git-log", historyLimit],
+    queryFn: () => api.workspace.gitLog(historyLimit, 0),
+    enabled: status.data?.status === "ready",
+    staleTime: 10_000
+  });
+  const reviewDiff = useQuery({
+    queryKey: ["git-review-diff", diffMode, selectedPath],
+    queryFn: () => api.workspace.gitReviewDiff(diffMode, selectedPath ?? undefined),
     enabled: status.data?.status === "ready" && mode === "changes"
   });
   const commitDetails = useQuery({
@@ -79,10 +91,35 @@ export function DiffPane() {
       ),
     [state?.entries]
   );
+  const localBranches = useMemo(
+    () => (branches.data?.branches ?? []).filter((branch) => branch.kind === "local"),
+    [branches.data?.branches]
+  );
+  const remoteBranches = useMemo(
+    () => (branches.data?.branches ?? []).filter((branch) => branch.kind === "remote"),
+    [branches.data?.branches]
+  );
+
+  useEffect(() => {
+    if (state?.remote_url) setRemoteUrl(state.remote_url);
+  }, [state?.remote_url]);
+
+  useEffect(() => {
+    if (!branchMenuOpen) return;
+    const onPointerDown = (event: PointerEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (!target?.closest(".git-branch-menu") && !target?.closest(".git-branch-trigger")) {
+        setBranchMenuOpen(false);
+      }
+    };
+    document.addEventListener("pointerdown", onPointerDown);
+    return () => document.removeEventListener("pointerdown", onPointerDown);
+  }, [branchMenuOpen]);
 
   const refreshAll = async () => {
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["git-status"] }),
+      queryClient.invalidateQueries({ queryKey: ["git-branches"] }),
       queryClient.invalidateQueries({ queryKey: ["git-log"] }),
       queryClient.invalidateQueries({ queryKey: ["git-review-diff"] }),
       queryClient.invalidateQueries({ queryKey: ["git-commit-details"] }),
@@ -118,7 +155,13 @@ export function DiffPane() {
 
   const runOp = async (
     action: string,
-    options: { path?: string; message?: string; remote_url?: string; confirmTitle?: string; confirmDescription?: string } = {}
+    options: {
+      path?: string;
+      message?: string;
+      remote_url?: string;
+      confirmTitle?: string;
+      confirmDescription?: string;
+    } = {}
   ) => {
     if (options.confirmTitle) {
       const confirmed = await confirm({
@@ -138,18 +181,35 @@ export function DiffPane() {
       remote_url: options.remote_url
     });
     if (action === "commit") setMessage("");
+    if (action === "create_branch") {
+      setCreateBranchName("");
+      setBranchMenuOpen(false);
+    }
+    if (action === "switch_branch") setBranchMenuOpen(false);
   };
 
   if (status.isLoading && !state) {
-    return <section className="diff-pane git-manager"><div className="git-clean">正在读取 Git 状态…</div></section>;
+    return (
+      <section className="diff-pane git-manager">
+        <div className="git-clean">正在读取 Git 状态…</div>
+      </section>
+    );
   }
 
   if (!ready) {
     return (
       <section className="diff-pane git-manager">
         <header className="panel-head">
-          <div><span className="eyebrow">Git 工作区</span><h2><GitBranch size={15} />版本管理</h2></div>
-          <button type="button" className="icon-button" onClick={() => void status.refetch()} aria-label="刷新"><RefreshCw size={14} /></button>
+          <div>
+            <span className="eyebrow">Git 工作区</span>
+            <h2>
+              <GitBranch size={15} />
+              版本管理
+            </h2>
+          </div>
+          <button type="button" className="icon-button" onClick={() => void status.refetch()} aria-label="刷新">
+            <RefreshCw size={14} />
+          </button>
         </header>
         <div className="git-init-panel">
           <GitBranch size={24} />
@@ -157,9 +217,13 @@ export function DiffPane() {
           <p>为当前工作区创建本地版本历史，并支持后续 fetch / pull / push。</p>
           <label>
             <span>默认分支</span>
-            <input value={branchName} onChange={(event) => setBranchName(event.target.value)} spellCheck={false} />
+            <input value={initBranch} onChange={(event) => setInitBranch(event.target.value)} spellCheck={false} />
           </label>
-          <button type="button" onClick={() => void runOp("init", { message: branchName })} disabled={!branchName.trim() || op.isPending}>
+          <button
+            type="button"
+            onClick={() => void runOp("init", { message: initBranch })}
+            disabled={!initBranch.trim() || op.isPending}
+          >
             初始化仓库
           </button>
         </div>
@@ -171,13 +235,26 @@ export function DiffPane() {
   const busy = op.isPending;
   const commits = history.data?.commits ?? [];
   const activeCommit = selectedCommit ?? commits[0]?.sha ?? null;
+  const dirtyTotal =
+    (state?.dirty_counts.staged ?? 0) +
+    (state?.dirty_counts.unstaged ?? 0) +
+    (state?.dirty_counts.untracked ?? 0) +
+    (state?.dirty_counts.conflicted ?? 0);
 
   return (
     <section className="diff-pane git-manager git-review">
       <header className="git-review-toolbar">
         <div className="git-review-branch">
-          <GitBranch size={14} />
-          <strong title={state?.head}>{state?.head || "HEAD"}</strong>
+          <button
+            type="button"
+            className="git-branch-trigger"
+            onClick={() => setBranchMenuOpen((value) => !value)}
+            aria-expanded={branchMenuOpen}
+          >
+            <GitBranch size={14} />
+            <strong title={state?.head}>{state?.head || "HEAD"}</strong>
+            <ChevronDown size={12} className={branchMenuOpen ? "open" : ""} />
+          </button>
           {(state?.ahead || state?.behind) ? (
             <span className="git-review-sync">
               {state.ahead > 0 && <b>↑{state.ahead}</b>}
@@ -185,14 +262,71 @@ export function DiffPane() {
             </span>
           ) : null}
           {state?.upstream && <small title={state.upstream}>{state.upstream}</small>}
+          {branchMenuOpen && (
+            <div className="git-branch-menu">
+              <div className="git-branch-create">
+                <input
+                  value={createBranchName}
+                  onChange={(event) => setCreateBranchName(event.target.value)}
+                  placeholder="新建分支名"
+                  spellCheck={false}
+                />
+                <button
+                  type="button"
+                  disabled={!createBranchName.trim() || busy}
+                  onClick={() => void runOp("create_branch", { message: createBranchName.trim() })}
+                >
+                  创建
+                </button>
+              </div>
+              <BranchGroup
+                title="本地分支"
+                branches={localBranches}
+                busy={busy}
+                onSelect={(branch) => void runOp("switch_branch", { message: branch.full_name })}
+              />
+              <BranchGroup
+                title="远程分支"
+                branches={remoteBranches}
+                busy={busy}
+                onSelect={(branch) => void runOp("switch_branch", { message: branch.full_name })}
+              />
+            </div>
+          )}
         </div>
         <div className="git-review-actions">
-          <button type="button" className={mode === "changes" ? "active" : ""} onClick={() => setMode("changes")}>变更</button>
-          <button type="button" className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}><History size={13} />历史</button>
-          <button type="button" disabled={busy} onClick={() => void runOp("fetch")} title="Fetch"><CloudDownload size={13} /></button>
-          <button type="button" disabled={busy} onClick={() => void runOp("pull")} title="Pull"><RefreshCw size={13} /></button>
-          <button type="button" disabled={busy} onClick={() => void runOp("push")} title="Push"><CloudUpload size={13} /></button>
-          <button type="button" disabled={busy} onClick={() => void refreshAll()} title="刷新" aria-label="刷新"><RefreshCw size={13} /></button>
+          <button type="button" className={mode === "changes" ? "active" : ""} onClick={() => setMode("changes")}>
+            变更
+          </button>
+          <button type="button" className={mode === "history" ? "active" : ""} onClick={() => setMode("history")}>
+            <History size={13} />
+            历史
+          </button>
+          <button type="button" disabled={busy} onClick={() => void runOp("fetch")} title="Fetch">
+            <CloudDownload size={13} />
+          </button>
+          <button type="button" disabled={busy} onClick={() => void runOp("pull")} title="Pull">
+            <RefreshCw size={13} />
+          </button>
+          <button type="button" disabled={busy} onClick={() => void runOp("push")} title="Push">
+            <CloudUpload size={13} />
+          </button>
+          <button
+            type="button"
+            disabled={busy || dirtyTotal === 0}
+            onClick={() => void runOp("stash_push", { message: "Miyu stash" })}
+            title="Stash"
+          >
+            <Archive size={13} />
+          </button>
+          {(state?.stash_count ?? 0) > 0 && (
+            <button type="button" disabled={busy} onClick={() => void runOp("stash_pop")} title={`弹出 stash (${state?.stash_count})`}>
+              pop
+            </button>
+          )}
+          <button type="button" disabled={busy} onClick={() => void refreshAll()} title="刷新" aria-label="刷新">
+            <RefreshCw size={13} />
+          </button>
         </div>
       </header>
 
@@ -201,9 +335,38 @@ export function DiffPane() {
           <section className="git-change-panel">
             <div className="git-commit-box">
               <textarea rows={3} value={message} onChange={(event) => setMessage(event.target.value)} placeholder="提交说明" />
-              <button type="button" onClick={() => void runOp("commit", { message })} disabled={!message.trim() || busy || (state?.dirty_counts.staged ?? 0) === 0}>
-                <Check size={13} />提交已暂存变更
+              <button
+                type="button"
+                onClick={() => void runOp("commit", { message })}
+                disabled={!message.trim() || busy || (state?.dirty_counts.staged ?? 0) === 0}
+              >
+                <Check size={13} />
+                提交已暂存变更
               </button>
+            </div>
+
+            <div className="git-diff-mode">
+              <button type="button" className={diffMode === "working_tree" ? "active" : ""} onClick={() => setDiffMode("working_tree")}>
+                工作树
+              </button>
+              <button type="button" className={diffMode === "branch" ? "active" : ""} onClick={() => setDiffMode("branch")}>
+                相对基线
+              </button>
+              {dirtyTotal > 0 && (
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busy}
+                  onClick={() =>
+                    void runOp("discard_all", {
+                      confirmTitle: "丢弃全部改动",
+                      confirmDescription: "将放弃所有已暂存、未暂存和未跟踪改动，此操作无法撤销。"
+                    })
+                  }
+                >
+                  全部丢弃
+                </button>
+              )}
             </div>
 
             <ChangeSection
@@ -216,11 +379,13 @@ export function DiffPane() {
               onUnstageAll={() => void runOp("unstage_all")}
               onStage={(path) => void runOp("stage", { path })}
               onUnstage={(path) => void runOp("unstage", { path })}
-              onDiscard={(path) => void runOp("discard", {
-                path,
-                confirmTitle: "撤销工作区修改",
-                confirmDescription: `将恢复 ${path}，未保存修改无法恢复。`
-              })}
+              onDiscard={(path) =>
+                void runOp("discard", {
+                  path,
+                  confirmTitle: "撤销工作区修改",
+                  confirmDescription: `将恢复 ${path}，未保存修改无法恢复。`
+                })
+              }
               section="staged"
             />
             <ChangeSection
@@ -233,35 +398,51 @@ export function DiffPane() {
               onUnstageAll={() => void runOp("unstage_all")}
               onStage={(path) => void runOp("stage", { path })}
               onUnstage={(path) => void runOp("unstage", { path })}
-              onDiscard={(path) => void runOp("discard", {
-                path,
-                confirmTitle: entryIsUntracked(changes, path) ? "删除未跟踪文件" : "撤销工作区修改",
-                confirmDescription: entryIsUntracked(changes, path)
-                  ? `将永久删除“${path}”。`
-                  : `将恢复 ${path}，未保存修改无法恢复。`
-              })}
+              onDiscard={(path) =>
+                void runOp("discard", {
+                  path,
+                  confirmTitle: entryIsUntracked(changes, path) ? "删除未跟踪文件" : "撤销工作区修改",
+                  confirmDescription: entryIsUntracked(changes, path)
+                    ? `将永久删除“${path}”。`
+                    : `将恢复 ${path}，未保存修改无法恢复。`
+                })
+              }
               section="changes"
             />
 
-            {!state?.remote_url && (
-              <div className="git-remote-box">
-                <span>设置 origin 远端</span>
-                <input value={remoteUrl} onChange={(event) => setRemoteUrl(event.target.value)} placeholder="git@github.com:org/repo.git" spellCheck={false} />
-                <button type="button" disabled={!remoteUrl.trim() || busy} onClick={() => void runOp("set_remote", { remote_url: remoteUrl })}>保存远端</button>
-              </div>
-            )}
+            <div className="git-remote-box">
+              <span>{state?.remote_url ? "远端 origin" : "设置 origin 远端"}</span>
+              <input
+                value={remoteUrl}
+                onChange={(event) => setRemoteUrl(event.target.value)}
+                placeholder="git@github.com:org/repo.git"
+                spellCheck={false}
+              />
+              <button
+                type="button"
+                disabled={!remoteUrl.trim() || busy}
+                onClick={() => void runOp("set_remote", { remote_url: remoteUrl })}
+              >
+                {state?.remote_url ? "更新远端" : "保存远端"}
+              </button>
+            </div>
           </section>
 
           <div className="diff-scroll">
-            {worktreeDiff.isLoading && <div className="git-clean diff-clean">正在读取差异…</div>}
-            {worktreeDiff.data?.patch ? (
+            {reviewDiff.isLoading && <div className="git-clean diff-clean">正在读取差异…</div>}
+            {reviewDiff.error && <div className="pane-error">{reviewDiff.error.message}</div>}
+            {reviewDiff.data?.patch ? (
               <div className="git-diff-shell">
-                {worktreeDiff.data.stat && <pre className="git-diff-stat">{worktreeDiff.data.stat}</pre>}
-                <DiffView source={worktreeDiff.data.patch} headerPath={selectedPath ?? undefined} />
-                {worktreeDiff.data.truncated && <div className="git-clean">差异已截断</div>}
+                <div className="git-diff-meta">
+                  {reviewDiff.data.base_ref} → {reviewDiff.data.head_ref}
+                  {selectedPath ? ` · ${selectedPath}` : ""}
+                </div>
+                {reviewDiff.data.stat && <pre className="git-diff-stat">{reviewDiff.data.stat}</pre>}
+                <DiffView source={reviewDiff.data.patch} headerPath={selectedPath ?? undefined} />
+                {reviewDiff.data.truncated && <div className="git-clean">差异已截断</div>}
               </div>
             ) : (
-              !worktreeDiff.isLoading && <div className="git-clean diff-clean">没有可显示的差异</div>
+              !reviewDiff.isLoading && !reviewDiff.error && <div className="git-clean diff-clean">没有可显示的差异</div>
             )}
           </div>
         </div>
@@ -271,11 +452,13 @@ export function DiffPane() {
             <div className="git-change-head">
               <span>历史 {commits.length}</span>
               {(history.data?.history_ahead || history.data?.history_behind) ? (
-                <small>↑{history.data?.history_ahead ?? 0} ↓{history.data?.history_behind ?? 0}</small>
+                <small>
+                  ↑{history.data?.history_ahead ?? 0} ↓{history.data?.history_behind ?? 0}
+                </small>
               ) : null}
             </div>
             <div className="git-file-list">
-              {commits.map((commit) => (
+              {commits.map((commit: GitCommitSummary) => (
                 <button
                   type="button"
                   key={commit.sha}
@@ -288,12 +471,19 @@ export function DiffPane() {
                   <GitCommitHorizontal size={13} />
                   <span>
                     <strong>{commit.subject || commit.short_sha}</strong>
-                    <small>{commit.short_sha} · {commit.author_name} · {formatDate(commit.author_date)}</small>
+                    <small>
+                      {commit.short_sha} · {commit.author_name} · {formatDate(commit.author_date)}
+                    </small>
                   </span>
                   {commit.local_only && <em>local</em>}
                 </button>
               ))}
               {commits.length === 0 && <div className="git-clean">暂无提交记录</div>}
+              {commits.length >= historyLimit && (
+                <button type="button" className="git-load-more" onClick={() => setHistoryLimit((value) => value + 40)}>
+                  加载更多
+                </button>
+              )}
             </div>
           </section>
           <div className="diff-scroll">
@@ -301,7 +491,10 @@ export function DiffPane() {
               <div className="git-diff-shell">
                 <div className="git-commit-meta">
                   <h3>{commitDetails.data.commit.subject}</h3>
-                  <p>{commitDetails.data.commit.short_sha} · {commitDetails.data.commit.author_name} · {formatDate(commitDetails.data.commit.author_date)}</p>
+                  <p>
+                    {commitDetails.data.commit.short_sha} · {commitDetails.data.commit.author_name} ·{" "}
+                    {formatDate(commitDetails.data.commit.author_date)}
+                  </p>
                   {commitDetails.data.commit.body && <pre>{commitDetails.data.commit.body}</pre>}
                   <div className="git-commit-files">
                     {commitDetails.data.commit.files.map((file) => (
@@ -342,6 +535,32 @@ export function DiffPane() {
   );
 }
 
+function BranchGroup(props: {
+  title: string;
+  branches: GitBranchInfo[];
+  busy: boolean;
+  onSelect: (branch: GitBranchInfo) => void;
+}) {
+  if (props.branches.length === 0) return null;
+  return (
+    <div className="git-branch-group">
+      <span>{props.title}</span>
+      {props.branches.map((branch) => (
+        <button
+          type="button"
+          key={`${branch.kind}:${branch.full_name}`}
+          className={branch.current ? "active" : ""}
+          disabled={props.busy || branch.current}
+          onClick={() => props.onSelect(branch)}
+        >
+          <strong>{branch.name}</strong>
+          {branch.upstream && <small>{branch.upstream}</small>}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function ChangeSection(props: {
   title: string;
   entries: GitStatusEntry[];
@@ -365,9 +584,13 @@ function ChangeSection(props: {
         </button>
         <span>
           {props.section === "staged" ? (
-            <button type="button" onClick={props.onUnstageAll} title="取消全部暂存" disabled={props.busy}><Minus size={12} /></button>
+            <button type="button" onClick={props.onUnstageAll} title="取消全部暂存" disabled={props.busy}>
+              <Minus size={12} />
+            </button>
           ) : (
-            <button type="button" onClick={props.onStageAll} title="暂存全部" disabled={props.busy}><Plus size={12} /></button>
+            <button type="button" onClick={props.onStageAll} title="暂存全部" disabled={props.busy}>
+              <Plus size={12} />
+            </button>
           )}
         </span>
       </div>
@@ -384,13 +607,22 @@ function ChangeSection(props: {
               </button>
               <span className="git-file-actions">
                 {entry.staged && (
-                  <button type="button" disabled={props.busy} onClick={() => props.onUnstage(entry.path)} title="取消暂存"><Minus size={12} /></button>
+                  <button type="button" disabled={props.busy} onClick={() => props.onUnstage(entry.path)} title="取消暂存">
+                    <Minus size={12} />
+                  </button>
                 )}
                 {(entry.untracked || entry.worktree_status !== "." || entry.conflicted) && !entry.staged && (
-                  <button type="button" disabled={props.busy} onClick={() => props.onStage(entry.path)} title="暂存"><Plus size={12} /></button>
+                  <button type="button" disabled={props.busy} onClick={() => props.onStage(entry.path)} title="暂存">
+                    <Plus size={12} />
+                  </button>
                 )}
                 {(entry.untracked || entry.worktree_status !== ".") && (
-                  <button type="button" disabled={props.busy} onClick={() => props.onDiscard(entry.path)} title={entry.untracked ? "删除未跟踪文件" : "撤销修改"}>
+                  <button
+                    type="button"
+                    disabled={props.busy}
+                    onClick={() => props.onDiscard(entry.path)}
+                    title={entry.untracked ? "删除未跟踪文件" : "撤销修改"}
+                  >
                     {entry.untracked ? <Trash2 size={12} /> : <RotateCcw size={12} />}
                   </button>
                 )}
@@ -424,6 +656,7 @@ function statusTone(entry: GitStatusEntry) {
   if (entry.index_status === "A") return "added";
   return "modified";
 }
+
 function formatDate(value: string) {
   if (!value) return "";
   const date = new Date(value);
