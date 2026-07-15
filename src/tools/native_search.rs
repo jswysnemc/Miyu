@@ -1,6 +1,12 @@
 use anyhow::{Context, Result};
-use regex::{Regex, RegexBuilder};
+use globset::{GlobBuilder, GlobMatcher};
+use regex::Regex;
+use std::fs::File;
+use std::io::{BufRead, BufReader};
 use std::path::Path;
+use std::time::{Duration, Instant};
+
+const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// 内置搜索结果。
 pub(crate) struct NativeSearchResult {
@@ -23,20 +29,21 @@ pub(crate) fn glob_files(
     max_results: usize,
 ) -> Result<NativeSearchResult> {
     let matcher = glob_matcher(pattern)?;
+    let deadline = Instant::now() + SEARCH_TIMEOUT;
     let mut lines = Vec::new();
-    // 1. 遍历普通文件并匹配统一使用正斜杠的相对路径
-    visit_files(root, &mut |path| {
+    // 1. 遍历普通文件并匹配相对路径或文件名
+    let timed_out = visit_files(root, deadline, &mut |path| {
         let relative = relative_display(root, path);
-        if matcher.is_match(&relative) {
+        if glob_matches(&matcher, &relative, path) {
             lines.push(relative);
         }
         lines.len() > max_results
     })?;
-    // 2. 保留最大结果数并记录是否发生截断
-    Ok(limit_results(lines, max_results))
+    // 2. 保留最大结果数并记录超时或截断状态
+    Ok(limit_results(lines, max_results, timed_out))
 }
 
-/// 递归搜索 UTF-8 文本文件内容。
+/// 递归搜索文本文件内容。
 ///
 /// 参数:
 /// - `root`: 搜索根目录
@@ -57,32 +64,35 @@ pub(crate) fn grep_text(
     let matcher =
         Regex::new(pattern).with_context(|| format!("invalid regex pattern: {pattern}"))?;
     let include = include.map(glob_matcher).transpose()?;
+    let deadline = Instant::now() + SEARCH_TIMEOUT;
     let mut lines = Vec::new();
     // 1. 读取指定文件或递归遍历目录中的普通文件
-    if let Some(path) = single_file {
+    let timed_out = if let Some(path) = single_file {
         search_file(
             root,
             path,
             &matcher,
             include.as_ref(),
             max_results,
+            deadline,
             &mut lines,
-        )?;
+        )?
     } else {
-        visit_files(root, &mut |path| {
+        visit_files(root, deadline, &mut |path| {
             let _ = search_file(
                 root,
                 path,
                 &matcher,
                 include.as_ref(),
                 max_results,
+                deadline,
                 &mut lines,
             );
             lines.len() > max_results
-        })?;
-    }
-    // 2. 保留最大结果数并记录是否发生截断
-    Ok(limit_results(lines, max_results))
+        })?
+    };
+    // 2. 保留最大结果数并记录超时或截断状态
+    Ok(limit_results(lines, max_results, timed_out))
 }
 
 /// 搜索单个文本文件。
@@ -93,88 +103,149 @@ pub(crate) fn grep_text(
 /// - `matcher`: 内容正则表达式
 /// - `include`: 可选文件 Glob 过滤器
 /// - `max_results`: 最大结果数
+/// - `deadline`: 搜索截止时间
 /// - `lines`: 匹配结果集合
 ///
 /// 返回:
-/// - 搜索是否成功
+/// - 是否达到搜索截止时间
 fn search_file(
     root: &Path,
     path: &Path,
     matcher: &Regex,
-    include: Option<&Regex>,
+    include: Option<&GlobMatcher>,
     max_results: usize,
+    deadline: Instant,
     lines: &mut Vec<String>,
-) -> Result<()> {
+) -> Result<bool> {
     let relative = relative_display(root, path);
-    if include.is_some_and(|include| !include.is_match(&relative)) {
-        return Ok(());
+    if include.is_some_and(|include| !glob_matches(include, &relative, path)) {
+        return Ok(false);
     }
-    let bytes = std::fs::read(path)?;
-    if bytes.contains(&0) {
-        return Ok(());
-    }
-    let content = String::from_utf8_lossy(&bytes);
-    for (index, line) in content.lines().enumerate() {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut buffer = Vec::new();
+    let mut line_number = 0usize;
+    loop {
+        if Instant::now() >= deadline {
+            return Ok(true);
+        }
+        buffer.clear();
+        let read = reader.read_until(b'\n', &mut buffer)?;
+        if read == 0 || buffer.contains(&0) {
+            return Ok(false);
+        }
+        line_number += 1;
+        let line = String::from_utf8_lossy(&buffer);
+        let line = line.trim_end_matches(['\r', '\n']);
         if matcher.is_match(line) {
-            lines.push(format!("{relative}:{}:{line}", index + 1));
+            lines.push(format!("{relative}:{line_number}:{line}"));
             if lines.len() > max_results {
-                break;
+                return Ok(false);
             }
         }
     }
-    Ok(())
 }
 
-/// 递归访问目录中的普通文件，跳过 Git 元数据目录。
+/// 递归访问目录中的普通文件，跳过受保护目录。
 ///
 /// 参数:
 /// - `root`: 搜索根目录
+/// - `deadline`: 搜索截止时间
 /// - `visitor`: 文件访问回调；返回真时停止遍历
 ///
 /// 返回:
-/// - 遍历是否成功
-fn visit_files(root: &Path, visitor: &mut impl FnMut(&Path) -> bool) -> Result<()> {
+/// - 是否达到搜索截止时间
+fn visit_files(
+    root: &Path,
+    deadline: Instant,
+    visitor: &mut impl FnMut(&Path) -> bool,
+) -> Result<bool> {
     let mut pending = vec![root.to_path_buf()];
     while let Some(directory) = pending.pop() {
-        let mut entries = std::fs::read_dir(&directory)?.collect::<std::io::Result<Vec<_>>>()?;
+        if Instant::now() >= deadline {
+            return Ok(true);
+        }
+        let entries = match std::fs::read_dir(&directory) {
+            Ok(entries) => entries,
+            Err(_err) if directory != root => continue,
+            Err(err) => return Err(err.into()),
+        };
+        let mut entries = entries.filter_map(|entry| entry.ok()).collect::<Vec<_>>();
         entries.sort_by_key(|entry| entry.file_name());
         for entry in entries {
+            if Instant::now() >= deadline {
+                return Ok(true);
+            }
             let path = entry.path();
-            let file_type = entry.file_type()?;
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
             if file_type.is_dir() {
-                if entry.file_name() != ".git" {
+                if !excluded_directory(root, &path) {
                     pending.push(path);
                 }
             } else if file_type.is_file() && visitor(&path) {
-                return Ok(());
+                return Ok(false);
             }
         }
     }
-    Ok(())
+    Ok(false)
 }
 
-/// 将 Glob 模式转换为大小写不敏感正则表达式。
+/// 创建大小写不敏感的 Glob 匹配器。
 ///
 /// 参数:
 /// - `pattern`: Glob 模式
 ///
 /// 返回:
-/// - 正则表达式匹配器
-fn glob_matcher(pattern: &str) -> Result<Regex> {
-    let mut regex = String::from("^");
-    for ch in pattern.chars() {
-        match ch {
-            '*' => regex.push_str(".*"),
-            '?' => regex.push('.'),
-            '/' | '\\' => regex.push('/'),
-            other => regex.push_str(&regex::escape(&other.to_string())),
-        }
-    }
-    regex.push('$');
-    RegexBuilder::new(&regex)
+/// - Glob 匹配器
+fn glob_matcher(pattern: &str) -> Result<GlobMatcher> {
+    GlobBuilder::new(pattern)
         .case_insensitive(true)
+        .literal_separator(true)
         .build()
+        .map(|glob| glob.compile_matcher())
         .with_context(|| format!("invalid glob pattern: {pattern}"))
+}
+
+/// 判断相对路径或文件名是否符合 Glob 模式。
+///
+/// 参数:
+/// - `matcher`: Glob 匹配器
+/// - `relative`: 正斜杠格式的相对路径
+/// - `path`: 文件路径
+///
+/// 返回:
+/// - 是否匹配
+fn glob_matches(matcher: &GlobMatcher, relative: &str, path: &Path) -> bool {
+    matcher.is_match(relative)
+        || path
+            .file_name()
+            .is_some_and(|name| matcher.is_match(Path::new(name)))
+}
+
+/// 判断目录是否属于搜索排除范围。
+///
+/// 参数:
+/// - `root`: 搜索根目录
+/// - `directory`: 待判断目录
+///
+/// 返回:
+/// - 是否应跳过目录
+fn excluded_directory(root: &Path, directory: &Path) -> bool {
+    if directory.file_name().is_some_and(|name| name == ".git") {
+        return true;
+    }
+    if root != Path::new("/") {
+        return false;
+    }
+    let relative = relative_display(root, directory);
+    matches!(
+        relative.as_str(),
+        "dev" | "proc" | "sys" | "run" | "tmp" | "usr" | "nix" | "snap" | "flatpak"
+    ) || relative.starts_with("var/cache")
+        || relative.starts_with("var/lib")
+        || relative.starts_with("var/log")
 }
 
 /// 返回相对搜索根目录的跨平台显示路径。
@@ -197,11 +268,40 @@ fn relative_display(root: &Path, path: &Path) -> String {
 /// 参数:
 /// - `lines`: 全部匹配结果
 /// - `max_results`: 最大结果数
+/// - `timed_out`: 是否达到搜索截止时间
 ///
 /// 返回:
 /// - 截断后的搜索结果
-fn limit_results(mut lines: Vec<String>, max_results: usize) -> NativeSearchResult {
-    let truncated = lines.len() > max_results;
+fn limit_results(
+    mut lines: Vec<String>,
+    max_results: usize,
+    timed_out: bool,
+) -> NativeSearchResult {
+    let truncated = timed_out || lines.len() > max_results;
     lines.truncate(max_results);
     NativeSearchResult { lines, truncated }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 验证 Glob 支持递归模式和字符组。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn glob_supports_recursive_paths_and_character_classes() {
+        let temp = tempfile::tempdir().unwrap();
+        let nested = temp.path().join("nested");
+        std::fs::create_dir_all(&nested).unwrap();
+        std::fs::write(nested.join("file1.rs"), "content").unwrap();
+
+        let result = glob_files(temp.path(), "**/file[0-9].rs", 10).unwrap();
+
+        assert_eq!(result.lines, vec!["nested/file1.rs"]);
+    }
 }

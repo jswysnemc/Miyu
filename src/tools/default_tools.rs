@@ -186,6 +186,13 @@ fn plist_value(raw: &str, key: &str) -> Option<String> {
         .map(ToString::to_string)
 }
 
+/// 按 Glob 模式查找文件。
+///
+/// 参数:
+/// - `args`: 包含搜索路径、Glob 模式和最大结果数的工具参数
+///
+/// 返回:
+/// - 文件查找结果 JSON
 async fn glob_files(args: Value) -> Result<String> {
     glob_files_with_program(args, "rg").await
 }
@@ -223,6 +230,13 @@ async fn glob_files_with_program(args: Value, program: &str) -> Result<String> {
     native_search_output(result, max_results)
 }
 
+/// 按正则表达式搜索文件内容。
+///
+/// 参数:
+/// - `args`: 包含搜索路径、正则表达式、文件过滤和最大结果数的工具参数
+///
+/// 返回:
+/// - 文本搜索结果 JSON
 async fn grep_text(args: Value) -> Result<String> {
     grep_text_with_program(args, "rg").await
 }
