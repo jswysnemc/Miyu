@@ -86,6 +86,37 @@ pub(crate) fn register_channel_message_tool(
     );
 }
 
+/// 根据持久化渠道上下文重建当前发送目标。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+/// - `context`: 会话绑定的渠道上下文
+///
+/// 返回:
+/// - 可供渠道发送工具使用的目标
+pub(crate) async fn resolve_channel_target(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    context: &ChannelContext,
+) -> Result<ActiveChannelTarget> {
+    match context {
+        ChannelContext::Qq {
+            target_kind,
+            target_id,
+            msg_id,
+            ..
+        } => resolve_qq_context_target(config, target_kind, target_id, msg_id.clone()).await,
+        ChannelContext::Weixin {
+            to_user_id,
+            context_token,
+            ..
+        } => {
+            resolve_weixin_context_target(paths, config, to_user_id.clone(), context_token.clone())
+        }
+    }
+}
+
 /// 执行统一渠道发送工具。
 ///
 /// 参数:
@@ -161,6 +192,25 @@ async fn resolve_qq_target(paths: &MiyuPaths, config: &AppConfig) -> Result<Acti
     else {
         bail!("no recent QQ channel target");
     };
+    resolve_qq_context_target(config, &target_kind, &target_id, msg_id).await
+}
+
+/// 根据明确 QQ 上下文重建发送目标。
+///
+/// 参数:
+/// - `config`: 应用配置
+/// - `target_kind`: QQ 目标类型
+/// - `target_id`: QQ 目标标识
+/// - `msg_id`: 可选被动回复消息标识
+///
+/// 返回:
+/// - QQ 发送目标
+async fn resolve_qq_context_target(
+    config: &AppConfig,
+    target_kind: &str,
+    target_id: &str,
+    msg_id: Option<String>,
+) -> Result<ActiveChannelTarget> {
     let credentials = resolve_qq_credentials(
         QqBotCredentialOverrides {
             token: None,
@@ -171,13 +221,13 @@ async fn resolve_qq_target(paths: &MiyuPaths, config: &AppConfig) -> Result<Acti
     )?;
     let mut authenticator = QqBotAuthenticator::new(credentials.app_id, credentials.client_secret);
     let authorization = authenticator.authorization().await?;
-    let target_kind = QqTargetKind::parse(&target_kind)?;
+    let target_kind = QqTargetKind::parse(target_kind)?;
     let client = QqOfficialClient::new(
         non_empty_config(&config.gateways.qq.base_url)
             .unwrap_or_else(|| "https://api.sgroup.qq.com".to_string()),
         authorization,
         target_kind,
-        target_id,
+        target_id.to_string(),
     );
     Ok(ActiveChannelTarget::Qq { client, msg_id })
 }
@@ -199,6 +249,25 @@ fn resolve_weixin_target(paths: &MiyuPaths, config: &AppConfig) -> Result<Active
     else {
         bail!("no recent Weixin channel target");
     };
+    resolve_weixin_context_target(paths, config, to_user_id, context_token)
+}
+
+/// 根据明确微信上下文重建发送目标。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+/// - `to_user_id`: 微信用户标识
+/// - `context_token`: 可选上下文 token
+///
+/// 返回:
+/// - 微信发送目标
+fn resolve_weixin_context_target(
+    paths: &MiyuPaths,
+    config: &AppConfig,
+    to_user_id: String,
+    context_token: Option<String>,
+) -> Result<ActiveChannelTarget> {
     let weixin = &config.gateways.weixin;
     let base_url_config =
         non_empty_config(&weixin.base_url).unwrap_or_else(|| default_weixin_base_url().to_string());

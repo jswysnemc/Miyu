@@ -1,11 +1,15 @@
 mod model;
 mod repository;
 mod workspace;
+mod workspace_repository;
 
 pub use repository::{
-    active_session_id_for_workspace, active_state_dir, create_session, delete_session,
-    delete_sessions, ensure_active_session, list_sessions, list_sessions_for_workspace,
-    rename_session, session_scope_dir, state_dir_for_session, state_dir_for_workspace_session,
-    switch_session, touch_session_with_message,
+    active_state_dir, create_session, delete_session, delete_sessions, ensure_active_session,
+    rename_session, session_scope_dir, state_dir_for_session, switch_session,
+    touch_session_with_message,
 };
 pub use workspace::workspace_id_for_path;
+pub use workspace_repository::{
+    active_session_id_for_workspace, ensure_workspace_session, list_sessions,
+    list_sessions_for_workspace, state_dir_for_workspace_session,
+};

@@ -122,7 +122,12 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
     case "run.failed":
       return { ...closeActiveReasoning(state, event.timestamp), error: String(payload.message ?? "运行失败"), status: "idle", completed: true };
     case "run.interrupted":
-      return { ...closeActiveReasoning(state, event.timestamp), error: "运行已中断", status: "idle", completed: true };
+      return {
+        ...closeActiveReasoning(state, event.timestamp),
+        error: state.content ? "响应已中断，已保留生成内容" : "运行已中断",
+        status: "idle",
+        completed: true
+      };
     case "run.completed":
       return { ...closeActiveReasoning(state, event.timestamp), status: "idle", completed: true };
     default:

@@ -57,7 +57,12 @@ impl Agent {
         let turn_id = new_turn_id();
         self.state.start_turn(&turn_id, &input)?;
         perf.mark("state start_turn");
-        let guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        let mut guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());
+        let worktree_undo = crate::state::worktree_undo::WorktreeUndoGuard::begin(
+            &self.state,
+            &crate::runtime_cwd::current_dir()?,
+            &turn_id,
+        )?;
         let auto_meme_plan =
             memes::plan_auto_meme_before_reply(&self.config, &self.paths, &self.client, &input)
                 .await?;
@@ -77,8 +82,14 @@ impl Agent {
         )?;
         perf.mark("build initial messages");
         let mut on_event = on_event;
+        let mut emit_event = Box::new(|event: AgentEvent| {
+            if let AgentEvent::Chunk(chunk) = &event {
+                guard.append_chunk(chunk.kind, &chunk.text);
+            }
+            on_event(event)
+        });
         if self
-            .compact_conversation_if_needed(&turn_id, &messages, &mut on_event)
+            .compact_conversation_if_needed(&turn_id, &messages, &mut emit_event)
             .await?
         {
             perf.mark("compaction completed");
@@ -103,7 +114,7 @@ impl Agent {
                 &image_urls,
                 association_prompt.as_deref(),
                 auto_meme_reminder,
-                &mut on_event,
+                &mut emit_event,
                 &mut perf,
             )
             .await
@@ -144,7 +155,7 @@ impl Agent {
                         &image_urls,
                         association_prompt.as_deref(),
                         auto_meme_reminder,
-                        &mut on_event,
+                        &mut emit_event,
                         &mut perf,
                     )
                     .await
@@ -159,10 +170,10 @@ impl Agent {
             }
             Err(err) => return Err(err),
         };
-        on_event(AgentEvent::FlushContent)?;
+        emit_event.as_mut()(AgentEvent::FlushContent)?;
         perf.mark("final content flushed");
         if let Some(plan) = auto_meme_plan {
-            on_event(AgentEvent::ExternalOutput)?;
+            emit_event.as_mut()(AgentEvent::ExternalOutput)?;
             memes::render_auto_meme(&self.config, &self.paths, &plan.event).await?;
             memes::record_auto_meme_event(&self.config, &self.paths, &plan.event)?;
         }
@@ -171,6 +182,8 @@ impl Agent {
                 .append_tool_report_context(&turn_id, &tool_name, &report)?;
         }
         perf.mark("persist tool reports");
+        drop(emit_event);
+        worktree_undo.finish()?;
         guard.complete(&result.content, result.reasoning.as_deref())?;
         perf.mark("complete turn");
         self.spawn_session_memory_extraction();

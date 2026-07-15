@@ -48,10 +48,15 @@ pub(crate) struct ActiveRunInfo {
     pub input: String,
     pub image_urls: Vec<String>,
     pub status: RunCheckpointStatus,
+    #[serde(default)]
+    pub discard_user_turn: bool,
+    #[serde(default)]
+    pub restore_input: Option<String>,
 }
 
 struct ActiveRun {
     info: ActiveRunInfo,
+    workspace: WorkspaceInfo,
     handle: JoinHandle<()>,
 }
 
@@ -113,6 +118,17 @@ impl RunManager {
             ) {
                 let _ = state.recover_stale_turns();
             }
+            let discard_user_turn = interrupted_without_reply(
+                paths,
+                &checkpoint.workspace,
+                &checkpoint.info.session_id,
+                &checkpoint.info.input,
+            );
+            manager.checkpoints.update_interruption(
+                &checkpoint.info.run_id,
+                discard_user_turn,
+                discard_user_turn.then_some(checkpoint.info.input.clone()),
+            )?;
             let journal =
                 EventJournal::persistent(manager.checkpoints.event_path(&checkpoint.info.run_id));
             journal.publish(WebEvent::new(
@@ -120,7 +136,11 @@ impl RunManager {
                 &checkpoint.info.workspace_id,
                 &checkpoint.info.session_id,
                 "run.interrupted",
-                json!({ "recovered": true }),
+                json!({
+                    "recovered": true,
+                    "discard_user_turn": discard_user_turn,
+                    "restore_input": discard_user_turn.then_some(checkpoint.info.input.clone()),
+                }),
             ));
         }
         Ok(manager)
@@ -173,6 +193,8 @@ impl RunManager {
                 .chain(request.image_urls.clone())
                 .collect(),
             status,
+            discard_user_turn: false,
+            restore_input: None,
         };
         let journal = EventJournal::persistent(self.checkpoints.event_path(&run_id));
         self.insert_journal(run_id.clone(), journal.clone()).await;
@@ -244,6 +266,7 @@ impl RunManager {
                 key,
                 ActiveRun {
                     info: queued.info,
+                    workspace: queued.workspace,
                     handle,
                 },
             );
@@ -309,17 +332,26 @@ impl RunManager {
             let current = active.remove(&key).expect("active run key must exist");
             current.handle.abort();
             let info = current.info.clone();
+            let workspace = current.workspace.clone();
             drop(active);
             let _ = current.handle.await;
-            self.checkpoints
-                .update_status(run_id, RunCheckpointStatus::Interrupted)?;
+            let discard_user_turn =
+                interrupted_without_reply(&self.paths, &workspace, &info.session_id, &info.input);
+            self.checkpoints.update_interruption(
+                run_id,
+                discard_user_turn,
+                discard_user_turn.then_some(info.input.clone()),
+            )?;
             if let Some(journal) = self.journal(run_id).await {
                 journal.publish(WebEvent::new(
                     &info.run_id,
                     &info.workspace_id,
                     &info.session_id,
                     "run.interrupted",
-                    json!({}),
+                    json!({
+                        "discard_user_turn": discard_user_turn,
+                        "restore_input": discard_user_turn.then_some(info.input.clone()),
+                    }),
                 ));
             }
             drop(_scheduling);
@@ -337,7 +369,7 @@ impl RunManager {
                 .expect("queued run position must exist");
             drop(queues);
             self.checkpoints
-                .update_status(run_id, RunCheckpointStatus::Interrupted)?;
+                .update_interruption(run_id, true, Some(queued.info.input.clone()))?;
             let journal = self
                 .journal(run_id)
                 .await
@@ -347,7 +379,11 @@ impl RunManager {
                 &queued.info.workspace_id,
                 &queued.info.session_id,
                 "run.interrupted",
-                json!({ "queued": true }),
+                json!({
+                    "queued": true,
+                    "discard_user_turn": true,
+                    "restore_input": queued.info.input,
+                }),
             ));
             return Ok(true);
         }
@@ -362,6 +398,23 @@ impl RunManager {
         self.checkpoints
             .get(run_id)
             .map(|_| EventJournal::persistent(self.checkpoints.event_path(run_id)))
+    }
+
+    /// 取出指定会话尚未消费的无回复中断恢复输入。
+    ///
+    /// 参数:
+    /// - `workspace_id`: 工作区标识
+    /// - `session_id`: 会话标识
+    ///
+    /// 返回:
+    /// - 待恢复运行信息，读取后清除恢复标记
+    pub(crate) fn take_interruption_recovery(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ActiveRunInfo>> {
+        self.checkpoints
+            .take_interruption_recovery(workspace_id, session_id)
     }
 
     /// 保存运行事件日志并移除最早的过期日志。
@@ -417,6 +470,34 @@ impl RunManager {
             self.spawn_run(key.to_string(), queued, journal).await;
         })
     }
+}
+
+/// 判断中断运行是否尚未产生可保留的助手正文。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace`: 运行绑定的工作区
+/// - `session_id`: 会话标识
+/// - `input`: 本轮用户输入
+///
+/// 返回:
+/// - 用户轮次已经删除或不存在时返回 true
+fn interrupted_without_reply(
+    paths: &MiyuPaths,
+    workspace: &WorkspaceInfo,
+    session_id: &str,
+    input: &str,
+) -> bool {
+    let Ok(state) = crate::state::StateStore::for_workspace_session(
+        paths,
+        std::path::Path::new(&workspace.path),
+        session_id,
+    ) else {
+        return false;
+    };
+    !state
+        .latest_interrupted_turn_has_content(input)
+        .unwrap_or(false)
 }
 
 /// 执行 Agent 并把 RunnerEvent 写入事件日志。
@@ -565,7 +646,10 @@ mod tests {
                     input: "first".to_string(),
                     image_urls: Vec::new(),
                     status: RunCheckpointStatus::Running,
+                    discard_user_turn: false,
+                    restore_input: None,
                 },
+                workspace: workspace.clone(),
                 handle: task,
             },
         );

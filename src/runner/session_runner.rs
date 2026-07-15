@@ -159,6 +159,7 @@ impl<'paths> SessionRunner<'paths> {
             state.session_id(),
             state.state_dir(),
         )?;
+        let input = with_channel_marker(input, submission.channel.as_ref());
         let mut agent = build_agent(
             config.clone(),
             self.paths,
@@ -174,7 +175,6 @@ impl<'paths> SessionRunner<'paths> {
             sink.on_runner_event(RunnerEvent::LoadedToolsChanged(loaded_tools))?;
         }
         sink.on_runner_event(RunnerEvent::Started)?;
-        let input = with_channel_marker(input, submission.channel.as_ref());
         let mut turn_runner = TurnRunner::new(&mut agent);
         let result = turn_runner.run_user_input(&input, sink).await;
         perf.mark("turn runner done");
@@ -310,7 +310,7 @@ impl<'paths> SessionRunner<'paths> {
             let mut filtered = registry.clone_filtered(&allowed);
             let required = match source {
                 SubmissionSource::Repl | SubmissionSource::Web => &["subagent", "todo"][..],
-                SubmissionSource::Gateway => &["cron"][..],
+                SubmissionSource::Gateway => &["cron", "send_channel_message"][..],
                 SubmissionSource::Command | SubmissionSource::ShellIntercept => &[][..],
             };
             for name in required {
@@ -473,10 +473,17 @@ fn with_channel_marker(
     channel: Option<&ChannelSubmission>,
 ) -> UserInputSubmission {
     if let Some(marker) = channel.and_then(|channel| channel.inbound_marker.as_deref()) {
-        input.input = format!("{marker}\n\n{}", input.input);
+        input.extra_system_prompt = Some(match input.extra_system_prompt.take() {
+            Some(prompt) => format!("{prompt}\n\n{marker}"),
+            None => marker.to_string(),
+        });
     }
     input
 }
+
+#[cfg(test)]
+#[path = "session_runner_gateway_tests.rs"]
+mod gateway_tests;
 
 #[cfg(test)]
 mod tests {
@@ -523,9 +530,10 @@ mod tests {
 
         let input = with_channel_marker(input, Some(&channel));
 
+        assert_eq!(input.input, "你好");
         assert_eq!(
-            input.input,
-            "[channel=qq gateway=qq-bot target=group]\n\n你好"
+            input.extra_system_prompt.as_deref(),
+            Some("[channel=qq gateway=qq-bot target=group]")
         );
     }
 

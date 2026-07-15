@@ -42,6 +42,8 @@ pub(crate) enum GatewayCommand {
     OnebotServer(OneBotServerArgs),
     WeixinLogin(WeixinLoginArgs),
     WeixinServer(WeixinServerArgs),
+    #[command(hide = true)]
+    Scheduler,
 }
 
 #[derive(Debug, Args)]
@@ -195,6 +197,10 @@ pub(crate) async fn run_gateway(paths: &MiyuPaths, args: GatewayArgs) -> Result<
     let responses = match args.command {
         GatewayCommand::Start(_args) => {
             run_configured_gateways(paths, verbose).await?;
+            return Ok(());
+        }
+        GatewayCommand::Scheduler => {
+            crate::cron::run_scheduler(paths.clone()).await?;
             return Ok(());
         }
         GatewayCommand::WecomWebhook(args) => {

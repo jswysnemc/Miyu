@@ -10,6 +10,7 @@ use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChanne
 use crate::gateways::command_intercept::handle_gateway_command;
 use crate::gateways::message::OutboundMessage;
 use crate::gateways::qq_official::{QqOfficialClient, QqTargetKind};
+use crate::gateways::session::ensure_gateway_session;
 use crate::paths::MiyuPaths;
 use crate::state::StateStore;
 use anyhow::{bail, Result};
@@ -294,10 +295,12 @@ impl QqBotProcessor {
         let channel = crate::runner::ChannelSubmission::new(context.channel())
             .with_inbound_marker(context.inbound_marker())
             .with_extra_loaded_tool("send_channel_message");
+        let session_id = ensure_gateway_session(&self.paths, context)?;
         let submission = crate::runner::RunnerSubmission::user_input(
             crate::runner::SubmissionSource::Gateway,
             user_input,
         )
+        .with_session_id(session_id)
         .with_channel(channel);
         let output = run_gateway_submission(&self.paths, config, registry, submission).await?;
         let Some(completion) = output.completion else {

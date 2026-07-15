@@ -1,3 +1,4 @@
+mod gateway_job;
 mod repository;
 mod scheduler;
 mod tool;

@@ -3,7 +3,7 @@ use crate::paths::MiyuPaths;
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "channel")]
@@ -91,6 +91,20 @@ impl ChannelContext {
             }
         }
     }
+
+    /// 返回当前渠道对应的系统提示词。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 渠道系统提示词
+    pub(crate) fn system_prompt(&self) -> &'static str {
+        match self {
+            Self::Qq { .. } => super::qq_bot::prompt::channel_prompt(),
+            Self::Weixin { .. } => super::weixin_bot::prompt::channel_prompt(),
+        }
+    }
 }
 
 /// 保存最近渠道上下文。
@@ -132,6 +146,54 @@ pub(crate) fn load_latest_channel_context(
 ) -> Result<Option<ChannelContext>> {
     let contexts = load_context_map(paths)?;
     Ok(contexts.get(channel.trim()).cloned())
+}
+
+/// 保存指定网关会话的渠道上下文。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 网关工作区
+/// - `session_id`: 网关会话标识
+/// - `context`: 渠道上下文
+///
+/// 返回:
+/// - 保存是否成功
+pub(crate) fn save_session_channel_context(
+    paths: &MiyuPaths,
+    workspace_path: &Path,
+    session_id: &str,
+    context: &ChannelContext,
+) -> Result<()> {
+    let (_, state_dir) =
+        crate::state::state_dir_for_workspace_session(paths, workspace_path, session_id)?;
+    std::fs::write(
+        state_dir.join("channel-context.json"),
+        format!("{}\n", serde_json::to_string_pretty(context)?),
+    )?;
+    Ok(())
+}
+
+/// 读取指定网关会话的渠道上下文。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `workspace_path`: 网关工作区
+/// - `session_id`: 网关会话标识
+///
+/// 返回:
+/// - 渠道上下文，会话尚未绑定时返回空
+pub(crate) fn load_session_channel_context(
+    paths: &MiyuPaths,
+    workspace_path: &Path,
+    session_id: &str,
+) -> Result<Option<ChannelContext>> {
+    let (_, state_dir) =
+        crate::state::state_dir_for_workspace_session(paths, workspace_path, session_id)?;
+    let file = state_dir.join("channel-context.json");
+    if !file.exists() {
+        return Ok(None);
+    }
+    Ok(Some(serde_json::from_slice(&std::fs::read(file)?)?))
 }
 
 /// 读取所有最近渠道上下文。

@@ -1,5 +1,5 @@
-mod channel_context;
-mod channel_tools;
+pub(crate) mod channel_context;
+pub(crate) mod channel_tools;
 pub(crate) mod cli;
 mod command_intercept;
 pub(crate) mod manager;
@@ -12,6 +12,8 @@ pub(crate) mod process_control;
 mod process_store;
 mod qq_bot;
 mod qq_official;
+mod session;
 mod supervisor;
 mod wecom_webhook;
 pub(crate) mod weixin_bot;
+pub(crate) mod workspace;

@@ -88,6 +88,77 @@ impl RunCheckpointStore {
         self.save_locked(&records)
     }
 
+    /// 将运行标记为中断并保存输入恢复信息。
+    ///
+    /// 参数:
+    /// - `run_id`: 运行标识
+    /// - `discard_user_turn`: 是否撤销用户气泡
+    /// - `restore_input`: 可选待恢复输入
+    ///
+    /// 返回:
+    /// - 更新是否成功
+    pub(crate) fn update_interruption(
+        &self,
+        run_id: &str,
+        discard_user_turn: bool,
+        restore_input: Option<String>,
+    ) -> Result<()> {
+        let mut records = self
+            .records
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        if let Some(record) = records
+            .iter_mut()
+            .find(|record| record.info.run_id == run_id)
+        {
+            record.status = RunCheckpointStatus::Interrupted;
+            record.info.status = RunCheckpointStatus::Interrupted;
+            record.info.discard_user_turn = discard_user_turn;
+            record.info.restore_input = restore_input;
+            record.updated_at = chrono::Utc::now().to_rfc3339();
+        }
+        self.save_locked(&records)
+    }
+
+    /// 读取并消费指定会话的无回复中断恢复输入。
+    ///
+    /// 参数:
+    /// - `workspace_id`: 工作区标识
+    /// - `session_id`: 会话标识
+    ///
+    /// 返回:
+    /// - 待恢复运行信息
+    pub(crate) fn take_interruption_recovery(
+        &self,
+        workspace_id: &str,
+        session_id: &str,
+    ) -> Result<Option<ActiveRunInfo>> {
+        let mut records = self
+            .records
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let recovery = records
+            .iter_mut()
+            .rev()
+            .find(|record| {
+                record.info.workspace_id == workspace_id
+                    && record.info.session_id == session_id
+                    && record.info.discard_user_turn
+                    && record.info.restore_input.is_some()
+            })
+            .map(|record| {
+                let recovery = record.info.clone();
+                record.info.discard_user_turn = false;
+                record.info.restore_input = None;
+                record.updated_at = chrono::Utc::now().to_rfc3339();
+                recovery
+            });
+        if recovery.is_some() {
+            self.save_locked(&records)?;
+        }
+        Ok(recovery)
+    }
+
     /// 返回指定运行检查点。
     pub(crate) fn get(&self, run_id: &str) -> Option<RunCheckpoint> {
         self.records
@@ -145,5 +216,83 @@ impl RunCheckpointStore {
         std::fs::write(temp.path(), serde_json::to_vec_pretty(records)?)?;
         temp.persist(&self.path)?;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    /// 创建运行检查点测试路径。
+    fn test_paths(root: PathBuf) -> MiyuPaths {
+        MiyuPaths {
+            config_dir: root.join("config"),
+            config_file: root.join("config/config.jsonc"),
+            secrets_file: root.join("config/secrets.jsonc"),
+            skills_dir: root.join("config/skills"),
+            data_dir: root.join("data"),
+            cache_dir: root.join("cache"),
+            state_dir: root.join("state"),
+            pictures_dir: root.join("pictures"),
+            fish_hook_file: root.join("fish/miyu.fish"),
+            bash_hook_file: root.join("shell/bash-hook.sh"),
+            zsh_hook_file: root.join("shell/zsh-hook.zsh"),
+            powershell_hook_file: root.join("shell/powershell-hook.ps1"),
+        }
+    }
+
+    #[test]
+    /// 验证服务重启后的无回复输入只能消费一次。
+    fn interruption_recovery_is_consumed_once() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = RunCheckpointStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+        let info = ActiveRunInfo {
+            run_id: "run-1".to_string(),
+            workspace_id: "workspace".to_string(),
+            session_id: "session".to_string(),
+            input: "edit me".to_string(),
+            image_urls: Vec::new(),
+            status: RunCheckpointStatus::Running,
+            discard_user_turn: false,
+            restore_input: None,
+        };
+        store
+            .upsert(RunCheckpoint {
+                info: info.clone(),
+                workspace: WorkspaceInfo {
+                    id: info.workspace_id.clone(),
+                    name: "workspace".to_string(),
+                    path: temp.path().display().to_string(),
+                    last_opened_at: String::new(),
+                },
+                request: StartRunRequest {
+                    session_id: info.session_id.clone(),
+                    input: info.input.clone(),
+                    agent_id: None,
+                    image_url: None,
+                    image_urls: Vec::new(),
+                    mode: None,
+                    provider_id: None,
+                    model: None,
+                    thinking_level: None,
+                },
+                status: RunCheckpointStatus::Running,
+                updated_at: String::new(),
+            })
+            .unwrap();
+        store
+            .update_interruption("run-1", true, Some("edit me".to_string()))
+            .unwrap();
+
+        let first = store
+            .take_interruption_recovery("workspace", "session")
+            .unwrap();
+        let second = store
+            .take_interruption_recovery("workspace", "session")
+            .unwrap();
+
+        assert_eq!(first.unwrap().restore_input.as_deref(), Some("edit me"));
+        assert!(second.is_none());
     }
 }

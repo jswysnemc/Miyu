@@ -13,6 +13,7 @@ mod sessions;
 pub(crate) mod tool_history;
 mod turns;
 mod usage;
+pub(crate) mod worktree_undo;
 
 use crate::llm::Usage;
 use crate::paths::MiyuPaths;
@@ -36,8 +37,9 @@ pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
 pub use session_timeline::{SessionTimelineTurn, TimelinePermissionDecision};
 pub use sessions::{
     active_session_id_for_workspace, active_state_dir, create_session, delete_session,
-    delete_sessions, ensure_active_session as active_session, list_sessions,
-    list_sessions_for_workspace, rename_session, switch_session, workspace_id_for_path,
+    delete_sessions, ensure_active_session as active_session, ensure_workspace_session,
+    list_sessions, list_sessions_for_workspace, rename_session, state_dir_for_workspace_session,
+    switch_session, workspace_id_for_path,
 };
 #[allow(unused_imports)]
 pub use tool_history::{ToolCallStatus, ToolHistorySummary};
@@ -45,6 +47,13 @@ pub use tool_history::{ToolCallStatus, ToolHistorySummary};
 pub use turns::TurnStatus;
 pub use turns::{turns_to_entries, ConversationDb, StoredConversationEntry, Turn};
 pub use usage::UsageSnapshot;
+/// 撤销最后一轮对话及其工作树修改后的结果。
+#[derive(Debug, Clone)]
+pub struct UndoOutcome {
+    pub removed: usize,
+    pub prompt: Option<String>,
+    pub worktree_restored: bool,
+}
 
 #[derive(Debug, Clone)]
 pub struct StateStore {
@@ -198,6 +207,8 @@ impl StateStore {
     ///
     /// 参数:
     /// - `turn_id`: 当前轮唯一标识
+    /// - `content`: 已生成的部分助手正文
+    /// - `reasoning`: 可选的部分推理内容
     /// - `user_content`: 用户输入
     ///
     /// 返回:
@@ -237,10 +248,30 @@ impl StateStore {
     ///
     /// 返回:
     /// - 写入是否成功
-    pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
-        self.conv_db.interrupt_turn(turn_id)?;
+    pub fn interrupt_turn(
+        &self,
+        turn_id: &str,
+        content: &str,
+        reasoning: Option<&str>,
+    ) -> Result<()> {
+        self.conv_db.interrupt_turn(turn_id, content, reasoning)?;
         self.settle_pending_tool_calls_for_turns(&[turn_id.to_string()])?;
         Ok(())
+    }
+
+    /// 取消尚未产生助手正文的轮次。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    ///
+    /// 返回:
+    /// - 是否删除了轮次
+    pub fn cancel_turn(&self, turn_id: &str) -> Result<bool> {
+        let cancelled = self.conv_db.cancel_turn(turn_id)?;
+        if cancelled {
+            worktree_undo::discard_turn_snapshot(self, turn_id)?;
+        }
+        Ok(cancelled)
     }
 
     /// 附加工具报告上下文。
@@ -279,7 +310,7 @@ impl StateStore {
                 Some(turn_id),
                 FailureKind::StaleRunningTurn,
                 RecoveryStatus::Resolved,
-                "启动时发现运行中轮次，已标记为中断",
+                "启动时发现运行中轮次，已按中断语义恢复",
                 0,
                 0,
                 0,
@@ -328,6 +359,21 @@ impl StateStore {
     /// - 旧消息入口视图
     pub fn load_conversation(&self) -> Result<Vec<StoredConversationEntry>> {
         Ok(turns_to_entries(self.conv_db.load_turns()?))
+    }
+
+    /// 判断最后一轮是否为指定输入对应的部分中断回复。
+    ///
+    /// 参数:
+    /// - `input`: 本轮用户输入
+    ///
+    /// 返回:
+    /// - 最后一轮匹配且包含部分助手正文时返回 true
+    pub(crate) fn latest_interrupted_turn_has_content(&self, input: &str) -> Result<bool> {
+        Ok(self.conv_db.load_turns()?.last().is_some_and(|turn| {
+            turn.status == turns::TurnStatus::Interrupted
+                && turn.user_content.trim() == input.trim()
+                && !turn.assistant_content.trim().is_empty()
+        }))
     }
 
     /// 读取完整对话轮次。
@@ -401,8 +447,21 @@ impl StateStore {
     ///
     /// 返回:
     /// - 删除轮次数量和被撤销的用户输入
-    pub fn undo_last_turn(&self) -> Result<(usize, Option<String>)> {
-        self.conv_db.undo_last_turn()
+    pub fn undo_last_turn(&self) -> Result<UndoOutcome> {
+        let Some((turn_id, _)) = self.conv_db.last_turn_identity()? else {
+            return Ok(UndoOutcome {
+                removed: 0,
+                prompt: None,
+                worktree_restored: false,
+            });
+        };
+        let worktree = worktree_undo::restore_latest_snapshot(&self.state_dir, &turn_id)?;
+        let (removed, prompt) = self.conv_db.undo_last_turn()?;
+        Ok(UndoOutcome {
+            removed,
+            prompt,
+            worktree_restored: worktree.restored,
+        })
     }
 
     /// 累加用量统计。

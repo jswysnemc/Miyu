@@ -41,14 +41,13 @@ fn turn_lifecycle() {
 }
 
 #[test]
-fn marks_running_turns_as_interrupted() {
+/// 验证陈旧运行轮次在没有助手正文时会删除用户轮次。
+fn removes_stale_running_turn_without_assistant_content() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
     store.start_turn("turn_1", "old task").unwrap();
     assert!(store.mark_interrupted_turn_if_needed().unwrap());
-    let turns = store.load_turns().unwrap();
-    assert_eq!(turns[0].status, TurnStatus::Interrupted);
-    assert!(turns[0].assistant_content.contains("被中断"));
+    assert!(store.load_turns().unwrap().is_empty());
     assert!(!store.mark_interrupted_turn_if_needed().unwrap());
 }
 
@@ -61,10 +60,43 @@ fn undo_removes_last_turn() {
     store.start_turn("turn_2", "bye").unwrap();
     store.complete_turn("turn_2", "goodbye", None).unwrap();
 
-    let (removed, prompt) = store.undo_last_turn().unwrap();
-    assert_eq!(removed, 1);
-    assert_eq!(prompt.as_deref(), Some("bye"));
+    let outcome = store.undo_last_turn().unwrap();
+    assert_eq!(outcome.removed, 1);
+    assert_eq!(outcome.prompt.as_deref(), Some("bye"));
     assert_eq!(store.load_turns().unwrap().len(), 1);
+}
+
+#[test]
+/// 验证无助手正文的主动中断会删除用户轮次。
+fn interruption_without_assistant_content_removes_user_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    store.start_turn("turn_1", "edit me").unwrap();
+    let guard = PendingTurnGuard::new(store.clone(), "turn_1".to_string());
+
+    drop(guard);
+
+    assert!(store.load_turns().unwrap().is_empty());
+}
+
+#[test]
+/// 验证部分助手正文会以中断状态进入后续上下文。
+fn interruption_with_partial_content_preserves_assistant_context() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    store.start_turn("turn_1", "question").unwrap();
+    let mut guard = PendingTurnGuard::new(store.clone(), "turn_1".to_string());
+    guard.append_chunk(crate::llm::ChatStreamKind::Content, "partial answer");
+
+    drop(guard);
+
+    let turns = store.load_turns().unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(turns[0].assistant_content, "partial answer");
+    let conversation = store.load_conversation().unwrap();
+    assert_eq!(conversation.len(), 2);
+    assert_eq!(conversation[1].content, "partial answer");
 }
 
 #[test]
@@ -344,7 +376,7 @@ fn stale_turn_recovery_writes_recovery_record() {
     let turns = store.load_turns().unwrap();
 
     assert_eq!(recovered, 1);
-    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert!(turns.is_empty());
     assert_eq!(recovery.stale_turns_recovered, 1);
     assert_eq!(
         recovery.latest.as_ref().unwrap().kind,

@@ -1,10 +1,13 @@
 use super::StateStore;
+use crate::llm::ChatStreamKind;
 use anyhow::Result;
 
 pub struct PendingTurnGuard {
     state: StateStore,
     turn_id: String,
     completed: bool,
+    partial_content: String,
+    partial_reasoning: String,
 }
 
 impl PendingTurnGuard {
@@ -21,6 +24,23 @@ impl PendingTurnGuard {
             state,
             turn_id,
             completed: false,
+            partial_content: String::new(),
+            partial_reasoning: String::new(),
+        }
+    }
+
+    /// 累积已经发送给用户的流式助手内容。
+    ///
+    /// 参数:
+    /// - `kind`: 流式内容类型
+    /// - `text`: 本次增量文本
+    ///
+    /// 返回:
+    /// - 无
+    pub fn append_chunk(&mut self, kind: ChatStreamKind, text: &str) {
+        match kind {
+            ChatStreamKind::Content => self.partial_content.push_str(text),
+            ChatStreamKind::Reasoning => self.partial_reasoning.push_str(text),
         }
     }
 
@@ -46,17 +66,32 @@ impl PendingTurnGuard {
     #[allow(dead_code)]
     pub fn interrupt(&mut self) -> Result<()> {
         if !self.completed {
-            self.state.interrupt_turn(&self.turn_id)?;
+            self.persist_interruption()?;
             self.completed = true;
         }
         Ok(())
     }
 }
 
+impl PendingTurnGuard {
+    /// 按是否存在助手正文决定删除用户轮次或保留部分回复。
+    fn persist_interruption(&self) -> Result<()> {
+        if self.partial_content.trim().is_empty() {
+            self.state.cancel_turn(&self.turn_id)?;
+            return Ok(());
+        }
+        self.state.interrupt_turn(
+            &self.turn_id,
+            &self.partial_content,
+            (!self.partial_reasoning.trim().is_empty()).then_some(self.partial_reasoning.as_str()),
+        )
+    }
+}
+
 impl Drop for PendingTurnGuard {
     fn drop(&mut self) {
         if !self.completed {
-            let _ = self.state.interrupt_turn(&self.turn_id);
+            let _ = self.persist_interruption();
         }
     }
 }

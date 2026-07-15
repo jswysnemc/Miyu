@@ -123,10 +123,12 @@ fn turns_to_messages(turns: &[Turn]) -> Vec<ChatMessage> {
     let mut messages = Vec::with_capacity(turns.len() * 3);
     for turn in turns {
         messages.push(ChatMessage::plain("user", turn.user_content.clone()));
-        messages.push(ChatMessage::plain(
-            "assistant",
-            turn.assistant_content.clone(),
-        ));
+        if !turn.assistant_content.trim().is_empty() {
+            messages.push(ChatMessage::plain(
+                "assistant",
+                turn.assistant_content.clone(),
+            ));
+        }
         messages.extend(project_legacy_tool_report_messages(&turn.tool_reports));
     }
     messages

@@ -8,6 +8,7 @@ use crate::config::AppConfig;
 use crate::gateways::channel_context::{save_latest_channel_context, ChannelContext};
 use crate::gateways::channel_tools::{register_channel_message_tool, ActiveChannelTarget};
 use crate::gateways::command_intercept::handle_gateway_command;
+use crate::gateways::session::ensure_gateway_session;
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use base64::Engine;
@@ -280,10 +281,12 @@ async fn run_agent(
     let channel = crate::runner::ChannelSubmission::new(context.channel())
         .with_inbound_marker(context.inbound_marker())
         .with_extra_loaded_tool("send_channel_message");
+    let session_id = ensure_gateway_session(paths, context)?;
     let submission = crate::runner::RunnerSubmission::user_input(
         crate::runner::SubmissionSource::Gateway,
         user_input,
     )
+    .with_session_id(session_id)
     .with_channel(channel);
     let output = run_gateway_submission(paths, config, registry, submission).await?;
     let Some(completion) = output.completion else {

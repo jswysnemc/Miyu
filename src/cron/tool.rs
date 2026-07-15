@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 
 /// 注册仅供 Gateway Agent 使用的定时任务工具。
 pub(crate) fn register(registry: &mut ToolRegistry, paths: MiyuPaths, session_id: String) {
-    registry.register(ToolSpec::new("cron", "Manage durable Gateway scheduled tasks. The scheduler runs only inside `miyu gateway start`.", json!({
+    registry.register(ToolSpec::new("cron", "Manage durable Gateway scheduled tasks. Managed gateway processes keep a dedicated scheduler running.", json!({
         "type":"object","properties":{
             "action":{"type":"string","enum":["list","create","remove"]},
             "id":{"type":"string"},"name":{"type":"string"},"prompt":{"type":"string"},

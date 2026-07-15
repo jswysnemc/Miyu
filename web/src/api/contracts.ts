@@ -66,6 +66,12 @@ export type WorkspaceSessions = {
   sessions: Session[];
 };
 
+export type UndoSessionResult = {
+  removed: number;
+  prompt?: string | null;
+  worktree_restored: boolean;
+};
+
 export type HistoryEntry = {
   timestamp: string;
   role: string;
@@ -319,6 +325,8 @@ export type RunInfo = {
   input?: string;
   image_urls?: string[];
   status?: "queued" | "running" | "completed" | "interrupted" | "failed";
+  discard_user_turn?: boolean;
+  restore_input?: string | null;
 };
 
 export type ActiveRunsResponse = {

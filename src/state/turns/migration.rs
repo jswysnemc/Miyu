@@ -150,25 +150,10 @@ impl ConversationDb {
     /// - 写入轮次数量
     fn insert_migrated_interrupted(
         &self,
-        index: usize,
-        user_timestamp: &str,
-        user_content: &str,
+        _index: usize,
+        _user_timestamp: &str,
+        _user_content: &str,
     ) -> Result<usize> {
-        let now = Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
-        self.insert_turn_locked(
-            &conn,
-            InsertTurn {
-                turn_id: &format!("migrated_{index}"),
-                user_content,
-                user_timestamp,
-                assistant_content: super::interrupted_text(),
-                assistant_reasoning: None,
-                assistant_timestamp: Some(&now),
-                status: TurnStatus::Interrupted,
-                tool_reports: &[],
-            },
-        )?;
-        Ok(1)
+        Ok(0)
     }
 }

@@ -1,4 +1,4 @@
-import { ArrowRight, AtSign, Bot, BriefcaseBusiness, GitBranch, ListTree, Paperclip, ShieldCheck, Square, SquareTerminal } from "lucide-react";
+import { ArrowRight, AtSign, Bot, BriefcaseBusiness, GitBranch, ListTree, Paperclip, ShieldCheck, Square, SquareTerminal, Undo2 } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { RunMode, RunModelSelection, ThinkingLevel } from "../../api/contracts";
@@ -34,6 +34,7 @@ type ChatComposerProps = {
   running: boolean;
   runStatus: LiveRunState["status"];
   sessionAvailable: boolean;
+  undoAvailable: boolean;
   agentChoices: AgentChoice[];
   agentSelection: AgentChoice | null;
   agentLoading: boolean;
@@ -46,6 +47,7 @@ type ChatComposerProps = {
   onModelSelect: (selection: RunModelSelection) => void;
   onSubmit: () => void;
   onStop: () => void;
+  onUndo: () => void;
   onAgentSelect: (id: string) => void;
 };
 
@@ -99,6 +101,7 @@ export function ChatComposer(props: ChatComposerProps) {
         <AgentSelector choices={props.agentChoices} selection={props.agentSelection} loading={props.agentLoading} disabled={props.running} onSelect={props.onAgentSelect} />
         <TodoMarkdownView sessionId={props.sessionId} compact />
         <PermissionAuditDialog sessionId={props.sessionId} />
+        <Button className="composer-rail-button" onClick={props.onUndo} disabled={!props.undoAvailable || props.running} title="撤销最后一轮及其工作树修改" aria-label="撤销最后一轮"><Undo2 size={14} /></Button>
         <div className="composer-mode" aria-label="运行模式">
           <Button className={props.mode === "yolo" ? "active" : ""} onClick={() => props.onModeChange("yolo")} disabled={props.running} title="工作模式"><BriefcaseBusiness size={13} /><span>工作</span></Button>
           <Button className={props.mode === "audited" ? "active" : ""} onClick={() => props.onModeChange("audited")} disabled={props.running} title="权限审计与工作区沙盒"><ShieldCheck size={13} /><span>审计</span></Button>

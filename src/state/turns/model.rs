@@ -1,8 +1,5 @@
 use serde::{Deserialize, Serialize};
 
-const PENDING_PLACEHOLDER: &str = "此轮响应正在由另一条对话线处理...";
-const INTERRUPTED_TEXT: &str = "此轮响应被中断，但是除非用户重新要求否则不要重新执行此轮对话。";
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnStatus {
     Running,
@@ -66,16 +63,9 @@ pub struct StoredConversationEntry {
 ///
 /// 返回:
 /// - 运行中占位文本
+#[cfg(test)]
 pub fn pending_placeholder() -> &'static str {
-    PENDING_PLACEHOLDER
-}
-
-/// 返回中断轮次提示文本。
-///
-/// 返回:
-/// - 中断轮次提示文本
-pub fn interrupted_text() -> &'static str {
-    INTERRUPTED_TEXT
+    ""
 }
 
 /// 将轮次列表转换为旧消息入口视图。
@@ -95,12 +85,14 @@ pub fn turns_to_entries(turns: Vec<Turn>) -> Vec<StoredConversationEntry> {
             content: turn.user_content,
             reasoning: None,
         });
-        entries.push(StoredConversationEntry {
-            timestamp: assistant_timestamp.clone(),
-            role: "assistant".to_string(),
-            content: turn.assistant_content,
-            reasoning: turn.assistant_reasoning,
-        });
+        if !turn.assistant_content.is_empty() || turn.assistant_reasoning.is_some() {
+            entries.push(StoredConversationEntry {
+                timestamp: assistant_timestamp.clone(),
+                role: "assistant".to_string(),
+                content: turn.assistant_content,
+                reasoning: turn.assistant_reasoning,
+            });
+        }
         for report in turn.tool_reports {
             entries.push(StoredConversationEntry {
                 timestamp: assistant_timestamp.clone(),

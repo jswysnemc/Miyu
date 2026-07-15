@@ -266,12 +266,13 @@ pub(super) async fn run_repl(
             continue;
         }
         if input.eq_ignore_ascii_case("/undo") {
-            let (removed, prompt) = state.undo_last_turn()?;
+            let outcome = state.undo_last_turn()?;
             runtime.record_meta(format!(
-                "{}: {removed}",
-                t("undone messages", "已撤销消息数")
+                "{}: {}",
+                t("undone messages", "已撤销消息数"),
+                outcome.removed
             ))?;
-            prefill = prompt;
+            prefill = outcome.prompt;
             continue;
         }
         if input.eq_ignore_ascii_case("/clear") {
@@ -382,7 +383,9 @@ pub(super) async fn run_repl(
         };
         runtime.finish_stream()?;
         if interrupted {
-            prefill = Some(submitted_input);
+            if !state.latest_interrupted_turn_has_content(&submitted_input)? {
+                prefill = Some(submitted_input);
+            }
             continue;
         }
         if let Err(err) = chat_result {

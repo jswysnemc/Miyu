@@ -1,53 +1,9 @@
 use super::model::{SessionInfo, DEFAULT_SESSION_ID};
-use super::workspace::{current_workspace_scope, workspace_scope_for_path, WorkspaceScope};
+use super::workspace::{current_workspace_scope, WorkspaceScope};
 use crate::paths::MiyuPaths;
 use anyhow::{bail, Context, Result};
 use chrono::Utc;
 use std::path::{Path, PathBuf};
-
-/// 读取会话列表。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-///
-/// 返回:
-/// - 会话列表
-pub fn list_sessions(paths: &MiyuPaths) -> Result<Vec<SessionInfo>> {
-    let scope = current_session_scope(paths)?;
-    ensure_default_session_for_base(&scope.state_dir)
-}
-
-/// 读取指定工作区的会话列表。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `workspace_path`: 工作区目录
-///
-/// 返回:
-/// - 指定工作区的会话列表
-pub fn list_sessions_for_workspace(
-    paths: &MiyuPaths,
-    workspace_path: &Path,
-) -> Result<Vec<SessionInfo>> {
-    let scope = workspace_scope_for_path(paths, workspace_path);
-    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
-    ensure_default_session_for_base(&scope.state_dir)
-}
-
-/// 读取指定工作区的当前会话标识。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `workspace_path`: 工作区目录
-///
-/// 返回:
-/// - 当前会话标识
-pub fn active_session_id_for_workspace(paths: &MiyuPaths, workspace_path: &Path) -> Result<String> {
-    let scope = workspace_scope_for_path(paths, workspace_path);
-    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
-    ensure_default_session_for_base(&scope.state_dir)?;
-    read_current_session_id_from_base(&scope.state_dir)
-}
 
 /// 创建新会话并设为当前会话。
 ///
@@ -236,32 +192,6 @@ pub fn state_dir_for_session(paths: &MiyuPaths, session_id: &str) -> Result<Path
     Ok(state_dir)
 }
 
-/// 返回指定工作区和会话的状态目录。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `workspace_path`: 工作区目录
-/// - `session_id`: 会话 ID
-///
-/// 返回:
-/// - 指定会话状态目录
-pub fn state_dir_for_workspace_session(
-    paths: &MiyuPaths,
-    workspace_path: &Path,
-    session_id: &str,
-) -> Result<(PathBuf, PathBuf)> {
-    let scope = workspace_scope_for_path(paths, workspace_path);
-    migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
-    let session_id = session_id.trim();
-    ensure_default_session_for_base(&scope.state_dir)?
-        .into_iter()
-        .find(|session| session.id == session_id)
-        .with_context(|| format!("session not found: {session_id}"))?;
-    let state_dir = session_state_dir(&scope.state_dir, session_id);
-    std::fs::create_dir_all(&state_dir)?;
-    Ok((scope.state_dir, state_dir))
-}
-
 /// 返回当前工作区会话作用域目录。
 ///
 /// 参数:
@@ -280,7 +210,7 @@ pub fn session_scope_dir(paths: &MiyuPaths) -> Result<PathBuf> {
 ///
 /// 返回:
 /// - 当前工作区会话作用域
-fn current_session_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
+pub(super) fn current_session_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
     let scope = current_workspace_scope(paths)?;
     migrate_legacy_sessions_to_workspace(paths, &scope.state_dir)?;
     Ok(scope)
@@ -294,7 +224,7 @@ fn current_session_scope(paths: &MiyuPaths) -> Result<WorkspaceScope> {
 ///
 /// 返回:
 /// - 迁移是否成功
-fn migrate_legacy_sessions_to_workspace(
+pub(super) fn migrate_legacy_sessions_to_workspace(
     paths: &MiyuPaths,
     workspace_state_dir: &Path,
 ) -> Result<()> {
@@ -459,7 +389,7 @@ pub fn touch_session_with_message(
 ///
 /// 返回:
 /// - 会话列表
-fn ensure_default_session_for_base(base_state_dir: &Path) -> Result<Vec<SessionInfo>> {
+pub(super) fn ensure_default_session_for_base(base_state_dir: &Path) -> Result<Vec<SessionInfo>> {
     std::fs::create_dir_all(base_state_dir)?;
     let mut sessions = read_sessions_from_base(base_state_dir)?;
     if !sessions
@@ -481,7 +411,7 @@ fn ensure_default_session_for_base(base_state_dir: &Path) -> Result<Vec<SessionI
 ///
 /// 返回:
 /// - 当前会话 ID
-fn read_current_session_id_from_base(base_state_dir: &Path) -> Result<String> {
+pub(super) fn read_current_session_id_from_base(base_state_dir: &Path) -> Result<String> {
     let file = current_session_file(base_state_dir);
     if !file.exists() {
         write_current_session_id_to_base(base_state_dir, DEFAULT_SESSION_ID)?;
@@ -538,7 +468,7 @@ fn read_sessions_from_base(base_state_dir: &Path) -> Result<Vec<SessionInfo>> {
 ///
 /// 返回:
 /// - 保存是否成功
-fn save_sessions_to_base(base_state_dir: &Path, sessions: &[SessionInfo]) -> Result<()> {
+pub(super) fn save_sessions_to_base(base_state_dir: &Path, sessions: &[SessionInfo]) -> Result<()> {
     let file = sessions_file(base_state_dir);
     if let Some(parent) = file.parent() {
         std::fs::create_dir_all(parent)?;
@@ -580,7 +510,7 @@ fn current_session_file(base_state_dir: &Path) -> PathBuf {
 ///
 /// 返回:
 /// - 会话状态目录
-fn session_state_dir(base_state_dir: &Path, session_id: &str) -> PathBuf {
+pub(super) fn session_state_dir(base_state_dir: &Path, session_id: &str) -> PathBuf {
     base_state_dir
         .join("data")
         .join(sanitize_session_id(session_id))
@@ -608,7 +538,7 @@ fn new_session_id() -> String {
 ///
 /// 返回:
 /// - 安全会话 ID
-fn sanitize_session_id(session_id: &str) -> String {
+pub(super) fn sanitize_session_id(session_id: &str) -> String {
     let value = session_id
         .chars()
         .filter(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
@@ -650,7 +580,7 @@ fn title_from_message(message: &str, fallback: &str) -> String {
 ///
 /// 返回:
 /// - 无
-fn sort_sessions(sessions: &mut [SessionInfo]) {
+pub(super) fn sort_sessions(sessions: &mut [SessionInfo]) {
     sessions.sort_by(|a, b| {
         if a.id == DEFAULT_SESSION_ID {
             std::cmp::Ordering::Greater
@@ -665,6 +595,7 @@ fn sort_sessions(sessions: &mut [SessionInfo]) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::state::sessions::workspace_repository::list_sessions;
 
     fn test_paths(root: PathBuf) -> MiyuPaths {
         MiyuPaths {

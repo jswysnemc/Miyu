@@ -107,4 +107,19 @@ describe("runEventReducer", () => {
       })
     ]);
   });
+
+  it("keeps partial assistant content when a run is interrupted", () => {
+    const content = runEventReducer(initialRunState, {
+      type: "event",
+      event: event("message.content.delta", { text: "partial" })
+    });
+    const interrupted = runEventReducer(content, {
+      type: "event",
+      event: event("run.interrupted", {})
+    });
+
+    expect(interrupted.content).toBe("partial");
+    expect(interrupted.completed).toBe(true);
+    expect(interrupted.error).toContain("已保留");
+  });
 });

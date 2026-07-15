@@ -63,6 +63,13 @@ struct BulkDeleteResponse {
 }
 
 #[derive(Serialize)]
+struct UndoSessionResponse {
+    removed: usize,
+    prompt: Option<String>,
+    worktree_restored: bool,
+}
+
+#[derive(Serialize)]
 struct CompactSessionResponse {
     message: String,
 }
@@ -77,6 +84,7 @@ pub(super) fn routes() -> Router<WebAppState> {
         .route("/api/sessions/:id/switch", post(switch))
         .route("/api/sessions/:id/messages", get(messages))
         .route("/api/sessions/:id/timeline", get(timeline))
+        .route("/api/sessions/:id/undo", post(undo))
         .route("/api/sessions/:id/permission-audit", get(permission_audit))
         .route("/api/sessions/:id/compact", post(compact))
 }
@@ -313,6 +321,31 @@ async fn timeline(
     permission_timeline::attach_permission_decisions(&store, &mut timeline)
         .map_err(WebError::from)?;
     Ok(Json(timeline))
+}
+
+/// 撤销指定会话最后一轮及该轮造成的工作树修改。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `id`: 会话标识
+///
+/// 返回:
+/// - 撤销数量、恢复输入和工作树恢复状态
+async fn undo(
+    State(state): State<WebAppState>,
+    Path(id): Path<String>,
+) -> WebResult<Json<UndoSessionResponse>> {
+    reject_session_run(&state, &id).await?;
+    let store = StateStore::for_session(&state.paths, &id)
+        .map_err(|error| WebError::not_found(error.to_string()))?;
+    let outcome = store
+        .undo_last_turn()
+        .map_err(|error| WebError::conflict(error.to_string()))?;
+    Ok(Json(UndoSessionResponse {
+        removed: outcome.removed,
+        prompt: outcome.prompt,
+        worktree_restored: outcome.worktree_restored,
+    }))
 }
 
 /// 活动运行期间仅禁止删除对应会话。

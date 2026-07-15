@@ -116,10 +116,12 @@ fn append_turn_messages(
 /// 返回:
 /// - 无
 fn append_assistant_context_messages(turn: &Turn, messages: &mut Vec<ChatMessage>) {
-    messages.push(ChatMessage::plain(
-        "assistant",
-        turn.assistant_content.clone(),
-    ));
+    if !turn.assistant_content.trim().is_empty() {
+        messages.push(ChatMessage::plain(
+            "assistant",
+            turn.assistant_content.clone(),
+        ));
+    }
     messages.extend(project_legacy_tool_report_messages(&turn.tool_reports));
 }
 

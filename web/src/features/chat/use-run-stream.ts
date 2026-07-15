@@ -37,8 +37,14 @@ type SessionRunsAction =
 
 const initialSessionRunsState: SessionRunsState = { runs: [] };
 
-/** 将运行事件归并到会话内对应的实时消息。 */
-function sessionRunsReducer(state: SessionRunsState, action: SessionRunsAction): SessionRunsState {
+/**
+ * 将运行事件归并到会话内对应的实时消息。
+ *
+ * @param state 当前会话运行集合
+ * @param action 运行附加、启动或事件动作
+ * @returns 更新后的会话运行集合
+ */
+export function sessionRunsReducer(state: SessionRunsState, action: SessionRunsAction): SessionRunsState {
   if (action.type === "reset") return initialSessionRunsState;
   if (action.type === "attach") {
     const known = new Set(state.runs.map((run) => run.runId));
@@ -71,6 +77,9 @@ function sessionRunsReducer(state: SessionRunsState, action: SessionRunsAction):
       }]
     };
   }
+  if (action.event.type === "run.interrupted" && action.event.payload.discard_user_turn === true) {
+    return { runs: state.runs.filter((run) => run.runId !== action.event.run_id) };
+  }
   return {
     runs: state.runs.map((run) => run.runId === action.event.run_id
       ? runEventReducer(run, { type: "event", event: action.event })
@@ -78,14 +87,32 @@ function sessionRunsReducer(state: SessionRunsState, action: SessionRunsAction):
   };
 }
 
-/** 管理一个会话中的活动和排队 Agent 运行。 */
-export function useRunStream(workspaceId: string | undefined, sessionId: string | undefined, onSettled: () => void, onWorkspaceChanged?: () => void) {
+/**
+ * 管理一个会话中的活动和排队 Agent 运行。
+ *
+ * @param workspaceId 当前工作区标识
+ * @param sessionId 当前会话标识
+ * @param onSettled 运行结束回调
+ * @param onWorkspaceChanged 工作区文件变化回调
+ * @param onInterruptedWithoutReply 无回复中断输入恢复回调
+ * @returns 会话运行状态与启动、停止、重置操作
+ */
+export function useRunStream(
+  workspaceId: string | undefined,
+  sessionId: string | undefined,
+  onSettled: () => void,
+  onWorkspaceChanged?: () => void,
+  onInterruptedWithoutReply?: (input: string) => void
+) {
   const [state, dispatch] = useReducer(sessionRunsReducer, initialSessionRunsState);
   const sourcesRef = useRef(new Map<string, EventSource>());
 
   useEffect(() => {
     if (!workspaceId || !sessionId) return;
     let cancelled = false;
+    void api.runs.interruptionRecovery(workspaceId, sessionId).then(({ run }) => {
+      if (!cancelled && run?.restore_input) onInterruptedWithoutReply?.(run.restore_input);
+    });
     void api.runs.active().then(({ runs }) => {
       if (cancelled) return;
       dispatch({
@@ -115,6 +142,9 @@ export function useRunStream(workspaceId: string | undefined, sessionId: string 
       const source = new EventSource(`/api/runs/${runId}/events`);
       const handle = (message: MessageEvent<string>) => {
         const event = JSON.parse(message.data) as WebEvent;
+        if (event.type === "run.interrupted" && event.payload.discard_user_turn === true) {
+          onInterruptedWithoutReply?.(String(event.payload.restore_input ?? ""));
+        }
         dispatch({ type: "event", event });
         if (event.type === "workspace.changed") onWorkspaceChanged?.();
         if (["run.completed", "run.interrupted", "run.failed"].includes(event.type)) {
@@ -126,7 +156,7 @@ export function useRunStream(workspaceId: string | undefined, sessionId: string 
       for (const type of EVENT_TYPES) source.addEventListener(type, handle as EventListener);
       sourcesRef.current.set(runId, source);
     }
-  }, [openRunKey, onSettled, onWorkspaceChanged]);
+  }, [openRunKey, onInterruptedWithoutReply, onSettled, onWorkspaceChanged]);
 
   useEffect(() => () => {
     for (const source of sourcesRef.current.values()) source.close();

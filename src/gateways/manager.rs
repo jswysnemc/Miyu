@@ -9,6 +9,7 @@ use serde_json::json;
 
 const GATEWAY_QQ: &str = "qq";
 const GATEWAY_WEIXIN: &str = "weixin";
+const GATEWAY_SCHEDULER: &str = "scheduler";
 
 #[derive(Debug, Clone, Copy, Eq, PartialEq)]
 pub(crate) enum ManagedGateway {
@@ -92,7 +93,19 @@ pub(crate) async fn gateway_runtime_statuses(
     paths: &MiyuPaths,
     config: &AppConfig,
 ) -> Result<Vec<GatewayRuntimeStatus>> {
-    let records = refresh_gateway_processes(paths)?;
+    let mut records = refresh_gateway_processes(paths)?;
+    let has_running_gateway = managed_gateways().iter().any(|gateway| {
+        records
+            .iter()
+            .any(|record| record.gateway_id == gateway.id() && record.is_running())
+    });
+    let scheduler_running = records
+        .iter()
+        .any(|record| record.gateway_id == GATEWAY_SCHEDULER && record.is_running());
+    if has_running_gateway && !scheduler_running {
+        ensure_scheduler_process(paths, config)?;
+        records = refresh_gateway_processes(paths)?;
+    }
     Ok(managed_gateways()
         .iter()
         .map(|gateway| {
@@ -133,6 +146,7 @@ pub(crate) async fn start_gateway(
         .iter()
         .any(|record| record.gateway_id == gateway.id() && record.is_running())
     {
+        ensure_scheduler_process(paths, config)?;
         return Ok(serde_json::to_string_pretty(&json!({
             "ok": true,
             "already_running": true,
@@ -147,6 +161,7 @@ pub(crate) async fn start_gateway(
         &command,
         &gateway_workspace(paths),
     )?;
+    ensure_scheduler_process(paths, config)?;
     Ok(serde_json::to_string_pretty(&json!({
         "ok": true,
         "gateway": gateway.id(),
@@ -179,7 +194,17 @@ pub(crate) async fn stop_gateway(
         let state = StateStore::new(paths)?;
         state.apply_gateway_connection_close_policy(gateway.id())?;
     }
-    stop_gateway_process(paths, config, gateway.id()).await
+    let stopped = stop_gateway_process(paths, config, gateway.id()).await?;
+    let records = refresh_gateway_processes(paths)?;
+    let has_running_gateway = managed_gateways().iter().any(|managed| {
+        records
+            .iter()
+            .any(|record| record.gateway_id == managed.id() && record.is_running())
+    });
+    if !has_running_gateway {
+        stop_gateway_process(paths, config, GATEWAY_SCHEDULER).await?;
+    }
+    Ok(stopped)
 }
 
 /// 判断网关是否在配置中启用。
@@ -205,9 +230,47 @@ fn gateway_enabled(config: &AppConfig, gateway: ManagedGateway) -> bool {
 /// 返回:
 /// - shell 命令
 fn gateway_command(gateway: ManagedGateway) -> Result<String> {
+    command_for_args(gateway.command_args())
+}
+
+/// 确保网关专属定时调度器独立进程正在运行。
+///
+/// 参数:
+/// - `paths`: Miyu 路径
+/// - `config`: 应用配置
+///
+/// 返回:
+/// - 调度器进程是否可用
+fn ensure_scheduler_process(paths: &MiyuPaths, config: &AppConfig) -> Result<()> {
+    let records = refresh_gateway_processes(paths)?;
+    if records
+        .iter()
+        .any(|record| record.gateway_id == GATEWAY_SCHEDULER && record.is_running())
+    {
+        return Ok(());
+    }
+    let command = command_for_args(&["gateway", "scheduler"])?;
+    spawn_gateway_process(
+        paths,
+        config,
+        GATEWAY_SCHEDULER,
+        &command,
+        &gateway_workspace(paths),
+    )?;
+    Ok(())
+}
+
+/// 组装当前可执行文件及参数对应的 shell 命令。
+///
+/// 参数:
+/// - `args`: 命令参数
+///
+/// 返回:
+/// - shell 命令
+fn command_for_args(args: &[&str]) -> Result<String> {
     let exe = std::env::current_exe().context("failed to resolve current executable")?;
     let mut parts = vec![shell_quote(&exe.display().to_string())];
-    parts.extend(gateway.command_args().iter().map(|arg| shell_quote(arg)));
+    parts.extend(args.iter().map(|arg| shell_quote(arg)));
     Ok(parts.join(" "))
 }
 
@@ -219,7 +282,9 @@ fn gateway_command(gateway: ManagedGateway) -> Result<String> {
 /// 返回:
 /// - 工作目录字符串
 fn gateway_workspace(paths: &MiyuPaths) -> String {
-    paths.data_dir.join("workspace").display().to_string()
+    super::workspace::gateway_workspace_path(paths)
+        .display()
+        .to_string()
 }
 
 /// shell 单引号转义。

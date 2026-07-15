@@ -41,5 +41,14 @@ pub(super) fn open_connection(state_dir: &Path) -> Result<Connection> {
     crate::state::session_memory::schema::create_session_memory_tables(&conn)?;
     crate::state::tool_history::schema::create_tool_history_tables(&conn)?;
     crate::runtime_recovery::schema::create_runtime_recovery_tables(&conn)?;
+    conn.execute_batch(
+        "UPDATE turns
+         SET assistant_content = '', assistant_reasoning = NULL
+         WHERE status = 'interrupted'
+           AND assistant_content IN (
+             '此轮响应正在由另一条对话线处理...',
+             '此轮响应被中断，但是除非用户重新要求否则不要重新执行此轮对话。'
+           );",
+    )?;
     Ok(conn)
 }

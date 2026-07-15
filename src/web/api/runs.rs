@@ -18,11 +18,21 @@ struct EventQuery {
     after: Option<u64>,
 }
 
+#[derive(Deserialize)]
+struct InterruptionRecoveryQuery {
+    workspace_id: String,
+    session_id: String,
+}
+
 /// 返回 Agent 运行路由。
 pub(super) fn routes() -> Router<WebAppState> {
     Router::new()
         .route("/api/runs", post(start))
         .route("/api/runs/active", get(active))
+        .route(
+            "/api/runs/interruption-recovery",
+            get(interruption_recovery),
+        )
         .route("/api/runs/:id", delete(stop))
         .route("/api/runs/:id/events", get(events))
 }
@@ -55,6 +65,25 @@ async fn start(
 async fn active(State(state): State<WebAppState>) -> Json<Value> {
     let runs = state.runs.active_runs().await;
     Json(json!({ "run": runs.first(), "runs": runs }))
+}
+
+/// 读取并消费指定会话的无回复中断恢复输入。
+///
+/// 参数:
+/// - `state`: Web 应用状态
+/// - `query`: 工作区和会话标识
+///
+/// 返回:
+/// - 可选恢复运行信息
+async fn interruption_recovery(
+    State(state): State<WebAppState>,
+    Query(query): Query<InterruptionRecoveryQuery>,
+) -> WebResult<Json<Value>> {
+    let run = state
+        .runs
+        .take_interruption_recovery(&query.workspace_id, &query.session_id)
+        .map_err(WebError::from)?;
+    Ok(Json(json!({ "run": run })))
 }
 
 /// 中断指定运行。

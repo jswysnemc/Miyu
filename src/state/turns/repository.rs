@@ -1,4 +1,4 @@
-use super::model::{interrupted_text, pending_placeholder, Turn, TurnStatus};
+use super::model::{Turn, TurnStatus};
 use super::schema::open_connection;
 use anyhow::Result;
 use chrono::Utc;
@@ -55,6 +55,8 @@ impl ConversationDb {
     ///
     /// 参数:
     /// - `turn_id`: 当前轮唯一标识
+    /// - `content`: 已生成的部分助手正文
+    /// - `reasoning`: 可选的部分推理内容
     /// - `user_content`: 用户输入
     ///
     /// 返回:
@@ -68,7 +70,7 @@ impl ConversationDb {
                 turn_id,
                 user_content,
                 user_timestamp: &now,
-                assistant_content: pending_placeholder(),
+                assistant_content: "",
                 assistant_reasoning: None,
                 assistant_timestamp: None,
                 status: TurnStatus::Running,
@@ -113,18 +115,37 @@ impl ConversationDb {
     ///
     /// 返回:
     /// - 更新是否成功
-    pub fn interrupt_turn(&self, turn_id: &str) -> Result<()> {
+    pub fn interrupt_turn(
+        &self,
+        turn_id: &str,
+        content: &str,
+        reasoning: Option<&str>,
+    ) -> Result<()> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
         conn.execute(
             "UPDATE turns
              SET assistant_content = ?1,
-                 assistant_timestamp = ?2,
+                 assistant_reasoning = ?2,
+                 assistant_timestamp = ?3,
                  status = 'interrupted'
-             WHERE turn_id = ?3 AND status = 'running'",
-            params![interrupted_text(), now, turn_id],
+             WHERE turn_id = ?4 AND status = 'running'",
+            params![content, reasoning, now, turn_id],
         )?;
         Ok(())
+    }
+
+    /// 删除未产生助手正文的运行中轮次及其工具历史。
+    ///
+    /// 参数:
+    /// - `turn_id`: 当前轮唯一标识
+    ///
+    /// 返回:
+    /// - 是否删除了轮次
+    pub fn cancel_turn(&self, turn_id: &str) -> Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let changed = delete_turn_locked(&conn, turn_id, true)?;
+        Ok(changed > 0)
     }
 
     /// 附加当前轮工具报告上下文。
@@ -277,11 +298,28 @@ impl ConversationDb {
             .optional()?;
         match last {
             Some((turn_id, user_content)) => {
-                conn.execute("DELETE FROM turns WHERE turn_id = ?1", params![turn_id])?;
+                delete_turn_locked(&conn, &turn_id, false)?;
                 Ok((1, Some(user_content)))
             }
             None => Ok((0, None)),
         }
+    }
+
+    /// 读取最后一轮标识和用户输入但不修改数据。
+    ///
+    /// 返回:
+    /// - 最后一轮标识和用户输入
+    pub fn last_turn_identity(&self) -> Result<Option<(String, String)>> {
+        Ok(self
+            .conn
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT turn_id,user_content FROM turns ORDER BY seq DESC LIMIT 1",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .optional()?)
     }
 
     /// 恢复所有陈旧运行中轮次为中断状态。
@@ -291,23 +329,36 @@ impl ConversationDb {
     pub fn recover_stale_running_turns(&self) -> Result<Vec<String>> {
         let conn = self.conn.lock().unwrap();
         let now = Utc::now().to_rfc3339();
-        let stale_turn_ids = {
-            let mut stmt = conn.prepare("SELECT turn_id FROM turns WHERE status = 'running'")?;
-            let rows = stmt.query_map([], |row| row.get(0))?;
-            rows.collect::<std::result::Result<Vec<String>, _>>()?
+        let stale_turns = {
+            let mut stmt = conn.prepare(
+                "SELECT turn_id,assistant_content,assistant_reasoning FROM turns WHERE status = 'running'",
+            )?;
+            let rows = stmt.query_map([], |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, Option<String>>(2)?,
+                ))
+            })?;
+            rows.collect::<std::result::Result<Vec<_>, _>>()?
         };
-        if stale_turn_ids.is_empty() {
+        if stale_turns.is_empty() {
             return Ok(Vec::new());
         }
-        conn.execute(
-            "UPDATE turns
-             SET assistant_content = ?1,
-                 assistant_timestamp = ?2,
-                 status = 'interrupted'
-             WHERE status = 'running'",
-            params![interrupted_text(), now],
-        )?;
-        Ok(stale_turn_ids)
+        let mut recovered = Vec::new();
+        for (turn_id, content, reasoning) in stale_turns {
+            recovered.push(turn_id.clone());
+            if content.trim().is_empty() {
+                delete_turn_locked(&conn, &turn_id, true)?;
+                continue;
+            }
+            conn.execute(
+                "UPDATE turns SET assistant_timestamp=?1,status='interrupted' WHERE turn_id=?2",
+                params![now, turn_id],
+            )?;
+            let _ = reasoning;
+        }
+        Ok(recovered)
     }
 
     /// 是否存在运行中轮次。
@@ -352,6 +403,24 @@ impl ConversationDb {
         )?;
         Ok(())
     }
+}
+
+/// 删除指定轮次和关联工具历史。
+fn delete_turn_locked(conn: &Connection, turn_id: &str, running_only: bool) -> Result<usize> {
+    conn.execute(
+        "DELETE FROM tool_results WHERE turn_id = ?1",
+        params![turn_id],
+    )?;
+    conn.execute(
+        "DELETE FROM tool_calls WHERE turn_id = ?1",
+        params![turn_id],
+    )?;
+    let sql = if running_only {
+        "DELETE FROM turns WHERE turn_id = ?1 AND status = 'running'"
+    } else {
+        "DELETE FROM turns WHERE turn_id = ?1"
+    };
+    Ok(conn.execute(sql, params![turn_id])?)
 }
 
 pub(super) struct InsertTurn<'a> {

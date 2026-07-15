@@ -24,6 +24,9 @@ impl WorkspaceManager {
     pub(crate) fn new(paths: &MiyuPaths) -> Result<Self> {
         let registry_file = paths.state_dir.join("web/workspaces.json");
         let current = canonical_directory(&std::env::current_dir()?)?;
+        let gateway_workspace = crate::gateways::workspace::gateway_workspace_path(paths);
+        std::fs::create_dir_all(&gateway_workspace)?;
+        let gateway_workspace = canonical_directory(&gateway_workspace)?;
         let mut registry = load_registry(&registry_file)?;
         registry
             .workspaces
@@ -35,6 +38,16 @@ impl WorkspaceManager {
             .any(|workspace| workspace.id == current_id)
         {
             registry.workspaces.push(workspace_info(&current, None));
+        }
+        let gateway_id = workspace_id_for_path(&gateway_workspace);
+        if !registry
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.id == gateway_id)
+        {
+            registry
+                .workspaces
+                .push(workspace_info(&gateway_workspace, Some("网关会话")));
         }
         if !registry
             .workspaces

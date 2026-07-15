@@ -3,6 +3,8 @@ import { ArrowDown } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api } from "../../api/client";
 import type { RunMode } from "../../api/contracts";
+import { Button } from "../../shared/ui/button/button";
+import { Modal } from "../../shared/ui/dialog/modal";
 import { useChatAgentContext } from "../agents/chat-agent-context";
 import { ChatComposer } from "./chat-composer";
 import { HistoryTurn, LiveRunMessage } from "./chat-message";
@@ -22,6 +24,8 @@ import "./chat-page.css";
  */
 export function ChatPage() {
   const queryClient = useQueryClient();
+  const [input, setInput] = useState("");
+  const [undoError, setUndoError] = useState<string | null>(null);
   const sessions = useQuery({ queryKey: ["sessions"], queryFn: api.sessions.list });
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
   const activeSession = sessions.data?.find((session) => session.active);
@@ -43,11 +47,19 @@ export function ChatPage() {
       queryClient.invalidateQueries({ queryKey: ["workspace-diff"] })
     ]);
   }, [queryClient]);
-  const run = useRunStream(workspaces.data?.active_id, activeSession?.id, onSettled, onWorkspaceChanged);
+  const onInterruptedWithoutReply = useCallback((restoredInput: string) => {
+    setInput(restoredInput);
+  }, []);
+  const run = useRunStream(
+    workspaces.data?.active_id,
+    activeSession?.id,
+    onSettled,
+    onWorkspaceChanged,
+    onInterruptedWithoutReply
+  );
   const chatModel = useChatModel();
   const chatAgent = useChatAgentContext();
   const thinking = useThinkingLevel();
-  const [input, setInput] = useState("");
   const [mode, setMode] = useState<RunMode>("yolo");
   const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -88,6 +100,30 @@ export function ChatPage() {
   const activeRun = runningStates.find((state) => state.status !== "queued") ?? runningStates[0];
   const running = runningStates.length > 0;
   const historyEntries = timeline.data?.map((turn) => turn.user.content) ?? [];
+
+  /**
+   * 撤销最后一轮对话及该轮造成的工作树修改，并恢复用户输入。
+   *
+   * @returns 撤销完成后的 Promise
+   */
+  const undo = async () => {
+    if (!activeSession || running) return;
+    setUndoError(null);
+    try {
+      const outcome = await api.sessions.undo(activeSession.id);
+      setInput(outcome.prompt ?? "");
+      run.reset();
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] }),
+        queryClient.invalidateQueries({ queryKey: ["sessions"] }),
+        queryClient.invalidateQueries({ queryKey: ["file-tree"] }),
+        queryClient.invalidateQueries({ queryKey: ["file"] }),
+        queryClient.invalidateQueries({ queryKey: ["workspace-diff"] })
+      ]);
+    } catch (error) {
+      setUndoError(error instanceof Error ? error.message : String(error));
+    }
+  };
   const overviewItems = useMemo(
     () => [
       ...createTimelineOverviewItems(timeline.data ?? []),
@@ -168,6 +204,7 @@ export function ChatPage() {
         running={running}
         runStatus={activeRun?.status ?? "idle"}
         sessionAvailable={Boolean(activeSession)}
+        undoAvailable={Boolean(timeline.data?.length)}
         agentChoices={chatAgent.choices}
         agentSelection={chatAgent.selection}
         agentLoading={chatAgent.isLoading}
@@ -180,8 +217,19 @@ export function ChatPage() {
         onModelSelect={chatModel.selectModel}
         onSubmit={() => void submit()}
         onStop={() => activeRun?.runId && void run.stop(activeRun.runId)}
+        onUndo={() => void undo()}
         onAgentSelect={chatAgent.selectAgent}
       />
+      <Modal
+        open={Boolean(undoError)}
+        title="撤销失败"
+        description="工作树在本轮结束后又发生变化，因此没有执行可能覆盖新修改的撤销。"
+        size="small"
+        onClose={() => setUndoError(null)}
+        footer={<Button onClick={() => setUndoError(null)}>关闭</Button>}
+      >
+        <p>{undoError}</p>
+      </Modal>
     </div>
   );
 }

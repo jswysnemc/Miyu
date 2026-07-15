@@ -36,6 +36,7 @@ import type {
   Workspace,
   WorkspaceList,
   WorkspaceSessions,
+  UndoSessionResult,
   WeixinLoginSnapshot
 } from "./contracts";
 
@@ -109,6 +110,7 @@ export const api = {
       }),
     messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`),
     timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`),
+    undo: (id: string) => apiRequest<UndoSessionResult>(`/api/sessions/${id}/undo`, { method: "POST" }),
     permissionAudit: (id: string) => apiRequest<PermissionAuditEvent[]>(`/api/sessions/${id}/permission-audit?limit=200`),
     compact: (id: string, keepTailTurns = 3) =>
       apiRequest<{ message: string }>(`/api/sessions/${id}/compact`, {
@@ -118,6 +120,8 @@ export const api = {
   },
   runs: {
     active: () => apiRequest<ActiveRunsResponse>("/api/runs/active"),
+    interruptionRecovery: (workspaceId: string, sessionId: string) =>
+      apiRequest<{ run?: RunInfo | null }>(`/api/runs/interruption-recovery?workspace_id=${encodeURIComponent(workspaceId)}&session_id=${encodeURIComponent(sessionId)}`),
     start: (
       sessionId: string,
       input: string,
