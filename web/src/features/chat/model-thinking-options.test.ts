@@ -6,8 +6,9 @@ describe("model thinking options", () => {
     expect(new Set(THINKING_OPTIONS.map((option) => option.value)).size).toBe(7);
   });
 
-  it("返回紧凑中文展示名称", () => {
-    expect(thinkingLevelLabel("xhigh")).toBe("极高");
-    expect(thinkingLevelLabel("none")).toBe("关闭");
+  it("返回英文等级 token", () => {
+    expect(thinkingLevelLabel("xhigh")).toBe("xhigh");
+    expect(thinkingLevelLabel("high")).toBe("high");
+    expect(thinkingLevelLabel("none")).toBe("none");
   });
 });

@@ -1,7 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { createElement, useEffect, useMemo, useRef, useState } from "react";
 import type { AppConfig } from "../../../api/contracts";
 import { useConfirm } from "../../../shared/ui/dialog/dialog-provider";
 import { Select } from "../../../shared/ui/select/select";
+import { ModelIcon } from "../../../shared/ui/model-icon";
 import { buildDefaultAgent, DEFAULT_AGENT_ID, readAgentProfiles } from "../../agents/agent-options";
 import { fetchAgentOptions } from "./agents-api";
 import type { AgentOptions, AgentProfile, AgentToolOption } from "./agents-types";
@@ -134,7 +135,7 @@ export function AgentSettingsSection({ config, onConfigChange }: AgentSettingsSe
               />
             </label>
             <label className="agent-field"><span className="agent-field-label">供应商</span><Select value={selected.provider_id || ""} options={[{ value: "", label: "沿用当前供应商" }, ...config.providers.map((provider) => ({ value: provider.id, label: provider.display_name || provider.id }))]} onChange={(value) => updateSelected({ provider_id: value, model: "" })} /></label>
-            <label className="agent-field"><span className="agent-field-label">模型</span><Select value={selected.model || ""} options={[{ value: "", label: "供应商默认" }, ...(config.providers.find((provider) => provider.id === selected.provider_id)?.models ?? []).map((model) => ({ value: model, label: model }))]} onChange={(value) => updateSelected({ model: value })} disabled={!selected.provider_id} /></label>
+            <label className="agent-field"><span className="agent-field-label">模型</span><Select value={selected.model || ""} options={[{ value: "", label: "供应商默认" }, ...(config.providers.find((provider) => provider.id === selected.provider_id)?.models ?? []).map((model) => ({ value: model, label: model, icon: createElement(ModelIcon, { model, size: 14 }) }))]} onChange={(value) => updateSelected({ model: value })} disabled={!selected.provider_id} /></label>
             <label className="agent-field"><span className="agent-field-label">思考等级</span><Select value={selected.thinking_level || "auto"} options={THINKING_OPTIONS} onChange={(value) => updateSelected({ thinking_level: value })} /></label>
             <button type="button" className="agent-delete" onClick={removeSelected} disabled={selected.id === DEFAULT_AGENT_ID}>删除</button>
           </div>

@@ -1,5 +1,7 @@
+import { createElement } from "react";
 import type { AppConfig, SubagentConfig, SubagentProfileConfig } from "../../../api/contracts";
 import { Select } from "../../../shared/ui/select/select";
+import { ModelIcon } from "../../../shared/ui/model-icon";
 
 type SubagentSettingsPanelProps = {
   config: AppConfig;
@@ -52,7 +54,7 @@ export function SubagentSettingsPanel({ config, onConfigChange }: SubagentSettin
             <label><span>系统提示词</span><textarea value={profile.system_prompt ?? ""} onChange={(event) => updateProfile(profile.id, { system_prompt: event.target.value })} placeholder="留空使用内置提示词" /></label>
             <div className="subagent-profile-grid">
               <label><span>供应商</span><Select value={profile.provider_id || ""} options={[{ value: "", label: "沿用主 Agent" }, ...config.providers.map((item) => ({ value: item.id, label: item.display_name || item.id }))]} onChange={(value) => updateProfile(profile.id, { provider_id: value, model: "" })} /></label>
-              <label><span>模型</span><Select value={profile.model || ""} options={[{ value: "", label: "供应商默认" }, ...models.map((model) => ({ value: model, label: model }))]} onChange={(value) => updateProfile(profile.id, { model: value })} disabled={!profile.provider_id} /></label>
+              <label><span>模型</span><Select value={profile.model || ""} options={[{ value: "", label: "供应商默认" }, ...models.map((model) => ({ value: model, label: model, icon: createElement(ModelIcon, { model, size: 14 }) }))]} onChange={(value) => updateProfile(profile.id, { model: value })} disabled={!profile.provider_id} /></label>
               <label><span>思考等级</span><Select value={profile.thinking_level || "auto"} options={THINKING_OPTIONS} onChange={(value) => updateProfile(profile.id, { thinking_level: value })} /></label>
             </div>
           </article>;

@@ -414,9 +414,17 @@
 /* ---------- 网关管理页沿用的通用类 ---------- */
 
 .management-page {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
   height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.management-page-body {
+  min-height: 0;
   overflow: auto;
-  padding: 30px clamp(18px, 4vw, 64px) 60px;
+  padding: 24px clamp(18px, 4vw, 64px) 60px;
 }
 
 .management-hero {

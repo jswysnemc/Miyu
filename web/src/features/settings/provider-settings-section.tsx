@@ -1,5 +1,5 @@
 import { Check, Cpu, Plus, RefreshCw, Trash2 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { createElement, useEffect, useState } from "react";
 import { api } from "../../api/client";
 import type { AppConfig, ProviderConfig } from "../../api/contracts";
 import { EditorHeader } from "./editor-layout";
@@ -9,6 +9,7 @@ import { ObjectListPanel } from "./object-list-panel";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
 import { PasswordField } from "../../shared/ui/password-field";
 import { Select } from "../../shared/ui/select/select";
+import { ModelIcon } from "../../shared/ui/model-icon";
 import { JsonCodeEditor } from "../../shared/ui/code-editor/json-code-editor";
 
 type ProviderSettingsSectionProps = {
@@ -118,7 +119,7 @@ export function ProviderSettingsSection({ config, onConfigChange, onProviderChan
   const defaultModelOptions = (provider.default_model && !models.includes(provider.default_model)
     ? [provider.default_model, ...models]
     : models
-  ).map((model) => ({ value: model, label: model }));
+  ).map((model) => ({ value: model, label: model, icon: createElement(ModelIcon, { model, size: 14 }) }));
 
   return (
     <div className="settings-objects-layout">
@@ -193,13 +194,13 @@ const PROTOCOL_OPTIONS = [
 ];
 
 const THINKING_OPTIONS = [
-  { value: "auto", label: "自动" },
-  { value: "max", label: "最大" },
-  { value: "xhigh", label: "极高" },
-  { value: "high", label: "高" },
-  { value: "medium", label: "中" },
-  { value: "low", label: "低" },
-  { value: "none", label: "关闭" }
+  { value: "auto", label: "auto" },
+  { value: "max", label: "max" },
+  { value: "xhigh", label: "xhigh" },
+  { value: "high", label: "high" },
+  { value: "medium", label: "medium" },
+  { value: "low", label: "low" },
+  { value: "none", label: "none" }
 ];
 
 const THINKING_FORMAT_OPTIONS = [

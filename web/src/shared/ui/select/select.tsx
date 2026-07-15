@@ -1,4 +1,5 @@
 import { Check, ChevronDown } from "lucide-react";
+import type { ReactNode } from "react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useAnchoredPopover } from "../popover/use-anchored-popover";
@@ -8,6 +9,8 @@ export type SelectOption<T extends string> = {
   value: T;
   label: string;
   description?: string;
+  /** 可选前置图标，例如模型 logo。 */
+  icon?: ReactNode;
 };
 
 type SelectProps<T extends string> = {
@@ -73,13 +76,23 @@ export function Select<T extends string>({ value, options, disabled, ariaLabel, 
   return (
     <div className="ui-select" ref={rootRef}>
       <button ref={triggerRef} type="button" role="combobox" aria-label={ariaLabel} aria-expanded={open} disabled={disabled} onClick={() => setOpen((visible) => !visible)} onKeyDown={handleKeyDown}>
-        <span>{current?.label ?? value}</span><ChevronDown size={14} className={open ? "open" : ""} />
+        <span className="ui-select-value">
+          {current?.icon}
+          <span>{current?.label ?? value}</span>
+        </span>
+        <ChevronDown size={14} className={open ? "open" : ""} />
       </button>
       {open && createPortal(
         <div ref={menuRef} className={`ui-select-menu${menuClassName ? ` ${menuClassName}` : ""}`} role="listbox" style={menuStyle}>
           {options.map((option) => (
             <button type="button" role="option" aria-selected={option.value === value} className={option.value === value ? "active" : ""} key={option.value} onClick={() => { onChange(option.value); setOpen(false); }}>
-              <span><strong>{option.label}</strong>{option.description && <small>{option.description}</small>}</span>
+              <span className="ui-select-option-main">
+                {option.icon}
+                <span>
+                  <strong>{option.label}</strong>
+                  {option.description && <small>{option.description}</small>}
+                </span>
+              </span>
               <Check size={14} />
             </button>
           ))}

@@ -10,6 +10,7 @@ import { ChatComposer } from "./chat-composer";
 import { HistoryTurn, LiveRunMessage } from "./chat-message";
 import { MessageOverviewRail } from "./message-overview-rail";
 import { createLiveOverviewItem, createTimelineOverviewItems } from "./message-overview-utils";
+import { clearComposerDraft, readComposerDraft, writeComposerDraft } from "./composer-draft";
 import { useComposerAttachments } from "./composer/use-composer-attachments";
 import { useChatModel } from "./use-chat-model";
 import { useRunStream } from "./use-run-stream";
@@ -66,11 +67,17 @@ export function ChatPage() {
   const scrollContentSignal = useMemo(() => [timeline.data, run.states], [timeline.data, run.states]);
   const { showJump, jumpToBottom, pauseFollowing } = useFollowOutputScroll(scrollRef, scrollContentSignal, activeSession?.id);
 
+  // 切换会话时恢复该会话草稿；路由离开再回来也保留（模块级草稿缓存）。
   useEffect(() => {
     run.reset();
-    setInput("");
+    setInput(readComposerDraft(activeSession?.id));
     composerAttachments.clearAttachments();
   }, [activeSession?.id]);
+
+  // 输入变化时写入草稿，避免跳转设置/网关后丢失。
+  useEffect(() => {
+    writeComposerDraft(activeSession?.id, input);
+  }, [activeSession?.id, input]);
 
   /** 提交当前输入内容和模型选择。 */
   const submit = async () => {
@@ -80,6 +87,7 @@ export function ChatPage() {
     const originalInput = input;
     const currentAttachments = composerAttachments.attachments;
     setInput("");
+    clearComposerDraft(activeSession.id);
     composerAttachments.clearAttachments();
     await run.start(
       activeSession.id,
@@ -91,6 +99,7 @@ export function ChatPage() {
       chatAgent.selection?.id
     ).catch((error: unknown) => {
       setInput(originalInput);
+      writeComposerDraft(activeSession.id, originalInput);
       composerAttachments.restoreAttachments(currentAttachments);
       throw error;
     });
