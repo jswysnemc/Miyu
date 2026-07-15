@@ -53,6 +53,13 @@ pub(crate) struct TodoItem {
     pub(crate) updated_at: String,
 }
 
+/// 归档后的一批已完成计划。
+#[derive(Debug, Clone, Deserialize, Eq, PartialEq, Serialize)]
+pub(crate) struct TodoHistoryBatch {
+    pub(crate) archived_at: String,
+    pub(crate) items: Vec<TodoItem>,
+}
+
 /// 会话级 TODO 持久化存储。
 #[derive(Debug, Clone)]
 pub(crate) struct TodoStore {
@@ -238,7 +245,7 @@ impl TodoStore {
         Ok(self.list()?.iter().any(|item| item.status.is_unfinished()))
     }
 
-    /// 保存当前会话全部 TODO 项。
+    /// 保存当前会话全部 TODO 项；计划全部完成后归档并清空活动列表。
     ///
     /// 参数:
     /// - `items`: TODO 项列表
@@ -246,12 +253,81 @@ impl TodoStore {
     /// 返回:
     /// - 保存是否成功
     fn save(&self, items: &[TodoItem]) -> Result<()> {
+        if items.is_empty() {
+            return self.write_items(&[]);
+        }
+        // 全部完成后进入历史，活动列表重置，避免无限增长。
+        if items.iter().all(|item| !item.status.is_unfinished()) {
+            self.append_history(items)?;
+            return self.write_items(&[]);
+        }
+        self.write_items(items)
+    }
+
+    /// 将已完成计划追加到历史文件。
+    ///
+    /// 参数:
+    /// - `items`: 要归档的 TODO 项
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn append_history(&self, items: &[TodoItem]) -> Result<()> {
+        let history_file = self.history_file();
+        if let Some(parent) = history_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut history = if history_file.exists() {
+            let content = std::fs::read_to_string(&history_file).with_context(|| {
+                format!("failed to read todo history {}", history_file.display())
+            })?;
+            if content.trim().is_empty() {
+                Vec::new()
+            } else {
+                serde_json::from_str::<Vec<TodoHistoryBatch>>(&content).with_context(|| {
+                    format!("failed to parse todo history {}", history_file.display())
+                })?
+            }
+        } else {
+            Vec::new()
+        };
+        history.push(TodoHistoryBatch {
+            archived_at: Utc::now().to_rfc3339(),
+            items: items.to_vec(),
+        });
+        let content = serde_json::to_string_pretty(&history)?;
+        std::fs::write(&history_file, format!("{content}\n")).with_context(|| {
+            format!("failed to write todo history {}", history_file.display())
+        })
+    }
+
+    /// 将活动 TODO 列表写入主文件。
+    ///
+    /// 参数:
+    /// - `items`: TODO 项列表
+    ///
+    /// 返回:
+    /// - 写入是否成功
+    fn write_items(&self, items: &[TodoItem]) -> Result<()> {
         if let Some(parent) = self.file.parent() {
             std::fs::create_dir_all(parent)?;
         }
         let content = serde_json::to_string_pretty(items)?;
         std::fs::write(&self.file, format!("{content}\n"))
             .with_context(|| format!("failed to write todo file {}", self.file.display()))
+    }
+
+    /// 返回历史归档文件路径。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 与 todos.json 同目录下的 todos.history.json
+    fn history_file(&self) -> PathBuf {
+        self.file
+            .parent()
+            .map(|parent| parent.join("todos.history.json"))
+            .unwrap_or_else(|| PathBuf::from("todos.history.json"))
     }
 
     /// 返回当前存储文件路径。
@@ -330,9 +406,36 @@ mod tests {
             .unwrap();
         assert_eq!(updated.status, TodoStatus::Completed);
         assert!(!store.has_unfinished().unwrap());
+        // 计划全部完成后自动归档，活动列表清空。
+        assert!(store.list().unwrap().is_empty());
+        let history_file = store.file().parent().unwrap().join("todos.history.json");
+        assert!(history_file.exists());
+        let history: Vec<TodoHistoryBatch> =
+            serde_json::from_str(&std::fs::read_to_string(history_file).unwrap()).unwrap();
+        assert_eq!(history.len(), 1);
+        assert_eq!(history[0].items.len(), 1);
+        assert_eq!(history[0].items[0].status, TodoStatus::Completed);
 
         let reopened = TodoStore::new(store.file().to_path_buf());
-        assert_eq!(reopened.list().unwrap(), vec![updated]);
+        assert!(reopened.list().unwrap().is_empty());
+    }
+
+    /// 验证新计划在归档后从空白列表开始。
+    #[test]
+    fn starts_fresh_plan_after_archive() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TodoStore::new(dir.path().join("todos.json"));
+        let first = store.add("done plan").unwrap();
+        let position = store.locate(Some(&first.id), None).unwrap();
+        store
+            .update_at(position, None, Some(TodoStatus::Completed))
+            .unwrap();
+        assert!(store.list().unwrap().is_empty());
+
+        let next = store.add("new plan").unwrap();
+        assert_eq!(store.list().unwrap().len(), 1);
+        assert_eq!(store.list().unwrap()[0].id, next.id);
+        assert_eq!(store.list().unwrap()[0].text, "new plan");
     }
 
     /// 验证不同会话文件相互隔离。

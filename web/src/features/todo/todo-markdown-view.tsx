@@ -19,6 +19,7 @@ const statusIcons = {
  * 渲染 Agent 管理的只读 TODO 进度。
  *
  * 紧凑模式下弹层通过 Portal 挂到 body，避免被输入区 overflow 裁切。
+ * 计划全部完成后前端不再展示；后端也会归档并清空活动列表。
  *
  * @param props sessionId 为当前会话，compact 为输入区紧凑样式
  * @returns TODO 进度触发器与清单
@@ -61,6 +62,8 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
 
   const items = query.data;
   const summary = summarizeTodos(items);
+  // 全部完成的计划由后端归档后列表为空；这里再兜底隐藏已完成清单。
+  if (summary.allDone) return null;
   const percent = Math.round(summary.ratio * 100);
   const list = open ? (
     <ul
@@ -97,7 +100,7 @@ export function TodoMarkdownView({ sessionId, compact = false }: { sessionId?: s
         </span>
         <span className="todo-trigger-body">
           <span className="todo-trigger-line">
-            <strong>{summary.allDone ? "计划已完成" : summary.activeText || "计划"}</strong>
+            <strong>{summary.activeText || "计划"}</strong>
             <span className="todo-trigger-count">
               {summary.completed}/{summary.total}
             </span>
