@@ -1,6 +1,7 @@
 use anyhow::{bail, Context, Result};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -190,10 +191,29 @@ pub(super) fn git_bytes(repository_root: &Path, args: &[&str]) -> Result<Vec<u8>
 
 /// 查找工作目录所属 Git 仓库根目录。
 fn repository_root(workspace: &Path) -> Result<Option<PathBuf>> {
-    let output = Command::new("git")
+    repository_root_with_program(workspace, "git")
+}
+
+/// 使用指定 Git 程序查找工作目录所属仓库根目录。
+///
+/// 参数:
+/// - `workspace`: 当前工作目录
+/// - `program`: Git 程序名或路径
+///
+/// 返回:
+/// - 仓库根目录；程序不存在或当前目录不属于仓库时返回空
+fn repository_root_with_program(workspace: &Path, program: &str) -> Result<Option<PathBuf>> {
+    // 1. Git 未安装时禁用工作树快照，不阻断普通聊天
+    let output = match Command::new(program)
         .args(["rev-parse", "--show-toplevel"])
         .current_dir(workspace)
-        .output()?;
+        .output()
+    {
+        Ok(output) => output,
+        Err(err) if err.kind() == ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err.into()),
+    };
+    // 2. 当前目录不属于 Git 仓库时同样跳过快照
     if !output.status.success() {
         return Ok(None);
     }
@@ -266,4 +286,25 @@ fn snapshot_directory_from_root(root: &Path, turn_id: &str) -> PathBuf {
     let mut hasher = Sha256::new();
     hasher.update(turn_id.as_bytes());
     root.join(format!("turn_{:x}", hasher.finalize()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::repository_root_with_program;
+
+    /// 验证系统未安装 Git 时跳过工作树快照。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn missing_git_skips_repository_detection() {
+        let temp = tempfile::tempdir().unwrap();
+
+        let repository = repository_root_with_program(temp.path(), "miyu-missing-git").unwrap();
+
+        assert!(repository.is_none());
+    }
 }
