@@ -1,4 +1,6 @@
+import { createElement } from "react";
 import { Select } from "../../../shared/ui/select/select";
+import { ModelIcon } from "../../../shared/ui/model-icon";
 import type { ChatModelChoice } from "../../chat/chat-model-options";
 
 type SubagentModelPickerProps = {
@@ -22,7 +24,8 @@ export function SubagentModelPicker({ choices, providerId, model, onChange }: Su
     { value: INHERIT_VALUE, label: "沿用主对话模型" },
     ...choices.map((choice) => ({
       value: `${choice.providerId}${SEPARATOR}${choice.model}`,
-      label: `${choice.providerName} / ${choice.model}`
+      label: `${choice.providerName} / ${choice.model}`,
+      icon: createElement(ModelIcon, { model: choice.model, size: 14 })
     }))
   ];
   const current = providerId && model ? `${providerId}${SEPARATOR}${model}` : INHERIT_VALUE;
