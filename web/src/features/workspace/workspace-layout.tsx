@@ -1,12 +1,13 @@
-import { Code2, MessageSquare, Plus, SquareTerminal } from "lucide-react";
+import { Activity, Bot, Code2, FileCode2, GitCompareArrows, MessageSquare, Plus, SquareTerminal } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import type { CSSProperties } from "react";
-import { useEffect, useReducer, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { api } from "../../api/client";
 import { ChatPage } from "../chat/chat-page";
 import { SessionSidebar } from "../sessions/session-sidebar";
 import { SessionSidebarResizeHandle } from "../sessions/session-sidebar-resize-handle";
 import { useSessionSidebarLayout } from "../sessions/use-session-sidebar-layout";
+import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import { WorkspacePane } from "./workspace-pane";
 import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
@@ -20,12 +21,21 @@ import {
   reduceMobileWorkbenchState,
   type MobileWorkbenchPane
 } from "./mobile-workbench-state";
+import "./workspace-pane.css";
 
 type WorkspaceLayoutProps = {
   selectedFile: string | null;
   onSelectFile: (path: string) => void;
   onClearFile: () => void;
 };
+
+const reopenChoices: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> = [
+  { type: "files", label: "编辑器", icon: FileCode2 },
+  { type: "diff", label: "Git", icon: GitCompareArrows },
+  { type: "terminal", label: "终端", icon: SquareTerminal },
+  { type: "tasks", label: "后台任务", icon: Activity },
+  { type: "subagents", label: "子智能体", icon: Bot }
+];
 
 /**
  * 组合会话栏、聊天区和可调整的右侧工作区。
@@ -38,6 +48,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   const terminalManager = useTerminalManager();
   const sessionSidebar = useSessionSidebarLayout();
   const [paneTab, setPaneTab] = useState<PaneTab>("files");
+  const [reopenMenuOpen, setReopenMenuOpen] = useState(false);
+  const reopenMenuRef = useRef<HTMLDivElement>(null);
   const [mobileLayout, dispatchMobileLayout] = useReducer(reduceMobileWorkbenchState, initialMobileWorkbenchState);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches);
   const workspaces = useQuery({ queryKey: ["workspaces"], queryFn: api.workspaces.list });
@@ -56,6 +68,8 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     mobileLayout.sidebarOpen ? "mobile-sidebar-open" : "mobile-sidebar-closed",
     `mobile-pane-${mobileLayout.pane}`
   ].filter(Boolean).join(" ");
+
+  useOutsidePointerDown(reopenMenuRef, () => setReopenMenuOpen(false), reopenMenuOpen);
 
   useEffect(() => {
     const media = window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY);
@@ -88,6 +102,7 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
       if (!path) return;
       onSelectFile(workspaceRelativePath(path, activeWorkspace?.path ?? ""));
       layout.openWorkspace();
+      setPaneTab("files");
       if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
         dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
       }
@@ -137,7 +152,22 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   /** 关闭工作区，并在移动端回到聊天面板。 */
   const closeWorkspace = () => {
     layout.closeWorkspace();
+    setReopenMenuOpen(false);
     dispatchMobileLayout({ type: "show-pane", pane: "chat" });
+  };
+
+  /**
+   * 从收起态的 `+` 菜单打开指定面板。
+   *
+   * @param type 面板类型
+   */
+  const openWorkspaceWith = (type: PaneTab) => {
+    setPaneTab(type);
+    layout.openWorkspace();
+    setReopenMenuOpen(false);
+    if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
+      dispatchMobileLayout({ type: "show-pane", pane: type === "terminal" ? "terminal" : "workspace" });
+    }
   };
 
   return (
@@ -183,9 +213,37 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
           </aside>
         )}
         {!layout.workspaceOpen && (
-          <button type="button" className="workspace-reopen" onClick={layout.openWorkspace} title="打开工作区" aria-label="打开工作区">
-            <Plus size={16} />
-          </button>
+          <div className="workspace-reopen-anchor" ref={reopenMenuRef}>
+            <button
+              type="button"
+              className="workspace-reopen"
+              onClick={() => setReopenMenuOpen((value) => !value)}
+              title="打开工作区"
+              aria-label="打开工作区"
+              aria-expanded={reopenMenuOpen}
+              aria-haspopup="menu"
+            >
+              <Plus size={16} />
+            </button>
+            {reopenMenuOpen && (
+              <div className="workspace-reopen-menu" role="menu" aria-label="选择面板">
+                {reopenChoices.map((item) => {
+                  const Icon = item.icon;
+                  return (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      key={item.type}
+                      onClick={() => openWorkspaceWith(item.type)}
+                    >
+                      <Icon size={14} />
+                      <span>{item.label}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         )}
       </div>
     </div>

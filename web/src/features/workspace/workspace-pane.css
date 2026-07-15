@@ -125,10 +125,11 @@
 .workspace-tab-add-menu {
   position: absolute;
   top: calc(100% + 6px);
-  left: 0;
+  right: 0;
+  left: auto;
   display: grid;
   gap: 2px;
-  min-width: 140px;
+  min-width: 148px;
   padding: 5px;
   border: 1px solid var(--line);
   border-radius: 10px;
@@ -192,11 +193,14 @@
   font-size: 12px;
 }
 
-.workspace-reopen {
+.workspace-reopen-anchor {
   position: absolute;
   top: 8px;
   right: 8px;
   z-index: 25;
+}
+
+.workspace-reopen {
   display: grid;
   width: 28px;
   height: 28px;
@@ -209,15 +213,46 @@
   box-shadow: none;
 }
 
-.workspace-reopen:hover {
+.workspace-reopen:hover,
+.workspace-reopen[aria-expanded="true"] {
   background: color-mix(in srgb, var(--ink) 7%, transparent);
   color: var(--ink);
 }
-.files-layout { display: grid; height: 100%; min-width: 0; min-height: 0; }
-.files-layout.file-tree-open { grid-template-columns: minmax(0, 1fr) minmax(190px, 240px); }
-.files-layout.file-tree-closed { grid-template-columns: minmax(0, 1fr); }
-.file-tree { display: grid; grid-template-rows: 37px auto minmax(0, 1fr); min-width: 0; min-height: 0; border-left: 1px solid var(--line); background: var(--paper); }
-.file-tree-head { display: flex; align-items: center; justify-content: space-between; padding: 0 7px 0 10px; border-bottom: 1px solid var(--line); color: var(--ink-soft); font: 500 10px var(--font-code); text-transform: uppercase; }
+
+.workspace-reopen-menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  right: 0;
+  display: grid;
+  gap: 2px;
+  min-width: 148px;
+  padding: 5px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-raised);
+  box-shadow: var(--shadow);
+  z-index: 40;
+}
+
+.workspace-reopen-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 32px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: left;
+}
+
+.workspace-reopen-menu button:hover {
+  background: var(--paper-deep);
+  color: var(--ink);
+}
 .file-tree-scroll { min-height: 0; overflow: auto; padding: 5px 0 12px; }
 .file-tree-empty { margin: 12px 8px; color: var(--ink-soft); font-size: 10px; text-align: center; }
 .file-tree-actions { display: flex; align-items: center; gap: 1px; }

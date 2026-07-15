@@ -25,6 +25,8 @@ type WorkspacePaneProps = {
 /**
  * 渲染带 Cursor 风格顶部标签栏的右侧工作区。
  *
+ * 默认不自动塞一个空编辑器；只有点 `+` 选中、打开文件或外部入口时才建标签。
+ *
  * @param props 文件选择、活动类型、布局操作与终端状态
  * @returns 工作区面板
  */
@@ -40,10 +42,9 @@ export function WorkspacePane({
   terminalManager
 }: WorkspacePaneProps) {
   const [fileTreeOpen, setFileTreeOpen] = useState(false);
-  const [tabs, setTabs] = useState<WorkspacePanelTab[]>(() => [
-    createWorkspacePanelTab("files", { title: "编辑器", closable: true })
-  ]);
-  const [activeTabId, setActiveTabId] = useState(tabs[0]?.id ?? null);
+  // 初始不预开空编辑器；由 `+` 菜单、打开文件或外部入口创建标签。
+  const [tabs, setTabs] = useState<WorkspacePanelTab[]>([]);
+  const [activeTabId, setActiveTabId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!selectedFile) return;
@@ -74,19 +75,42 @@ export function WorkspacePane({
     onActiveTypeChange("files");
   }, [onActiveTypeChange, selectedFile]);
 
+  // 外部入口或重新打开时：已有则激活，没有则新建。
   useEffect(() => {
-    if (activeType === "terminal") return;
+    if (activeType === "terminal") {
+      setTabs((current) => {
+        const existing = current.find((tab) => tab.type === "terminal" && tab.terminalId === terminalManager.activeId);
+        if (existing) {
+          setActiveTabId(existing.id);
+          return current;
+        }
+        if (terminalManager.activeId) {
+          const terminal = terminalManager.terminals.find((item) => item.id === terminalManager.activeId);
+          const created = createWorkspacePanelTab("terminal", {
+            title: terminal?.title || "终端",
+            terminalId: terminalManager.activeId
+          });
+          setActiveTabId(created.id);
+          return [...current, created];
+        }
+        return current;
+      });
+      return;
+    }
     setTabs((current) => {
       const existing = current.find((tab) => tab.type === activeType);
       if (existing) {
         setActiveTabId((id) => (id === existing.id ? id : existing.id));
         return current;
       }
-      const created = createWorkspacePanelTab(activeType, { closable: true });
+      const created = createWorkspacePanelTab(activeType, {
+        title: activeType === "files" ? "编辑器" : undefined,
+        closable: true
+      });
       setActiveTabId(created.id);
       return [...current, created];
     });
-  }, [activeType]);
+  }, [activeType, terminalManager.activeId, terminalManager.terminals]);
 
   useEffect(() => {
     setTabs((current) =>
@@ -100,7 +124,7 @@ export function WorkspacePane({
     );
   }, [terminalManager.terminals]);
 
-  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? tabs[0] ?? null;
+  const activeTab = tabs.find((tab) => tab.id === activeTabId) ?? null;
 
   const addTab = async (type: PaneTab) => {
     if (type === "files") {
@@ -182,7 +206,7 @@ export function WorkspacePane({
         {!activeTab && (
           <div className="workspace-pane-empty">
             <p>没有打开的面板</p>
-            <span>点右上角 + 添加编辑器、Git、终端或后台任务</span>
+            <span>点上方 + 选择要打开的组件</span>
           </div>
         )}
         {activeTab?.type === "files" && (
