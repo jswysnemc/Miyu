@@ -13,8 +13,6 @@ import { WorkspaceResizeHandle } from "./workspace-resize-handle";
 import { useWorkspaceLayout } from "./use-workspace-layout";
 import { workspaceRelativePath } from "./workspace-path-utils";
 import type { PaneTab } from "./workspace-tab";
-import { TerminalDock } from "../terminal/terminal-dock";
-import { TerminalResizeHandle } from "../terminal/terminal-resize-handle";
 import { useTerminalManager } from "../terminal/use-terminal-manager";
 import {
   initialMobileWorkbenchState,
@@ -47,15 +45,13 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   const activeWorkspace = workspaces.data?.workspaces.find((workspace) => workspace.id === workspaces.data.active_id);
   const style = {
     "--session-sidebar-width": `${sessionSidebar.width}px`,
-    "--workspace-panel-width": `${layout.workspaceWidth}px`,
-    "--terminal-panel-height": `${layout.terminalHeight}px`
+    "--workspace-panel-width": `${layout.workspaceWidth}px`
   } as CSSProperties;
   const classes = [
     "coding-layout",
     layout.workspaceOpen ? "workspace-open" : "workspace-closed",
     layout.chatOpen ? "chat-open" : "chat-closed",
     layout.workspaceMaximized ? "workspace-maximized" : "",
-    layout.terminalOpen ? "terminal-open" : "terminal-closed",
     layout.swapped ? "layout-swapped" : "",
     sessionSidebar.collapsed ? "sidebar-collapsed" : "sidebar-expanded",
     mobileLayout.sidebarOpen ? "mobile-sidebar-open" : "mobile-sidebar-closed",
@@ -103,10 +99,28 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
   }, [activeWorkspace?.path, onSelectFile, layout.openWorkspace]);
 
   useEffect(() => {
-    const handleToggleTerminal = () => layout.toggleTerminal();
+    /** 响应聊天区发出的终端/后台任务入口，打开右侧同级面板。 */
+    const handleToggleTerminal = () => {
+      layout.openWorkspace();
+      setPaneTab("terminal");
+      if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
+        dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
+      }
+    };
+    const handleOpenTasks = () => {
+      layout.openWorkspace();
+      setPaneTab("tasks");
+      if (window.matchMedia(MOBILE_WORKBENCH_MEDIA_QUERY).matches) {
+        dispatchMobileLayout({ type: "show-pane", pane: "workspace" });
+      }
+    };
     window.addEventListener("miyu:toggle-terminal", handleToggleTerminal);
-    return () => window.removeEventListener("miyu:toggle-terminal", handleToggleTerminal);
-  }, [layout.toggleTerminal]);
+    window.addEventListener("miyu:open-tasks", handleOpenTasks);
+    return () => {
+      window.removeEventListener("miyu:toggle-terminal", handleToggleTerminal);
+      window.removeEventListener("miyu:open-tasks", handleOpenTasks);
+    };
+  }, [layout.openWorkspace]);
 
   useEffect(() => {
     // 响应聊天区"查看子智能体"请求,打开右侧工作区并切到子智能体视图
@@ -130,19 +144,16 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
     if (pane === "chat" && !layout.chatOpen) layout.toggleChat();
     if (pane === "chat" && layout.workspaceMaximized) layout.toggleWorkspaceMaximized();
     if (pane === "workspace") layout.openWorkspace();
-    if (pane === "terminal") layout.openTerminal();
+    if (pane === "terminal") {
+      layout.openWorkspace();
+      setPaneTab("terminal");
+    }
     dispatchMobileLayout({ type: "show-pane", pane });
   };
 
   /** 关闭编辑器，并在移动端回到聊天面板。 */
   const closeWorkspace = () => {
     layout.closeWorkspace();
-    dispatchMobileLayout({ type: "show-pane", pane: "chat" });
-  };
-
-  /** 关闭终端，并在移动端回到聊天面板。 */
-  const closeTerminal = () => {
-    layout.closeTerminal();
     dispatchMobileLayout({ type: "show-pane", pane: "chat" });
   };
 
@@ -201,21 +212,13 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
         workspaceOpen={layout.workspaceOpen}
         chatOpen={layout.chatOpen}
         maximized={layout.workspaceMaximized}
-        terminalOpen={layout.terminalOpen}
         onSelectTab={showWorkspaceTab}
         onCollapse={closeWorkspace}
         onExpand={layout.openWorkspace}
         onToggleChat={layout.toggleChat}
         onToggleMaximized={layout.toggleWorkspaceMaximized}
         onToggleSwapped={layout.toggleSwapped}
-        onToggleTerminal={layout.toggleTerminal}
       />
-      {layout.terminalOpen && (
-        <div className="coding-terminal">
-          <TerminalResizeHandle onResize={layout.resizeTerminal} />
-          <TerminalDock manager={terminalManager} onClose={closeTerminal} />
-        </div>
-      )}
     </div>
   );
 }

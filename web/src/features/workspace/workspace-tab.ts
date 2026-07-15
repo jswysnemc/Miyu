@@ -1,4 +1,4 @@
-export type PaneTab = "files" | "diff" | "terminal" | "subagents";
+export type PaneTab = "files" | "diff" | "terminal" | "tasks" | "subagents";
 
 export type WorkspacePanelTab = {
   id: string;
@@ -33,6 +33,7 @@ export function createWorkspacePanelTab(
   const defaults: Record<Exclude<PaneTab, "files">, string> = {
     diff: "Git",
     terminal: "终端",
+    tasks: "后台任务",
     subagents: "子智能体"
   };
   return {
@@ -54,6 +55,7 @@ export function paneTabLabel(type: PaneTab): string {
     files: "编辑器",
     diff: "Git",
     terminal: "终端",
+    tasks: "后台任务",
     subagents: "子智能体"
   }[type];
 }

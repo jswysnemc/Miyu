@@ -1,4 +1,4 @@
-import { Bot, FileCode2, GitCompareArrows, Plus, SquareTerminal, X } from "lucide-react";
+import { Activity, Bot, FileCode2, GitCompareArrows, Plus, SquareTerminal, X } from "lucide-react";
 import { useRef, useState } from "react";
 import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import type { PaneTab, WorkspacePanelTab } from "./workspace-tab";
@@ -16,6 +16,7 @@ const addable: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> =
   { type: "files", label: "编辑器", icon: FileCode2 },
   { type: "diff", label: "Git", icon: GitCompareArrows },
   { type: "terminal", label: "终端", icon: SquareTerminal },
+  { type: "tasks", label: "后台任务", icon: Activity },
   { type: "subagents", label: "子智能体", icon: Bot }
 ];
 
@@ -105,6 +106,7 @@ export function WorkspaceTabBar(props: WorkspaceTabBarProps) {
 function TabIcon({ type }: { type: PaneTab }) {
   if (type === "diff") return <GitCompareArrows size={13} />;
   if (type === "terminal") return <SquareTerminal size={13} />;
+  if (type === "tasks") return <Activity size={13} />;
   if (type === "subagents") return <Bot size={13} />;
   return <FileCode2 size={13} />;
 }

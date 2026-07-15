@@ -1,4 +1,4 @@
-import { ArrowRight, Bot, GitBranch, Paperclip, Square, SquareTerminal, Undo2 } from "lucide-react";
+import { Activity, ArrowRight, Bot, GitBranch, Paperclip, Square, Undo2 } from "lucide-react";
 import { useRef } from "react";
 import type { ChangeEvent, FormEvent } from "react";
 import type { RunMode, RunModelSelection, ThinkingLevel } from "../../api/contracts";
@@ -118,8 +118,8 @@ export function ChatComposer(props: ChatComposerProps) {
             onChange={props.onModeChange}
           />
         </div>
-        <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:toggle-terminal"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开终端和后台管理"} aria-label="打开终端和后台管理">
-          <SquareTerminal size={14} />
+        <button type="button" className={`composer-rail-button composer-activity-button${runtimeActivity.runningTasks > 0 ? " is-active" : ""}`} onClick={() => window.dispatchEvent(new Event("miyu:open-tasks"))} title={runtimeActivity.runningTasks > 0 ? `${runtimeActivity.runningTasks} 个后台任务进行中` : "打开后台任务"} aria-label="打开后台任务">
+          <Activity size={14} />
           {runtimeActivity.runningTasks > 0 && <span className="composer-activity-badge">{runtimeActivity.runningTasks}</span>}
         </button>
         {runtimeActivity.runningSubagents > 0 && (

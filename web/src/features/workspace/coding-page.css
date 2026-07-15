@@ -1,11 +1,10 @@
 .coding-layout {
   --session-sidebar-width: 232px;
   --workspace-panel-width: 520px;
-  --terminal-panel-height: 280px;
   position: relative;
   display: grid;
   grid-template-columns: var(--session-sidebar-width) minmax(0, 1fr) 42px;
-  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr);
   width: 100%;
   height: 100%;
   min-height: 0;
@@ -19,12 +18,13 @@
 .coding-sidebar {
   position: relative;
   grid-column: 1;
-  grid-row: 1 / 3;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--line);
   background: var(--paper);
 }
+
 .workbench-main {
   position: relative;
   grid-column: 2;
@@ -77,8 +77,7 @@
   display: none;
 }
 
-.workspace-maximized .workbench-main,
-.workspace-maximized .coding-terminal {
+.workspace-maximized .workbench-main {
   grid-column: 1;
 }
 
@@ -119,49 +118,9 @@
   user-select: none;
 }
 
-.coding-terminal {
-  position: relative;
-  grid-column: 2;
-  grid-row: 2;
-  height: var(--terminal-panel-height);
-  min-height: 0;
-  padding-top: 6px;
-}
-
-.terminal-resize-handle {
-  position: absolute;
-  top: 0;
-  right: 0;
-  left: 0;
-  display: grid;
-  height: 6px;
-  place-items: center;
-  cursor: row-resize;
-  touch-action: none;
-  z-index: 8;
-}
-
-.terminal-resize-handle span {
-  width: 42px;
-  height: 2px;
-  border-radius: 999px;
-  background: var(--line-strong);
-  opacity: 0;
-}
-
-.terminal-resize-handle:hover span,
-.terminal-resizing .terminal-resize-handle span {
-  opacity: 1;
-}
-
-.terminal-resizing {
-  cursor: row-resize;
-  user-select: none;
-}
-
 .workspace-activity-rail {
   grid-column: 3;
-  grid-row: 1 / 3;
+  grid-row: 1;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -337,7 +296,6 @@
 
   .session-sidebar-resize-handle,
   .workspace-resize-handle,
-  .terminal-resize-handle,
   .workspace-activity-rail {
     display: none;
   }
@@ -358,24 +316,8 @@
   }
 
   .mobile-pane-chat .coding-chat,
-  .mobile-pane-workspace .coding-workspace {
-    display: block;
-  }
-
-  .coding-terminal {
-    grid-column: 1;
-    grid-row: 2;
-    display: none;
-    width: 100%;
-    height: 100%;
-    padding: 0;
-  }
-
-  .mobile-pane-terminal .workbench-main {
-    display: none;
-  }
-
-  .mobile-pane-terminal .coding-terminal {
+  .mobile-pane-workspace .coding-workspace,
+  .mobile-pane-terminal .coding-workspace {
     display: block;
   }
 }

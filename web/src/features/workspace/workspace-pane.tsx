@@ -3,6 +3,7 @@ import { DiffPane } from "./diff-pane";
 import { EditorPane } from "./editor-pane";
 import { FileTree } from "./file-tree";
 import { TerminalDock } from "../terminal/terminal-dock";
+import { BackgroundTasksPanel } from "../background-tasks/background-tasks-panel";
 import { SubagentWorkspace } from "../subagents/subagent-workspace";
 import type { TerminalManager } from "../terminal/use-terminal-manager";
 import { createWorkspacePanelTab, type PaneTab, type WorkspacePanelTab } from "./workspace-tab";
@@ -176,6 +177,7 @@ export function WorkspacePane({
         {activeTab?.type === "terminal" && (
           <TerminalDock manager={terminalManager} onClose={() => closeTab(activeTab.id)} />
         )}
+        {activeTab?.type === "tasks" && <BackgroundTasksPanel />}
         {activeTab?.type === "subagents" && <SubagentWorkspace />}
       </div>
     </div>

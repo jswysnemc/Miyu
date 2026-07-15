@@ -1,4 +1,4 @@
-import { ArrowLeftRight, Bot, ChevronsLeft, ChevronsRight, FileCode2, GitCompareArrows, LayoutPanelLeft, Maximize2, MessageSquare, PanelBottomOpen, SlidersHorizontal, SquareTerminal } from "lucide-react";
+import { ArrowLeftRight, Activity, Bot, ChevronsLeft, ChevronsRight, FileCode2, GitCompareArrows, LayoutPanelLeft, Maximize2, MessageSquare, SlidersHorizontal, SquareTerminal } from "lucide-react";
 import { useRef, useState } from "react";
 import { useOutsidePointerDown } from "../../shared/hooks/use-outside-pointer-down";
 import type { PaneTab } from "./workspace-tab";
@@ -8,20 +8,19 @@ type WorkspaceActivityRailProps = {
   workspaceOpen: boolean;
   chatOpen: boolean;
   maximized: boolean;
-  terminalOpen: boolean;
   onSelectTab: (tab: PaneTab) => void;
   onCollapse: () => void;
   onExpand: () => void;
   onToggleChat: () => void;
   onToggleMaximized: () => void;
   onToggleSwapped: () => void;
-  onToggleTerminal: () => void;
 };
 
 const tabs: Array<{ id: PaneTab; label: string; icon: typeof FileCode2 }> = [
   { id: "files", label: "文件", icon: FileCode2 },
   { id: "diff", label: "Git", icon: GitCompareArrows },
   { id: "terminal", label: "终端", icon: SquareTerminal },
+  { id: "tasks", label: "后台任务", icon: Activity },
   { id: "subagents", label: "子智能体", icon: Bot }
 ];
 
@@ -78,9 +77,6 @@ export function WorkspaceActivityRail(props: WorkspaceActivityRailProps) {
               </button>
               <button type="button" role="menuitem" onClick={props.onToggleSwapped}>
                 <ArrowLeftRight size={14} /><span>交换左右布局</span>
-              </button>
-              <button type="button" role="menuitem" className={props.terminalOpen ? "checked" : ""} onClick={props.onToggleTerminal}>
-                <PanelBottomOpen size={14} /><span>底部终端</span>
               </button>
             </div>
           )}
