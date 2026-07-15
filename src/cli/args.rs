@@ -1,5 +1,5 @@
 use super::background_commands::BackgroundCommandsArgs;
-use crate::gateways::cli::GatewayArgs;
+use crate::gateways::cli::{GatewayArgs, WeixinLoginArgs};
 use clap::{Args, Parser, Subcommand};
 use std::path::PathBuf;
 
@@ -68,9 +68,19 @@ pub enum Command {
     Skills(SkillsArgs),
     Ps(BackgroundCommandsArgs),
     Gateway(GatewayArgs),
+    WeixinLogin(TopLevelWeixinLoginArgs),
     Set(SetArgs),
     Clear(ClearArgs),
     Compact(CompactArgs),
+}
+
+#[derive(Debug, Args)]
+pub struct TopLevelWeixinLoginArgs {
+    #[arg(long, short = 'v')]
+    pub verbose: bool,
+
+    #[command(flatten)]
+    pub login: WeixinLoginArgs,
 }
 
 #[derive(Debug, Args)]
@@ -307,6 +317,34 @@ mod tests {
         let result = Cli::try_parse_from(["miyu", "--yolo", "--audited", "inspect"]);
 
         assert!(result.is_err());
+    }
+
+    /// 验证顶层微信登录兼容命令可以正确解析参数。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn parses_top_level_weixin_login_command() {
+        let cli = Cli::try_parse_from([
+            "miyu",
+            "weixin-login",
+            "--verbose",
+            "--bot-type",
+            "3",
+            "--timeout-secs",
+            "30",
+        ])
+        .unwrap();
+
+        let Some(Command::WeixinLogin(args)) = cli.command else {
+            panic!("expected top-level weixin-login command");
+        };
+        assert!(args.verbose);
+        assert_eq!(args.login.bot_type.as_deref(), Some("3"));
+        assert_eq!(args.login.timeout_secs, 30);
     }
 }
 

@@ -1,7 +1,7 @@
 use crate::agent::{AgentEvent, AgentMode};
 use crate::clipboard;
 use crate::config::AppConfig;
-use crate::gateways::cli::run_gateway;
+use crate::gateways::cli::{run_gateway, GatewayArgs, GatewayCommand};
 use crate::i18n::{is_zh, text as t};
 use crate::llm::OpenAiCompatibleClient;
 use crate::memory::MemoryStore;
@@ -164,6 +164,16 @@ pub async fn run(cli: Cli) -> Result<()> {
         Some(Command::Skills(args)) => run_skills(&paths, args),
         Some(Command::Ps(args)) => run_background_commands(&paths, args).await,
         Some(Command::Gateway(args)) => run_gateway(&paths, args).await,
+        Some(Command::WeixinLogin(args)) => {
+            run_gateway(
+                &paths,
+                GatewayArgs {
+                    verbose: args.verbose,
+                    command: GatewayCommand::WeixinLogin(args.login),
+                },
+            )
+            .await
+        }
         Some(Command::Set(args)) => run_set(&paths, args),
         Some(Command::Clear(args)) => run_reset(&paths, args.scope.as_deref(), args.memory),
         Some(Command::Compact(args)) => {

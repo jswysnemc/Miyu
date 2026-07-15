@@ -338,6 +338,10 @@ fn gateway_defaults_are_valid() {
     assert_eq!(config.gateways.qq.listen, "127.0.0.1:8766");
     assert_eq!(config.gateways.qq.base_url, "https://api.sgroup.qq.com");
     assert_eq!(
+        config.gateways.weixin.base_url,
+        "https://ilinkai.weixin.qq.com"
+    );
+    assert_eq!(
         config.gateways.weixin.cdn_base_url,
         "https://novac2c.cdn.weixin.qq.com/c2c"
     );

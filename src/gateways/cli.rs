@@ -23,6 +23,9 @@ use serde_json::Value;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+const LEGACY_WEIXIN_BASE_URL: &str = "https://ilink.tencentbot.top";
+const LEGACY_WEIXIN_BOT_TYPE: &str = "WeChat";
+
 #[derive(Debug, Args)]
 pub(crate) struct GatewayArgs {
     #[arg(long, short = 'v', global = true)]
@@ -253,13 +256,17 @@ pub(crate) async fn run_gateway(paths: &MiyuPaths, args: GatewayArgs) -> Result<
         GatewayCommand::WeixinLogin(args) => {
             let config = load_gateway_config(paths)?;
             let weixin = &config.gateways.weixin;
+            let (base_url, bot_type) = resolve_weixin_login_settings(
+                args.base_url,
+                args.bot_type,
+                &weixin.base_url,
+                &weixin.bot_type,
+            );
             run_weixin_login(
                 paths,
                 WeixinLoginConfig {
-                    base_url: non_empty_arg(args.base_url, &weixin.base_url)
-                        .unwrap_or_else(|| default_weixin_base_url().to_string()),
-                    bot_type: non_empty_arg(args.bot_type, &weixin.bot_type)
-                        .unwrap_or_else(|| default_weixin_bot_type().to_string()),
+                    base_url,
+                    bot_type,
                     timeout_secs: args.timeout_secs,
                 },
             )
@@ -297,6 +304,41 @@ pub(crate) async fn run_gateway(paths: &MiyuPaths, args: GatewayArgs) -> Result<
     };
     println!("{}", serde_json::to_string_pretty(&responses)?);
     Ok(())
+}
+
+/// 解析微信登录参数，并兼容已经写入配置文件的失效旧默认值。
+///
+/// 参数:
+/// - `base_url`: 命令行指定的 API 基础地址
+/// - `bot_type`: 命令行指定的机器人类型
+/// - `configured_base_url`: 配置文件中的 API 基础地址
+/// - `configured_bot_type`: 配置文件中的机器人类型
+///
+/// 返回:
+/// - 当前可用的 API 基础地址和机器人类型
+fn resolve_weixin_login_settings(
+    base_url: Option<String>,
+    bot_type: Option<String>,
+    configured_base_url: &str,
+    configured_bot_type: &str,
+) -> (String, String) {
+    let base_url = non_empty_arg(base_url, "").unwrap_or_else(|| {
+        let configured = configured_base_url.trim();
+        if configured.is_empty() || configured.eq_ignore_ascii_case(LEGACY_WEIXIN_BASE_URL) {
+            default_weixin_base_url().to_string()
+        } else {
+            configured.to_string()
+        }
+    });
+    let bot_type = non_empty_arg(bot_type, "").unwrap_or_else(|| {
+        let configured = configured_bot_type.trim();
+        if configured.is_empty() || configured.eq_ignore_ascii_case(LEGACY_WEIXIN_BOT_TYPE) {
+            default_weixin_bot_type().to_string()
+        } else {
+            configured.to_string()
+        }
+    });
+    (base_url, bot_type)
 }
 
 /// 读取网关需要的应用配置。
@@ -519,5 +561,21 @@ mod tests {
         let err = parse_qq_token("1903262889").unwrap_err();
 
         assert!(err.to_string().contains("AppID:AppSecret"));
+    }
+
+    /// 验证失效的微信旧默认配置会回退到当前官方参数。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
+    #[test]
+    fn resolves_legacy_weixin_login_defaults() {
+        let (base_url, bot_type) =
+            resolve_weixin_login_settings(None, None, "https://ilink.tencentbot.top", "WeChat");
+
+        assert_eq!(base_url, "https://ilinkai.weixin.qq.com");
+        assert_eq!(bot_type, "3");
     }
 }

@@ -384,7 +384,7 @@ pub(super) fn default_qq_gateway_base_url() -> String {
 }
 
 pub(super) fn default_weixin_gateway_base_url() -> String {
-    "https://ilink.tencentbot.top".to_string()
+    "https://ilinkai.weixin.qq.com".to_string()
 }
 
 pub(super) fn default_weixin_gateway_cdn_base_url() -> String {
