@@ -322,23 +322,50 @@ fn resolve_weixin_login_settings(
     configured_base_url: &str,
     configured_bot_type: &str,
 ) -> (String, String) {
-    let base_url = non_empty_arg(base_url, "").unwrap_or_else(|| {
-        let configured = configured_base_url.trim();
-        if configured.is_empty() || configured.eq_ignore_ascii_case(LEGACY_WEIXIN_BASE_URL) {
-            default_weixin_base_url().to_string()
-        } else {
-            configured.to_string()
-        }
-    });
-    let bot_type = non_empty_arg(bot_type, "").unwrap_or_else(|| {
-        let configured = configured_bot_type.trim();
-        if configured.is_empty() || configured.eq_ignore_ascii_case(LEGACY_WEIXIN_BOT_TYPE) {
-            default_weixin_bot_type().to_string()
-        } else {
-            configured.to_string()
-        }
-    });
+    // 1. 解析 API 地址并替换失效的旧默认值
+    let base_url = resolve_weixin_login_setting(
+        base_url,
+        configured_base_url,
+        LEGACY_WEIXIN_BASE_URL,
+        default_weixin_base_url(),
+    );
+    // 2. 解析机器人类型并替换失效的旧默认值
+    let bot_type = resolve_weixin_login_setting(
+        bot_type,
+        configured_bot_type,
+        LEGACY_WEIXIN_BOT_TYPE,
+        default_weixin_bot_type(),
+    );
     (base_url, bot_type)
+}
+
+/// 解析单项微信登录参数，并优先采用命令行显式值。
+///
+/// 参数:
+/// - `explicit`: 命令行显式值
+/// - `configured`: 配置文件值
+/// - `legacy`: 需要替换的失效旧值
+/// - `default`: 当前默认值
+///
+/// 返回:
+/// - 解析后的有效参数
+fn resolve_weixin_login_setting(
+    explicit: Option<String>,
+    configured: &str,
+    legacy: &str,
+    default: &str,
+) -> String {
+    // 1. 命令行显式值始终优先
+    if let Some(explicit) = non_empty_arg(explicit, "") {
+        return explicit;
+    }
+    // 2. 配置为空或仍为失效旧值时使用当前默认值
+    let configured = configured.trim();
+    if configured.is_empty() || configured.eq_ignore_ascii_case(legacy) {
+        default.to_string()
+    } else {
+        configured.to_string()
+    }
 }
 
 /// 读取网关需要的应用配置。
