@@ -152,6 +152,68 @@ impl ReplRuntime {
         Ok(())
     }
 
+    /// 用权限选择面板接管底部输入区。
+    ///
+    /// 参数:
+    /// - `chrome`: 底栏状态
+    /// - `choice`: 当前高亮选项
+    /// - `reply`: 拒绝回复草稿
+    ///
+    /// 返回:
+    /// - 绘制是否成功
+    pub(super) fn begin_permission_composer(
+        &mut self,
+        chrome: &ReplChrome,
+        choice: crate::render::PermissionChoice,
+        reply: Option<String>,
+    ) -> Result<()> {
+        self.composer = Some(ComposerFrame::permission(chrome.clone(), choice, reply));
+        let size = TerminalSize::current();
+        let lines = self
+            .transcript
+            .display_tail(usize::from(size.cols), &self.options);
+        let composer_height = self.composer_height_for(size);
+        if self.viewport.update(size, composer_height, lines.len()) {
+            self.reflow.schedule_immediate();
+            self.maybe_reflow_due(false)?;
+        }
+        let mut stdout = io::stdout();
+        self.draw_composer(&mut stdout)
+    }
+
+    /// 刷新权限接管面板中的选项/回复草稿。
+    ///
+    /// 参数:
+    /// - `choice`: 高亮选项
+    /// - `reply`: 回复草稿
+    ///
+    /// 返回:
+    /// - 绘制是否成功
+    pub(super) fn set_permission_composer_state(
+        &mut self,
+        choice: crate::render::PermissionChoice,
+        reply: Option<String>,
+    ) -> Result<()> {
+        if let Some(composer) = self.composer.as_mut() {
+            if composer.is_permission() {
+                composer.set_permission_state(choice, reply);
+            } else {
+                // 若当前不是权限态，无法无 chrome 重建，仅更新 transcript。
+            }
+        }
+        let size = TerminalSize::current();
+        let lines = self
+            .transcript
+            .display_tail(usize::from(size.cols), &self.options);
+        let composer_height = self.composer_height_for(size);
+        if self.viewport.update(size, composer_height, lines.len()) {
+            self.reflow.schedule_immediate();
+            self.maybe_reflow_due(false)?;
+        }
+        let mut stdout = io::stdout();
+        self.draw_composer(&mut stdout)
+    }
+
     /// 处理输入阶段的 Resize 事件。
     ///
     /// 参数:

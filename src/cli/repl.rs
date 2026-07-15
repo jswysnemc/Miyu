@@ -356,7 +356,7 @@ pub(super) async fn run_repl(
                     runtime
                         .borrow_mut()
                         .record_permission_request(request.clone())?;
-                    prompt_permission_request_tui(request, &runtime)?;
+                    prompt_permission_request_tui(request, &runtime, &chrome)?;
                 }
                 runtime.borrow_mut().record_runner_event(&event)
             };

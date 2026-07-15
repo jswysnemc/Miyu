@@ -408,134 +408,6 @@ fn prompt_permission_request(
     Ok(decision)
 }
 
-/// 在 TUI 原始模式中读取单键权限选择。
-///
-/// 参数:
-/// - `request`: 已经写入 transcript 的权限请求
-///
-/// 返回:
-/// - 权限决定提交结果
-fn prompt_permission_request_tui(
-    request: &crate::permission::PermissionRequest,
-    runtime: &std::cell::RefCell<&mut ReplRuntime>,
-) -> Result<()> {
-    use crate::render::PermissionChoice;
-    let mut selected = PermissionChoice::Allow;
-    let mut reply_draft: Option<String> = None;
-    runtime
-        .borrow_mut()
-        .update_permission_choice(&request.id, selected)?;
-    loop {
-        let event = event::read()?;
-        if let Event::Resize(cols, rows) = event {
-            let mut runtime = runtime.borrow_mut();
-            runtime.observe_input_resize(cols, rows);
-            runtime.redraw()?;
-            continue;
-        }
-        if let Event::Paste(text) = event {
-            if let Some(draft) = reply_draft.as_mut() {
-                draft.push_str(&text);
-                runtime
-                    .borrow_mut()
-                    .update_permission_reply(&request.id, Some(draft.clone()))?;
-            }
-            continue;
-        }
-        let Event::Key(key) = event else { continue };
-        if key.kind == KeyEventKind::Release {
-            continue;
-        }
-        if let Some(draft) = reply_draft.as_mut() {
-            // 1. 回复编辑阶段直接在 transcript cell 中更新草稿
-            match key.code {
-                KeyCode::Enter => {
-                    let reply = (!draft.trim().is_empty()).then(|| draft.trim().to_string());
-                    return crate::permission::decide_permission(
-                        &request.id,
-                        crate::permission::PermissionDecision::Deny { reply },
-                    );
-                }
-                KeyCode::Esc => {
-                    reply_draft = None;
-                    runtime
-                        .borrow_mut()
-                        .update_permission_reply(&request.id, None)?;
-                    runtime
-                        .borrow_mut()
-                        .update_permission_choice(&request.id, selected)?;
-                }
-                KeyCode::Backspace => {
-                    draft.pop();
-                    runtime
-                        .borrow_mut()
-                        .update_permission_reply(&request.id, Some(draft.clone()))?;
-                }
-                KeyCode::Char(value) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
-                    draft.push(value);
-                    runtime
-                        .borrow_mut()
-                        .update_permission_reply(&request.id, Some(draft.clone()))?;
-                }
-                _ => {}
-            }
-            continue;
-        }
-        // 1. Codex 风格：方向键选择，y/n/Enter 确认
-        match key.code {
-            KeyCode::Up | KeyCode::Char('k') => {
-                selected = selected.prev();
-                runtime
-                    .borrow_mut()
-                    .update_permission_choice(&request.id, selected)?;
-                continue;
-            }
-            KeyCode::Down | KeyCode::Char('j') => {
-                selected = selected.next();
-                runtime
-                    .borrow_mut()
-                    .update_permission_choice(&request.id, selected)?;
-                continue;
-            }
-            KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
-                selected = PermissionChoice::Allow;
-            }
-            KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('2') | KeyCode::Esc => {
-                selected = PermissionChoice::Deny;
-            }
-            KeyCode::Char('3') => {
-                selected = PermissionChoice::DenyWithReply;
-            }
-            KeyCode::Enter => {}
-            _ => continue,
-        }
-        if selected == PermissionChoice::DenyWithReply && !matches!(key.code, KeyCode::Enter) {
-            // 快捷键 3 先进入回复编辑
-            reply_draft = Some(String::new());
-            runtime
-                .borrow_mut()
-                .update_permission_choice(&request.id, selected)?;
-            runtime
-                .borrow_mut()
-                .update_permission_reply(&request.id, reply_draft.clone())?;
-            continue;
-        }
-        let decision = match selected {
-            PermissionChoice::Allow => crate::permission::PermissionDecision::Allow,
-            PermissionChoice::Deny => crate::permission::PermissionDecision::Deny { reply: None },
-            PermissionChoice::DenyWithReply => {
-                reply_draft = Some(String::new());
-                runtime
-                    .borrow_mut()
-                    .update_permission_reply(&request.id, reply_draft.clone())?;
-                continue;
-            }
-        };
-        // 2. Broker 接收决定后，Agent 会发送 permission.resolved 更新原 cell
-        return crate::permission::decide_permission(&request.id, decision);
-    }
-}
-
 /// 从标准输入读取权限决定和可选拒绝回复。
 ///
 /// 参数:
@@ -546,8 +418,14 @@ fn prompt_permission_request_tui(
 fn read_permission_decision(
     request: &crate::permission::PermissionRequest,
 ) -> Result<crate::permission::PermissionDecision> {
-    // 1. 先输出语义化详情和三个稳定选择项
-    eprintln!("\n{}", crate::render::render_permission_prompt(request, crate::render::PermissionChoice::Allow));
+    // 1. 先输出语义化详情和可导航选择项
+    eprintln!(
+        "\n{}",
+        crate::render::render_permission_prompt(
+            request,
+            crate::render::PermissionChoice::Allow
+        )
+    );
     eprint!("选择 [1-3]，也可直接输入拒绝原因: ");
     io::stderr().flush()?;
     let mut answer = String::new();
@@ -577,4 +455,150 @@ fn read_permission_decision(
         }
     };
     Ok(decision)
+}
+
+/// 在 TUI 原始模式中读取权限选择；底部输入区被权限面板接管。
+///
+/// 参数:
+/// - `request`: 已经写入 transcript 的权限请求
+/// - `runtime`: REPL 运行期
+/// - `chrome`: 底栏状态（用于接管输入区 chrome）
+///
+/// 返回:
+/// - 权限决定提交结果
+fn prompt_permission_request_tui(
+    request: &crate::permission::PermissionRequest,
+    runtime: &std::cell::RefCell<&mut ReplRuntime>,
+    chrome: &repl_chrome::ReplChrome,
+) -> Result<()> {
+    use crate::render::PermissionChoice;
+    use repl_input::{disable_repl_terminal_input, enable_repl_terminal_input};
+
+    let mut selected = PermissionChoice::Allow;
+    let mut reply_draft: Option<String> = None;
+    let mut stdout = io::stdout();
+    // 1. 独占 raw 输入，避免与主循环输入框事件竞争。
+    enable_repl_terminal_input(&mut stdout)?;
+    // 2. 底部输入区改为权限面板，普通输入提示被覆盖。
+    {
+        let mut rt = runtime.borrow_mut();
+        rt.update_permission_choice(&request.id, selected)?;
+        rt.begin_permission_composer(chrome, selected, None)?;
+    }
+
+    let result = (|| -> Result<()> {
+        loop {
+            let event = event::read()?;
+            if let Event::Resize(cols, rows) = event {
+                let mut rt = runtime.borrow_mut();
+                rt.observe_input_resize(cols, rows);
+                rt.set_permission_composer_state(selected, reply_draft.clone())?;
+                continue;
+            }
+            if let Event::Paste(text) = event {
+                if let Some(draft) = reply_draft.as_mut() {
+                    draft.push_str(&text);
+                    let mut rt = runtime.borrow_mut();
+                    rt.update_permission_reply(&request.id, Some(draft.clone()))?;
+                    rt.set_permission_composer_state(selected, Some(draft.clone()))?;
+                }
+                continue;
+            }
+            let Event::Key(key) = event else {
+                continue;
+            };
+            if key.kind == KeyEventKind::Release {
+                continue;
+            }
+            if let Some(draft) = reply_draft.as_mut() {
+                match key.code {
+                    KeyCode::Enter => {
+                        let reply = (!draft.trim().is_empty()).then(|| draft.trim().to_string());
+                        return crate::permission::decide_permission(
+                            &request.id,
+                            crate::permission::PermissionDecision::Deny { reply },
+                        );
+                    }
+                    KeyCode::Esc => {
+                        reply_draft = None;
+                        let mut rt = runtime.borrow_mut();
+                        rt.update_permission_reply(&request.id, None)?;
+                        rt.update_permission_choice(&request.id, selected)?;
+                        rt.set_permission_composer_state(selected, None)?;
+                    }
+                    KeyCode::Backspace => {
+                        draft.pop();
+                        let mut rt = runtime.borrow_mut();
+                        rt.update_permission_reply(&request.id, Some(draft.clone()))?;
+                        rt.set_permission_composer_state(selected, Some(draft.clone()))?;
+                    }
+                    KeyCode::Char(value) if !key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        draft.push(value);
+                        let mut rt = runtime.borrow_mut();
+                        rt.update_permission_reply(&request.id, Some(draft.clone()))?;
+                        rt.set_permission_composer_state(selected, Some(draft.clone()))?;
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+            match key.code {
+                KeyCode::Up | KeyCode::Char('k') => {
+                    selected = selected.prev();
+                    let mut rt = runtime.borrow_mut();
+                    rt.update_permission_choice(&request.id, selected)?;
+                    rt.set_permission_composer_state(selected, None)?;
+                    continue;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    selected = selected.next();
+                    let mut rt = runtime.borrow_mut();
+                    rt.update_permission_choice(&request.id, selected)?;
+                    rt.set_permission_composer_state(selected, None)?;
+                    continue;
+                }
+                KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Char('1') => {
+                    selected = PermissionChoice::Allow;
+                }
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Char('2') | KeyCode::Esc => {
+                    selected = PermissionChoice::Deny;
+                }
+                KeyCode::Char('3') => {
+                    selected = PermissionChoice::DenyWithReply;
+                }
+                KeyCode::Enter => {}
+                _ => continue,
+            }
+            if selected == PermissionChoice::DenyWithReply && !matches!(key.code, KeyCode::Enter) {
+                reply_draft = Some(String::new());
+                let mut rt = runtime.borrow_mut();
+                rt.update_permission_choice(&request.id, selected)?;
+                rt.update_permission_reply(&request.id, reply_draft.clone())?;
+                rt.set_permission_composer_state(selected, reply_draft.clone())?;
+                continue;
+            }
+            let decision = match selected {
+                PermissionChoice::Allow => crate::permission::PermissionDecision::Allow,
+                PermissionChoice::Deny => {
+                    crate::permission::PermissionDecision::Deny { reply: None }
+                }
+                PermissionChoice::DenyWithReply => {
+                    reply_draft = Some(String::new());
+                    let mut rt = runtime.borrow_mut();
+                    rt.update_permission_reply(&request.id, reply_draft.clone())?;
+                    rt.set_permission_composer_state(selected, reply_draft.clone())?;
+                    continue;
+                }
+            };
+            return crate::permission::decide_permission(&request.id, decision);
+        }
+    })();
+
+    // 3. 结束权限面板并恢复终端模式，交回后续流式输出/下一轮输入。
+    {
+        let mut rt = runtime.borrow_mut();
+        let _ = rt.end_composer();
+    }
+    let _ = disable_repl_terminal_input(&mut stdout);
+    result
 }
