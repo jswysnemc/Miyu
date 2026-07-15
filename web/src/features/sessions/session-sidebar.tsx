@@ -1,9 +1,10 @@
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { CheckSquare2, ChevronDown, ChevronRight, FolderGit2, FolderSearch, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
+import { Cable, CalendarClock, CheckSquare2, ChevronDown, ChevronRight, FolderGit2, FolderSearch, MoreHorizontal, PanelLeftClose, PanelLeftOpen, Pencil, Plus, RefreshCw, Settings, Square, Trash2, X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
-import { NavLink } from "react-router-dom";
+import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { api } from "../../api/client";
 import { useConfirm } from "../../shared/ui/dialog/dialog-provider";
+import { MiyuLogo } from "../../shared/ui/miyu-logo";
 import { switchWithTerminalConfirm } from "../workspaces/workspace-switcher";
 import { ServerDirectoryDialog } from "../workspaces/server-directory-dialog";
 import { ActiveAgentIndicator } from "./active-agent-indicator";
@@ -25,8 +26,11 @@ type SessionSidebarProps = {
 export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: SessionSidebarProps) {
   const queryClient = useQueryClient();
   const confirm = useConfirm();
+  const navigate = useNavigate();
+  const location = useLocation();
   const [menu, setMenu] = useState<string | null>(null);
   const [workspaceMenu, setWorkspaceMenu] = useState<string | null>(null);
+  const [appMenuOpen, setAppMenuOpen] = useState(false);
   const [browserOpen, setBrowserOpen] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -35,13 +39,14 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   const [renameDraft, setRenameDraft] = useState("");
   const [navigationError, setNavigationError] = useState<Error | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const appMenuRef = useRef<HTMLDivElement | null>(null);
   const { tree, expanded, runningSessions, toggleWorkspace } = useSessionTree();
   const activeWorkspace = tree.data?.find((workspace) => workspace.active);
   const sessions = activeWorkspace?.sessions ?? [];
 
   // 1. 监听整页 pointerdown，点击菜单外任意位置时关闭会话或工作区管理菜单
   useEffect(() => {
-    if (!menu && !workspaceMenu) return;
+    if (!menu && !workspaceMenu && !appMenuOpen) return;
     /**
      * 处理菜单外部点击并关闭菜单。
      *
@@ -49,12 +54,14 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
      */
     const onPointerDown = (event: PointerEvent) => {
       if (menuRef.current && event.target instanceof Node && menuRef.current.contains(event.target)) return;
+      if (appMenuRef.current && event.target instanceof Node && appMenuRef.current.contains(event.target)) return;
       setMenu(null);
       setWorkspaceMenu(null);
+      setAppMenuOpen(false);
     };
     document.addEventListener("pointerdown", onPointerDown);
     return () => document.removeEventListener("pointerdown", onPointerDown);
-  }, [menu, workspaceMenu]);
+  }, [appMenuOpen, menu, workspaceMenu]);
 
   /** 刷新会话列表和全部消息缓存。 */
   const refresh = async () => {
@@ -197,6 +204,9 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
 
   const manageableCount = sessions.filter((session) => session.id !== "default").length;
   const error = navigationError ?? tree.error ?? remove.error ?? removeMany.error ?? rename.error ?? removeWorkspace.error;
+  const appMenuActive = location.pathname.startsWith("/settings")
+    || location.pathname.startsWith("/gateways")
+    || location.pathname.startsWith("/cron-jobs");
 
   /** 切换工作区和会话，跨工作区时完成切换后重新载入工作台。 */
   const openSession = async (workspaceId: string, sessionId: string, workspaceActive: boolean, sessionActive: boolean) => {
@@ -222,15 +232,44 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   if (collapsed) {
     return (
       <div className="session-sidebar collapsed">
+        <button type="button" className="sidebar-rail-button brand-rail" onClick={onToggleCollapsed} aria-label="展开会话侧栏" title="展开会话侧栏">
+          <MiyuLogo size={18} />
+        </button>
         <button type="button" className="sidebar-rail-button" onClick={onToggleCollapsed} aria-label="展开会话侧栏" title="展开会话侧栏">
           <PanelLeftOpen size={17} />
+        </button>
+        <button type="button" className="sidebar-rail-button" onClick={() => setBrowserOpen(true)} aria-label="打开服务端目录" title="打开服务端目录">
+          <FolderSearch size={17} />
         </button>
         <button type="button" className="sidebar-rail-button" onClick={() => create.mutate(undefined)} disabled={create.isPending} aria-label="新建会话" title="新建会话">
           <Plus size={17} />
         </button>
-        <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => isActive ? "sidebar-rail-button active" : "sidebar-rail-button"} aria-label="打开配置" title="配置">
-          <Settings size={17} strokeWidth={1.8} />
-        </NavLink>
+        <div className="sidebar-app-menu collapsed-app-menu" ref={appMenuRef}>
+          <button
+            type="button"
+            className={`sidebar-rail-button${appMenuOpen || appMenuActive ? " active" : ""}`}
+            onClick={() => setAppMenuOpen((value) => !value)}
+            aria-label="应用菜单"
+            title="应用菜单"
+            aria-expanded={appMenuOpen}
+          >
+            <Settings size={17} strokeWidth={1.8} />
+          </button>
+          {appMenuOpen && (
+            <div className="sidebar-app-popover rail">
+              <button type="button" onClick={() => { setAppMenuOpen(false); navigate("/settings"); onNavigate?.(); }}>
+                <Settings size={14} /><span>配置</span>
+              </button>
+              <button type="button" onClick={() => { setAppMenuOpen(false); navigate("/gateways"); onNavigate?.(); }}>
+                <Cable size={14} /><span>网关</span>
+              </button>
+              <button type="button" onClick={() => { setAppMenuOpen(false); navigate("/cron-jobs"); onNavigate?.(); }}>
+                <CalendarClock size={14} /><span>定时任务</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <ServerDirectoryDialog open={browserOpen} onClose={() => setBrowserOpen(false)} onSelect={openDirectory} />
       </div>
     );
   }
@@ -238,7 +277,10 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   return (
     <div className="session-sidebar">
       <div className="sidebar-heading">
-        <div><span className="eyebrow">Sessions</span><h2>会话</h2></div>
+        <button type="button" className="sidebar-brand" onClick={onToggleCollapsed} aria-label="Miyu" title="Miyu">
+          <MiyuLogo size={20} />
+          <span>Miyu</span>
+        </button>
         <div className="sidebar-heading-actions">
           <button type="button" className="icon-button" aria-label="打开服务端目录" title="打开服务端目录" onClick={() => setBrowserOpen(true)}>
             <FolderSearch size={16} />
@@ -332,10 +374,28 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
         })}
       </div>
       {error && <p className="sidebar-error">{error.message}</p>}
-      <div className="sidebar-footer">
-        <NavLink to="/settings" onClick={onNavigate} className={({ isActive }) => isActive ? "sidebar-settings-link active" : "sidebar-settings-link"}>
-          <Settings size={15} strokeWidth={1.8} /><span>配置</span>
-        </NavLink>
+      <div className="sidebar-footer" ref={appMenuRef}>
+        <button
+          type="button"
+          className={`sidebar-settings-link${appMenuOpen || appMenuActive ? " active" : ""}`}
+          onClick={() => setAppMenuOpen((value) => !value)}
+          aria-expanded={appMenuOpen}
+        >
+          <Settings size={15} strokeWidth={1.8} /><span>应用</span>
+        </button>
+        {appMenuOpen && (
+          <div className="sidebar-app-popover">
+            <NavLink to="/settings" onClick={() => { setAppMenuOpen(false); onNavigate?.(); }} className={({ isActive }) => isActive ? "active" : ""}>
+              <Settings size={14} /><span>配置</span>
+            </NavLink>
+            <NavLink to="/gateways" onClick={() => { setAppMenuOpen(false); onNavigate?.(); }} className={({ isActive }) => isActive ? "active" : ""}>
+              <Cable size={14} /><span>网关</span>
+            </NavLink>
+            <NavLink to="/cron-jobs" onClick={() => { setAppMenuOpen(false); onNavigate?.(); }} className={({ isActive }) => isActive ? "active" : ""}>
+              <CalendarClock size={14} /><span>定时任务</span>
+            </NavLink>
+          </div>
+        )}
       </div>
       <ServerDirectoryDialog open={browserOpen} onClose={() => setBrowserOpen(false)} onSelect={openDirectory} />
     </div>

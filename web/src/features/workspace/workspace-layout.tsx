@@ -195,21 +195,21 @@ export function WorkspaceLayout({ selectedFile, onSelectFile, onClearFile }: Wor
             />
           </aside>
         )}
-        <WorkspaceActivityRail
-          tab={paneTab}
-          workspaceOpen={layout.workspaceOpen}
-          chatOpen={layout.chatOpen}
-          maximized={layout.workspaceMaximized}
-          terminalOpen={layout.terminalOpen}
-          onSelectTab={showWorkspaceTab}
-          onCollapse={closeWorkspace}
-          onExpand={layout.openWorkspace}
-          onToggleChat={layout.toggleChat}
-          onToggleMaximized={layout.toggleWorkspaceMaximized}
-          onToggleSwapped={layout.toggleSwapped}
-          onToggleTerminal={layout.toggleTerminal}
-        />
       </div>
+      <WorkspaceActivityRail
+        tab={paneTab}
+        workspaceOpen={layout.workspaceOpen}
+        chatOpen={layout.chatOpen}
+        maximized={layout.workspaceMaximized}
+        terminalOpen={layout.terminalOpen}
+        onSelectTab={showWorkspaceTab}
+        onCollapse={closeWorkspace}
+        onExpand={layout.openWorkspace}
+        onToggleChat={layout.toggleChat}
+        onToggleMaximized={layout.toggleWorkspaceMaximized}
+        onToggleSwapped={layout.toggleSwapped}
+        onToggleTerminal={layout.toggleTerminal}
+      />
       {layout.terminalOpen && (
         <div className="coding-terminal">
           <TerminalResizeHandle onResize={layout.resizeTerminal} />

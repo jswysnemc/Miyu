@@ -3,7 +3,7 @@
   flex-direction: column;
   height: 100%;
   min-height: 0;
-  padding: 13px 10px 10px;
+  padding: 10px 10px 10px;
 }
 
 .session-sidebar.collapsed {
@@ -212,6 +212,7 @@
 }
 
 .sidebar-footer {
+  position: relative;
   margin-top: 8px;
   padding-top: 8px;
   border-top: 1px solid var(--line);
@@ -221,12 +222,17 @@
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
   min-height: 34px;
   padding: 0 10px;
+  border: 0;
   border-radius: 8px;
+  background: transparent;
   color: var(--ink-soft);
   font-size: 12px;
+  text-align: left;
   text-decoration: none;
+  cursor: pointer;
 }
 
 .sidebar-settings-link:hover {
@@ -237,6 +243,104 @@
 .sidebar-settings-link.active {
   background: var(--signal-soft);
   color: var(--signal);
+}
+
+.sidebar-app-popover {
+  position: absolute;
+  left: 8px;
+  right: 8px;
+  bottom: calc(100% + 8px);
+  display: grid;
+  gap: 2px;
+  padding: 6px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--paper-raised);
+  box-shadow: var(--shadow);
+  z-index: 40;
+}
+
+.sidebar-app-popover a,
+.sidebar-app-popover button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 34px;
+  padding: 0 10px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 12px;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+
+.sidebar-app-popover a:hover,
+.sidebar-app-popover button:hover,
+.sidebar-app-popover a.active {
+  background: var(--paper-deep);
+  color: var(--ink);
+}
+
+.sidebar-app-popover.rail {
+  left: calc(100% + 8px);
+  right: auto;
+  bottom: 0;
+  width: 160px;
+}
+
+.collapsed-app-menu {
+  position: relative;
+  margin-top: auto;
+}
+
+.sidebar-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 40px;
+  padding: 2px 2px 10px;
+}
+
+.sidebar-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  min-height: 32px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  cursor: pointer;
+}
+
+.sidebar-brand:hover {
+  background: var(--paper-deep);
+}
+
+.sidebar-brand span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.brand-rail {
+  margin-bottom: 4px;
+}
+
+.sidebar-heading-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .sidebar-heading {

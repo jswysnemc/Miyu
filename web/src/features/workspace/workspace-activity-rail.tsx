@@ -26,14 +26,12 @@ const tabs: Array<{ id: PaneTab; label: string; icon: typeof FileCode2 }> = [
 ];
 
 /**
- * 渲染悬浮在工作台右缘的活动栏。
+ * 渲染贴右侧边缘的 Cursor 风格活动栏。
  *
- * 上段切换工作区视图:工作区关闭时点击任一图标打开并跳转,再次点击
- * 当前视图图标收起工作区。下段是布局弹出菜单(聊天区、全屏、交换、
- * 底部终端)和工作区收起/展开开关。
+ * 上段切换工作区视图；下段提供布局菜单与展开/收起。
  *
  * @param props 当前视图、布局状态与各切换回调
- * @returns 悬浮活动栏
+ * @returns 右侧活动栏
  */
 export function WorkspaceActivityRail(props: WorkspaceActivityRailProps) {
   const [menuOpen, setMenuOpen] = useState(false);
@@ -54,50 +52,53 @@ export function WorkspaceActivityRail(props: WorkspaceActivityRailProps) {
   };
 
   return (
-    <nav className="workspace-floating-rail" aria-label="工作区活动栏">
-      {tabs.map(({ id, label, icon: Icon }) => {
-        const active = props.workspaceOpen && props.tab === id;
-        return (
-          <button key={id} type="button" className={active ? "active" : ""} onClick={() => handleTab(id)} title={active ? `收起${label}` : label} aria-label={label} aria-pressed={active}>
-            <Icon size={16} />
+    <nav className="workspace-activity-rail" aria-label="工作区活动栏">
+      <div className="workspace-activity-rail-top">
+        {tabs.map(({ id, label, icon: Icon }) => {
+          const active = props.workspaceOpen && props.tab === id;
+          return (
+            <button key={id} type="button" className={active ? "active" : ""} onClick={() => handleTab(id)} title={active ? `收起${label}` : label} aria-label={label} aria-pressed={active}>
+              <Icon size={16} />
+            </button>
+          );
+        })}
+      </div>
+      <div className="workspace-activity-rail-bottom">
+        <div className="rail-menu-anchor" ref={menuRef}>
+          <button type="button" className={menuOpen ? "active" : ""} onClick={() => setMenuOpen((value) => !value)} title="布局选项" aria-label="布局选项" aria-expanded={menuOpen}>
+            <SlidersHorizontal size={15} />
           </button>
-        );
-      })}
-      <span className="rail-divider" aria-hidden />
-      <div className="rail-menu-anchor" ref={menuRef}>
-        <button type="button" className={menuOpen ? "active" : ""} onClick={() => setMenuOpen((value) => !value)} title="布局选项" aria-label="布局选项" aria-expanded={menuOpen}>
-          <SlidersHorizontal size={15} />
+          {menuOpen && (
+            <div className="rail-layout-menu" role="menu">
+              <button type="button" role="menuitem" className={props.chatOpen ? "checked" : ""} onClick={props.onToggleChat}>
+                <MessageSquare size={14} /><span>聊天区</span>
+              </button>
+              <button type="button" role="menuitem" className={props.maximized ? "checked" : ""} onClick={props.onToggleMaximized}>
+                <Maximize2 size={14} /><span>工作区全屏</span>
+              </button>
+              <button type="button" role="menuitem" onClick={props.onToggleSwapped}>
+                <ArrowLeftRight size={14} /><span>交换左右布局</span>
+              </button>
+              <button type="button" role="menuitem" className={props.terminalOpen ? "checked" : ""} onClick={props.onToggleTerminal}>
+                <PanelBottomOpen size={14} /><span>底部终端</span>
+              </button>
+            </div>
+          )}
+        </div>
+        <button
+          type="button"
+          onClick={props.workspaceOpen ? props.onCollapse : props.onExpand}
+          title={props.workspaceOpen ? "收起工作区" : "展开工作区"}
+          aria-label={props.workspaceOpen ? "收起工作区" : "展开工作区"}
+        >
+          {props.workspaceOpen ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
         </button>
-        {menuOpen && (
-          <div className="rail-layout-menu" role="menu">
-            <button type="button" role="menuitem" className={props.chatOpen ? "checked" : ""} onClick={props.onToggleChat}>
-              <MessageSquare size={14} /><span>聊天区</span>
-            </button>
-            <button type="button" role="menuitem" className={props.maximized ? "checked" : ""} onClick={props.onToggleMaximized}>
-              <Maximize2 size={14} /><span>工作区全屏</span>
-            </button>
-            <button type="button" role="menuitem" onClick={props.onToggleSwapped}>
-              <ArrowLeftRight size={14} /><span>交换左右布局</span>
-            </button>
-            <button type="button" role="menuitem" className={props.terminalOpen ? "checked" : ""} onClick={props.onToggleTerminal}>
-              <PanelBottomOpen size={14} /><span>底部终端</span>
-            </button>
-          </div>
+        {!props.chatOpen && !props.workspaceOpen && (
+          <button type="button" onClick={props.onToggleChat} title="显示聊天区" aria-label="显示聊天区">
+            <LayoutPanelLeft size={16} />
+          </button>
         )}
       </div>
-      <button
-        type="button"
-        onClick={props.workspaceOpen ? props.onCollapse : props.onExpand}
-        title={props.workspaceOpen ? "收起工作区" : "展开工作区"}
-        aria-label={props.workspaceOpen ? "收起工作区" : "展开工作区"}
-      >
-        {props.workspaceOpen ? <ChevronsRight size={16} /> : <ChevronsLeft size={16} />}
-      </button>
-      {!props.chatOpen && !props.workspaceOpen && (
-        <button type="button" onClick={props.onToggleChat} title="显示聊天区" aria-label="显示聊天区">
-          <LayoutPanelLeft size={16} />
-        </button>
-      )}
     </nav>
   );
 }
