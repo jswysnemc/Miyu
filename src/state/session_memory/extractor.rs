@@ -331,7 +331,7 @@ mod tests {
         assert_eq!(memory.last_summarized_turn_id.as_deref(), Some("turn_1"));
         assert_eq!(memory.last_summarized_seq, 1);
         assert_eq!(memory.source_turn_count, 1);
-        assert_eq!(memory.token_estimate, 6);
+        assert_eq!(memory.token_estimate, 4);
         assert_eq!(memory.consecutive_failures, 0);
     }
 

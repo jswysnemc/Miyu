@@ -61,13 +61,18 @@ impl StateStore {
             &self.session_id,
             std::process::id(),
         )?;
-        let context_chars = projection.estimate.state_context_chars;
+        let estimated_context_chars = projection.estimate.state_context_chars;
         let usage = projection.stats.usage;
-        let context_prompt_tokens = usage
+        let api_prompt_tokens = usage
             .last_conversation_usage
             .as_ref()
             .map(|usage| usage.prompt_tokens as usize)
-            .unwrap_or_default();
+            .filter(|tokens| *tokens > 0);
+        // 有 provider 回报时优先使用真实 prompt_tokens；否则用 o200k 预估当前会话上下文。
+        let context_prompt_tokens = match api_prompt_tokens {
+            Some(tokens) => tokens,
+            None => self.estimate_session_context_tokens()?,
+        };
         let mut projection_warnings: Vec<String> = projection
             .warnings
             .iter()
@@ -102,9 +107,9 @@ impl StateStore {
             tail_turns: projection.stats.tail_turns,
             latest_checkpoint_at: projection.stats.latest_checkpoint_at,
             latest_checkpoint_reason,
-            context_chars,
+            context_chars: estimated_context_chars,
             context_limit_chars,
-            context_ratio: context_ratio(context_chars, context_limit_chars),
+            context_ratio: context_ratio(estimated_context_chars, context_limit_chars),
             context_prompt_tokens,
             context_window_tokens: context_limit_chars,
             context_token_ratio: context_ratio(context_prompt_tokens, context_limit_chars),
@@ -122,6 +127,32 @@ impl StateStore {
             projection_warnings,
             active_run: None,
         })
+    }
+
+    /// 在没有 provider usage 时，用 o200k 预估当前会话上下文 token。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 预估 prompt token 数
+    fn estimate_session_context_tokens(&self) -> Result<usize> {
+        let history = super::checkpoints::project_history(
+            &self.conv_db,
+            &self.session_id,
+            None,
+        )?;
+        let mut parts = Vec::new();
+        if let Some(context) = history.checkpoint_context.as_ref() {
+            parts.push(context.clone());
+        }
+        for message in &history.messages {
+            if let Ok(serialized) = serde_json::to_string(message) {
+                parts.push(serialized);
+            }
+        }
+        let refs: Vec<&str> = parts.iter().map(String::as_str).collect();
+        Ok(crate::token_estimate::estimate_texts_tokens(&refs) as usize)
     }
 }
 

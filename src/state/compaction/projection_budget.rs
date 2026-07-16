@@ -1,4 +1,4 @@
-use super::{estimate_chat_messages_chars, CompactionRequest};
+use super::{estimate_chat_messages_tokens, CompactionRequest};
 use crate::llm::ChatMessage;
 use crate::state::checkpoints::{
     project_history_from_parts, CheckpointReason, CompactionCheckpoint,
@@ -10,7 +10,7 @@ use crate::state::StateStore;
 use anyhow::Result;
 
 impl StateStore {
-    /// 估算压缩写入后重新投影的 provider 请求字符数。
+    /// 估算压缩写入后重新投影的 provider 请求 token 数。
     ///
     /// 参数:
     /// - `request`: 压缩请求
@@ -19,7 +19,7 @@ impl StateStore {
     /// - `exclude_turn_id`: 当前运行中轮次标识
     ///
     /// 返回:
-    /// - 重新投影后的 provider 请求字符数估算
+    /// - 重新投影后的 provider 请求 token 数估算
     pub(in crate::state) fn estimate_reprojected_context_chars_after_compaction(
         &self,
         request: &CompactionRequest,
@@ -37,13 +37,13 @@ impl StateStore {
             .saturating_add(next_history_chars))
     }
 
-    /// 估算当前 provider 可见历史上下文字符数。
+    /// 估算当前 provider 可见历史上下文 token 数。
     ///
     /// 参数:
     /// - `exclude_turn_id`: 当前运行中轮次标识
     ///
     /// 返回:
-    /// - 当前历史上下文字符数
+    /// - 当前历史上下文 token 数
     pub(in crate::state) fn visible_history_context_chars(
         &self,
         exclude_turn_id: Option<&str>,
@@ -58,7 +58,7 @@ impl StateStore {
         ))
     }
 
-    /// 估算应用压缩后的 provider 可见历史上下文字符数。
+    /// 估算应用压缩后的 provider 可见历史上下文 token 数。
     ///
     /// 参数:
     /// - `request`: 压缩请求
@@ -66,7 +66,7 @@ impl StateStore {
     /// - `exclude_turn_id`: 当前运行中轮次标识
     ///
     /// 返回:
-    /// - 压缩后的历史上下文字符数
+    /// - 压缩后的历史上下文 token 数
     pub(in crate::state) fn projected_history_chars_after_compaction(
         &self,
         request: &CompactionRequest,
@@ -148,14 +148,14 @@ impl StateStore {
     }
 }
 
-/// 估算 provider 历史消息字符数。
+/// 估算 provider 历史消息 token 数。
 ///
 /// 参数:
 /// - `summary_context`: checkpoint 或 legacy summary 上下文
 /// - `entries`: 历史消息入口
 ///
 /// 返回:
-/// - 历史消息字符数
+/// - 历史消息 token 数
 fn history_messages_chars(
     summary_context: Option<&str>,
     history_messages: Vec<ChatMessage>,
@@ -168,5 +168,5 @@ fn history_messages_chars(
     if messages.is_empty() {
         return 0;
     }
-    estimate_chat_messages_chars(&messages)
+    estimate_chat_messages_tokens(&messages)
 }

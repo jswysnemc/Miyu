@@ -161,16 +161,16 @@ fn compaction_budget_check_does_not_write_checkpoint_or_recovery() {
             .complete_turn(&turn_id, &"a".repeat(200), None)
             .unwrap();
     }
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
         .unwrap()
         .expect("compaction request");
     let projection =
-        crate::state::request_projection::project_provider_turn_from_messages(&messages, 0, 2_000);
+        crate::state::request_projection::project_provider_turn_from_messages(&messages, 0, 500);
 
     let budget = store
-        .compaction_budget_check(&request, &"s".repeat(3_000), &projection, None)
+        .compaction_budget_check(&request, &"s".repeat(20_000), &projection, None)
         .unwrap();
     let projected = store.project_history(None).unwrap();
     let recovery = store.recovery_snapshot().unwrap();
@@ -195,7 +195,7 @@ fn manual_compaction_over_budget_records_failure_without_checkpoint() {
     let request = store.select_manual_compaction(1).unwrap().unwrap();
 
     let outcome = store
-        .apply_manual_compaction_with_budget_guard(&request, &"s".repeat(3_000), 2_000)
+        .apply_manual_compaction_with_budget_guard(&request, &"s".repeat(20_000), 100)
         .unwrap();
     let projected = store.project_history(None).unwrap();
     let recovery = store.recovery_snapshot().unwrap();

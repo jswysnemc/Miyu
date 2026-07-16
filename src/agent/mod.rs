@@ -95,9 +95,7 @@ impl Agent {
             state.reset_if_prompt_changed(&base_system_prompt)?;
             state.recover_stale_turns()?;
         }
-        let context_char_budget = crate::token_estimate::conservative_char_capacity(
-            config.active_context_window_tokens()?,
-        );
+        let context_char_budget = config.active_context_window_tokens()?;
         let max_tool_rounds = config.tools.max_rounds;
         if tools_enabled && config.tools.progressive_loading_enabled {
             tools::register_progressive_loader(&mut tools);
@@ -179,9 +177,7 @@ impl Agent {
                 .reset_if_prompt_changed(&self.base_system_prompt)?;
             self.state.recover_stale_turns()?;
         }
-        self.context_char_budget = crate::token_estimate::conservative_char_capacity(
-            self.config.active_context_window_tokens()?,
-        );
+        self.context_char_budget = self.config.active_context_window_tokens()?;
         self.max_tool_rounds = self.config.tools.max_rounds;
         self.trim_at_ratio = self.config.context.trim_at_ratio;
         Ok(())

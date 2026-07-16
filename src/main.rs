@@ -23,6 +23,7 @@ mod runtime_cwd;
 mod runtime_recovery;
 mod shell;
 mod state;
+mod token_counter;
 mod token_estimate;
 mod tools;
 mod web;

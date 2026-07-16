@@ -1,52 +1,38 @@
-//! 粗略 token 估算：区分 CJK 与拉丁字符，避免中文场景下 `chars/4` 严重偏松。
+//! token 估算：优先使用 OpenAI-family `o200k_base` BPE，失败时回退到字符规则。
 
 const CHARS_PER_TOKEN_LATIN: usize = 4;
 const CHARS_PER_TOKEN_CJK: usize = 2;
 
-/// 估算单段文本的 token 数（至少为 1，空串为 0）。
-///
-/// 参数:
-/// - `text`: 待估算文本
-///
-/// 返回:
-/// - 粗略 token 数
+/// 估算单段文本的 token 数（非空文本至少为 1，空串为 0）。
 pub fn estimate_tokens(text: &str) -> usize {
     if text.is_empty() {
         return 0;
     }
-    text_tokens(text).max(1)
+    tiktoken_tokens(text)
+        .unwrap_or_else(|| text_tokens(text))
+        .max(1)
 }
 
 /// 估算多段文本合计 token 数。
-///
-/// 参数:
-/// - `texts`: 文本片段
-///
-/// 返回:
-/// - 粗略 token 数（u64）
+#[allow(dead_code)]
 pub fn estimate_texts_tokens(texts: &[&str]) -> u64 {
     let combined: String = texts.iter().copied().collect();
     estimate_tokens(&combined) as u64
 }
 
-/// 将 token 预算换算为保守字符容量。
+
+/// 将 token 预算换算为保守字符容量（仅作兼容回退，预算路径应优先用 token）。
 ///
 /// 参数:
 /// - `tokens`: token 预算
 ///
 /// 返回:
 /// - 任意 CJK / 拉丁混排下都不会超出 token 预算的字符数
+#[allow(dead_code)]
 pub fn conservative_char_capacity(tokens: usize) -> usize {
     tokens.saturating_mul(CHARS_PER_TOKEN_CJK)
 }
 
-/// 按 CJK / 拉丁分别折算，不做 min=1。
-///
-/// 参数:
-/// - `text`: 待估算文本
-///
-/// 返回:
-/// - 未钳制的 token 估算
 fn text_tokens(text: &str) -> usize {
     let mut cjk = 0usize;
     let mut latin = 0usize;
@@ -57,25 +43,21 @@ fn text_tokens(text: &str) -> usize {
             latin += 1;
         }
     }
-    // 分组向上取整，与原先 chars.div_ceil(4) 在纯拉丁文本上对齐
     cjk.div_ceil(CHARS_PER_TOKEN_CJK) + latin.div_ceil(CHARS_PER_TOKEN_LATIN)
 }
 
-/// 判断字符是否按 CJK 密度估算。
-///
-/// 参数:
-/// - `ch`: 字符
-///
-/// 返回:
-/// - 是否为 CJK / 假名 / 韩文 / 全角
+fn tiktoken_tokens(text: &str) -> Option<usize> {
+    std::panic::catch_unwind(|| crate::token_counter::count(text)).ok()
+}
+
 fn is_cjk(ch: char) -> bool {
     let code = ch as u32;
-    (0x4E00..=0x9FFF).contains(&code) // CJK Unified Ideographs
-        || (0x3400..=0x4DBF).contains(&code) // CJK Extension A
-        || (0x20000..=0x2A6DF).contains(&code) // CJK Extension B
-        || (0x3040..=0x30FF).contains(&code) // Hiragana + Katakana
-        || (0xAC00..=0xD7AF).contains(&code) // Hangul Syllables
-        || (0xFF00..=0xFFEF).contains(&code) // Fullwidth Forms
+    (0x4E00..=0x9FFF).contains(&code)
+        || (0x3400..=0x4DBF).contains(&code)
+        || (0x20000..=0x2A6DF).contains(&code)
+        || (0x3040..=0x30FF).contains(&code)
+        || (0xAC00..=0xD7AF).contains(&code)
+        || (0xFF00..=0xFFEF).contains(&code)
 }
 
 #[cfg(test)]
@@ -83,21 +65,23 @@ mod tests {
     use super::*;
 
     #[test]
-    fn latin_uses_four_chars_per_token() {
+    fn latin_uses_bpe_tokenizer() {
         assert_eq!(estimate_tokens("abcd"), 1);
-        assert_eq!(estimate_tokens("abcdefgh"), 2);
+        assert_eq!(estimate_tokens("abcdefgh"), 1);
+        assert!(estimate_tokens("hello world") >= 2);
     }
 
     #[test]
-    fn cjk_uses_two_chars_per_token() {
+    fn cjk_uses_bpe_tokenizer() {
         assert_eq!(estimate_tokens("你好"), 1);
         assert_eq!(estimate_tokens("你好世界"), 2);
+        assert_eq!(estimate_tokens("你好世"), 2);
     }
 
     #[test]
-    fn mixed_text_combines_rates() {
-        // 4 拉丁 + 2 汉字 => 1 + 1
+    fn mixed_text_counts_non_empty_tokens() {
         assert_eq!(estimate_tokens("abcd你好"), 2);
+        assert!(estimate_tokens("abc你好世") >= 2);
     }
 
     #[test]
@@ -107,13 +91,124 @@ mod tests {
     }
 
     #[test]
-    fn conservative_capacity_never_exceeds_token_budget() {
-        // 全 CJK 是最坏情况：2 字符/token，容量按此换算保证任何混排都不超预算
-        let budget = conservative_char_capacity(1_000);
-        assert_eq!(budget, 2_000);
-        let cjk_text = "你".repeat(budget);
-        assert!(estimate_tokens(&cjk_text) <= 1_000);
-        let latin_text = "a".repeat(budget);
-        assert!(estimate_tokens(&latin_text) <= 1_000);
+    fn counts_match_official_tiktoken_vectors() {
+        let vectors = [
+            ("", 0),
+            ("hello world", 2),
+            ("你好世界", 2),
+            ("Rust + 中文 + emoji 🚀\nsecond line", 10),
+            (" \t\n\r\n punctuation: !@#$%^&*()[]{}", 13),
+            ("<|endoftext|><|endofprompt|>", 13),
+        ];
+        for (text, expected) in vectors {
+            assert_eq!(estimate_tokens(text), expected);
+        }
+
+        // 大文本：确保分词可完成且结果合理（非 0、非全字符数）
+        for text in [
+            include_str!("prompts/miyu.md"),
+            include_str!("prompts/plan.md"),
+            include_str!("../README.md"),
+        ] {
+            let tokens = estimate_tokens(text);
+            assert!(tokens > 0);
+            assert!(tokens < text.chars().count());
+        }
+    }
+
+    #[test]
+    fn count_only_encoder_matches_full_encoder() {
+        use sha2::{Digest, Sha256};
+
+        let atoms = [
+            "a",
+            "Z",
+            " token",
+            "你好",
+            "世界",
+            "かな",
+            "한글",
+            "🚀",
+            "🙂",
+            "\n",
+            "\r\n",
+            "\t",
+            "123",
+            "0001",
+            "_",
+            "'s",
+            "—",
+            "<|endoftext|>",
+        ];
+        let mut digest = Sha256::new();
+        let mut total = 0usize;
+
+        for seed in 0..8192usize {
+            let mut text = String::new();
+            for step in 0..(seed % 64 + 1) {
+                let index = seed.wrapping_mul(17).wrapping_add(step.wrapping_mul(31)) % atoms.len();
+                text.push_str(atoms[index]);
+            }
+            let count = crate::token_counter::count(&text);
+            total += count;
+            digest.update((count as u64).to_le_bytes());
+        }
+
+        assert_eq!(total, 383_718);
+        assert_eq!(
+            hex::encode(digest.finalize()),
+            "64735b07c444d71dcd8977a257c8c029160793f46044ec257187a4707dd9def1"
+        );
+    }
+
+    #[test]
+    #[ignore]
+    fn benchmark_count_only_encoder() {
+        let atoms = [
+            "a",
+            "Z",
+            " token",
+            "你好",
+            "世界",
+            "かな",
+            "한글",
+            "🚀",
+            "🙂",
+            "\n",
+            "\r\n",
+            "\t",
+            "123",
+            "0001",
+            "_",
+            "'s",
+            "—",
+            "<|endoftext|>",
+        ];
+        let corpus = (0..8192usize)
+            .map(|seed| {
+                let mut text = String::new();
+                for step in 0..(seed % 64 + 1) {
+                    let index =
+                        seed.wrapping_mul(17).wrapping_add(step.wrapping_mul(31)) % atoms.len();
+                    text.push_str(atoms[index]);
+                }
+                text
+            })
+            .collect::<Vec<_>>();
+        std::hint::black_box(crate::token_counter::count(&corpus[0]));
+
+        let started = std::time::Instant::now();
+        let total = corpus
+            .iter()
+            .map(|text| crate::token_counter::count(text))
+            .sum::<usize>();
+        let elapsed = started.elapsed();
+
+        assert_eq!(total, 383_718);
+        eprintln!(
+            "tokenizer_benchmark elapsed_ns={} corpus_bytes={} tokens={total}",
+            elapsed.as_nanos(),
+            corpus.iter().map(String::len).sum::<usize>()
+        );
     }
 }

@@ -156,7 +156,7 @@ fn compaction_summary_is_applied_and_injected() {
             .complete_turn(&turn_id, &"a".repeat(200), None)
             .unwrap();
     }
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
 
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
@@ -185,7 +185,7 @@ fn reset_conversation_clears_compaction_summary() {
             .complete_turn(&turn_id, &"a".repeat(200), None)
             .unwrap();
     }
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
         .unwrap()
@@ -238,7 +238,7 @@ fn compaction_uses_current_context_without_provider_usage() {
             .complete_turn(&turn_id, &"a".repeat(200), None)
             .unwrap();
     }
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
 
     assert!(store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
@@ -258,7 +258,7 @@ fn projection_estimate_matches_message_estimate() {
     );
     assert_eq!(
         projection.estimate.message_chars,
-        compaction::estimate_chat_messages_chars(&messages)
+        compaction::estimate_chat_messages_tokens(&messages)
     );
     assert_eq!(projection.tool_count, 3);
 }
@@ -274,7 +274,7 @@ fn compaction_selection_matches_projection_entry() {
             .complete_turn(&turn_id, &"a".repeat(200), None)
             .unwrap();
     }
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
     let projection = request_projection::project_provider_turn_from_messages(&messages, 0, 2_000);
 
     let legacy = store

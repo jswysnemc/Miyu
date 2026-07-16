@@ -91,7 +91,7 @@ fn auto_compaction_prefers_session_memory_input_when_boundary_valid() {
         },
     )
     .unwrap();
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
 
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
@@ -148,7 +148,7 @@ fn invalid_memory_boundary_records_recovery_and_falls_back_to_checkpoint_compact
         },
     )
     .unwrap();
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
 
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
@@ -198,16 +198,16 @@ fn memory_compact_over_budget_records_recovery_without_checkpoint() {
         },
     )
     .unwrap();
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
     let request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
         .unwrap()
         .expect("memory compact request");
     let projection =
-        crate::state::request_projection::project_provider_turn_from_messages(&messages, 0, 2_000);
+        crate::state::request_projection::project_provider_turn_from_messages(&messages, 0, 500);
 
     let outcome = store
-        .apply_compaction_with_budget_guard(&request, &"s".repeat(3_000), &projection, None)
+        .apply_compaction_with_budget_guard(&request, &"s".repeat(20_000), &projection, None)
         .unwrap();
     let recovery = store.recovery_snapshot().unwrap();
     let projected = store.project_history(None).unwrap();
@@ -250,7 +250,7 @@ fn legacy_selector_bypasses_memory_after_memory_compact_over_budget() {
         },
     )
     .unwrap();
-    let messages = vec![ChatMessage::plain("user", "x".repeat(1_800))];
+    let messages = vec![ChatMessage::plain("user", "x".repeat(8_000))];
     let memory_request = store
         .select_compaction_for_messages(&messages, 2_000, 0.5, 0.5)
         .unwrap()
