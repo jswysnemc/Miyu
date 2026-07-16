@@ -447,7 +447,7 @@ impl ReplRuntime {
                 self.transcript.push_compaction_started(*turn_count);
                 self.sync_transcript(true)
             }
-            AgentEvent::CompactionFinished { applied } => {
+            AgentEvent::CompactionFinished { applied, .. } => {
                 self.next_live_reasoning_refresh = None;
                 self.transcript.push_compaction_finished(*applied);
                 self.sync_transcript(true)

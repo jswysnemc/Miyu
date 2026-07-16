@@ -37,10 +37,34 @@ describe("runEventReducer", () => {
 
   it("shows compaction progress in the live message timeline", () => {
     const started = runEventReducer(initialRunState, { type: "event", event: event("compaction.started", { turn_count: 8 }) });
-    const finished = runEventReducer(started, { type: "event", event: event("compaction.finished", { applied: true }) });
+    const finished = runEventReducer(started, {
+      type: "event",
+      event: event("compaction.finished", {
+        applied: true,
+        summary: "## Goal\n- keep context short"
+      })
+    });
 
     expect(finished.parts).toEqual([
-      expect.objectContaining({ type: "compaction", status: "completed", turnCount: 8, applied: true })
+      expect.objectContaining({
+        type: "compaction",
+        status: "completed",
+        turnCount: 8,
+        applied: true,
+        summary: "## Goal\n- keep context short"
+      })
+    ]);
+  });
+
+  it("omits summary when compaction is not applied", () => {
+    const started = runEventReducer(initialRunState, { type: "event", event: event("compaction.started", { turn_count: 3 }) });
+    const finished = runEventReducer(started, {
+      type: "event",
+      event: event("compaction.finished", { applied: false, summary: "should not show" })
+    });
+
+    expect(finished.parts).toEqual([
+      expect.objectContaining({ type: "compaction", status: "completed", turnCount: 3, applied: false, summary: undefined })
     ]);
   });
 

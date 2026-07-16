@@ -34,7 +34,10 @@ pub use pending_turn::PendingTurnGuard;
 #[allow(unused_imports)]
 pub use session_memory::summary::SessionMemorySummary;
 pub use session_snapshot::{ActiveRunSummary, SessionSnapshot};
-pub use session_timeline::{SessionTimelineTurn, TimelinePermissionDecision};
+#[allow(unused_imports)]
+pub use session_timeline::{
+    SessionTimeline, SessionTimelineCompaction, SessionTimelineTurn, TimelinePermissionDecision,
+};
 pub use sessions::{
     active_session_id_for_workspace, active_state_dir, create_session,
     create_session_for_workspace, delete_session, delete_sessions,

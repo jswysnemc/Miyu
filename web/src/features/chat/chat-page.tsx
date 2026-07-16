@@ -17,6 +17,7 @@ import { useRunStream } from "./use-run-stream";
 import { useThinkingLevel } from "./use-thinking-level";
 import { useFollowOutputScroll } from "./use-follow-output-scroll";
 import "./chat-page.css";
+import { ContextCompactionPart } from "./message/context-compaction-part";
 
 /**
  * 渲染当前会话历史、实时运行事件和消息输入区。
@@ -38,7 +39,8 @@ export function ChatPage() {
   const onSettled = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["sessions"] }),
-      queryClient.invalidateQueries({ queryKey: ["todos"] })
+      queryClient.invalidateQueries({ queryKey: ["todos"] }),
+      queryClient.invalidateQueries({ queryKey: ["system-usage"] })
     ]);
   }, [queryClient]);
   const onWorkspaceChanged = useCallback(() => {
@@ -108,7 +110,7 @@ export function ChatPage() {
   const runningStates = run.states.filter((state) => !state.completed);
   const activeRun = runningStates.find((state) => state.status !== "queued") ?? runningStates[0];
   const running = runningStates.length > 0;
-  const historyEntries = timeline.data?.map((turn) => turn.user.content) ?? [];
+  const historyEntries = timeline.data?.turns.map((turn) => turn.user.content) ?? [];
 
   /**
    * 撤销最后一轮对话及该轮造成的工作树修改，并恢复用户输入。
@@ -135,7 +137,7 @@ export function ChatPage() {
   };
   const overviewItems = useMemo(
     () => [
-      ...createTimelineOverviewItems(timeline.data ?? []),
+      ...createTimelineOverviewItems(timeline.data?.turns ?? []),
       ...run.states.map(createLiveOverviewItem).filter((item) => item !== null)
     ],
     [timeline.data, run.states]
@@ -147,20 +149,20 @@ export function ChatPage() {
     // 1. 优先取实时运行的输入，否则回退到最后一条历史轮次
     const latestRun = run.states.at(-1);
     const liveInput = latestRun?.userInput ?? "";
-    const content = liveInput || timeline.data?.at(-1)?.user.content || "";
+    const content = liveInput || timeline.data?.turns.at(-1)?.user.content || "";
     const liveImages = latestRun?.imageUrls;
     if (!content.trim() && !(liveImages && liveImages.length > 0)) return;
     // 2. 复用当前模式、模型与思考等级重新提交
     await queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] });
     await run.start(activeSession.id, content, mode, chatModel.selection ?? undefined, liveImages, thinking.thinkingLevel, chatAgent.selection?.id);
   };
-  const lastTurnId = timeline.data?.at(-1)?.turn_id;
+  const lastTurnId = timeline.data?.turns.at(-1)?.turn_id;
   const liveInputs = useMemo(
     () => new Set(run.states.map((state) => state.userInput.trim()).filter(Boolean)),
     [run.states]
   );
   const historyRetry = run.states.length === 0 && !running ? () => void retry() : undefined;
-  const emptySession = !timeline.isLoading && timeline.data?.length === 0 && run.states.length === 0;
+  const emptySession = !timeline.isLoading && (timeline.data?.turns.length ?? 0) === 0 && run.states.length === 0;
   return (
     <div className={emptySession ? "chat-page empty-session" : "chat-page"}>
       <header className="chat-header">
@@ -170,7 +172,23 @@ export function ChatPage() {
         <div className="message-scroll" ref={scrollRef}>
           <div className="message-column">
             {timeline.isLoading && <div className="empty-chat">正在读取会话历史</div>}
-            {timeline.data?.map((turn) => {
+            {timeline.data?.compaction && !run.states.some((state) =>
+              state.parts.some((part) => part.type === "compaction" && part.applied && part.summary)
+            ) && (
+              <div className="conversation-compaction" data-overview-id="history-compaction">
+                <ContextCompactionPart
+                  part={{
+                    id: "history-compaction",
+                    type: "compaction",
+                    status: "completed",
+                    turnCount: timeline.data.compaction.turn_count,
+                    applied: timeline.data.compaction.applied,
+                    summary: timeline.data.compaction.summary
+                  }}
+                />
+              </div>
+            )}
+            {timeline.data?.turns.map((turn) => {
               // 1. 重试会先保留历史记录,再追加实时运行;相同用户输入只渲染实时消息一次
               if (turn.turn_id === lastTurnId && liveInputs.has(turn.user.content.trim())) return null;
               return (
@@ -221,7 +239,7 @@ export function ChatPage() {
         running={running}
         runStatus={activeRun?.status ?? "idle"}
         sessionAvailable={Boolean(activeSession)}
-        undoAvailable={Boolean(timeline.data?.length)}
+        undoAvailable={Boolean(timeline.data?.turns.length)}
         agentChoices={chatAgent.choices}
         agentSelection={chatAgent.selection}
         agentLoading={chatAgent.isLoading}

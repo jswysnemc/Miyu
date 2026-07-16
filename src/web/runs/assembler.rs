@@ -195,8 +195,11 @@ impl EventAssembler {
             AgentEvent::CompactionStarted { turn_count } => {
                 vec![self.event("compaction.started", json!({ "turn_count": turn_count }))]
             }
-            AgentEvent::CompactionFinished { applied } => {
-                vec![self.event("compaction.finished", json!({ "applied": applied }))]
+            AgentEvent::CompactionFinished { applied, summary } => {
+                vec![self.event(
+                    "compaction.finished",
+                    json!({ "applied": applied, "summary": summary }),
+                )]
             }
             AgentEvent::FlushContent => vec![self.event("content.flushed", json!({}))],
             AgentEvent::ExternalOutput => vec![self.event("external.output", json!({}))],

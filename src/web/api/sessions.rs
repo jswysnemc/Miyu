@@ -323,13 +323,13 @@ async fn timeline(
     State(state): State<WebAppState>,
     Path(id): Path<String>,
     Query(query): Query<HistoryQuery>,
-) -> WebResult<Json<Vec<crate::state::SessionTimelineTurn>>> {
+) -> WebResult<Json<crate::state::SessionTimeline>> {
     let store = StateStore::for_session(&state.paths, &id)
         .map_err(|error| WebError::not_found(error.to_string()))?;
     let mut timeline = store
-        .session_timeline(query.limit.unwrap_or(200).clamp(1, 2000))
+        .session_timeline_with_compaction(query.limit.unwrap_or(200).clamp(1, 2000))
         .map_err(WebError::from)?;
-    permission_timeline::attach_permission_decisions(&store, &mut timeline)
+    permission_timeline::attach_permission_decisions(&store, &mut timeline.turns)
         .map_err(WebError::from)?;
     Ok(Json(timeline))
 }

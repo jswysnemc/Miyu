@@ -428,7 +428,7 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
         AgentEvent::CompactionStarted { turn_count } => {
             renderer.write_compaction_started(turn_count)
         }
-        AgentEvent::CompactionFinished { applied } => renderer.write_compaction_finished(applied),
+        AgentEvent::CompactionFinished { applied, .. } => renderer.write_compaction_finished(applied),
         AgentEvent::FlushContent => renderer.flush_content(),
         AgentEvent::ExternalOutput => renderer.prepare_for_external_output(),
     }

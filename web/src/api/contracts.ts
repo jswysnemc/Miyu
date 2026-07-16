@@ -111,6 +111,19 @@ export type SessionTimelineTurn = {
   tools: TimelineToolEntry[];
 };
 
+export type SessionTimelineCompaction = {
+  applied: boolean;
+  turn_count: number;
+  summary: string;
+  created_at: string;
+  reason: "auto" | "manual" | "legacy" | string;
+};
+
+export type SessionTimeline = {
+  turns: SessionTimelineTurn[];
+  compaction?: SessionTimelineCompaction | null;
+};
+
 export type FileNode = {
   name: string;
   path: string;

@@ -48,6 +48,24 @@ pub struct SessionTimelineTurn {
     pub tools: Vec<TimelineToolEntry>,
 }
 
+/// 会话时间线中展示的最新压缩摘要。
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTimelineCompaction {
+    pub applied: bool,
+    pub turn_count: usize,
+    pub summary: String,
+    pub created_at: String,
+    pub reason: String,
+}
+
+/// 会话时间线响应，包含轮次与可选压缩摘要。
+#[derive(Debug, Clone, Serialize)]
+pub struct SessionTimeline {
+    pub turns: Vec<SessionTimelineTurn>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub compaction: Option<SessionTimelineCompaction>,
+}
+
 impl StateStore {
     /// 读取最近会话轮次及其结构化工具历史。
     ///
@@ -113,6 +131,53 @@ impl StateStore {
                 })
             })
             .collect()
+    }
+
+    /// 读取会话时间线，并附带最新压缩摘要（若存在）。
+    ///
+    /// 参数:
+    /// - `limit`: 最大轮次数量
+    ///
+    /// 返回:
+    /// - 轮次列表与可选压缩摘要
+    pub fn session_timeline_with_compaction(&self, limit: usize) -> Result<SessionTimeline> {
+        Ok(SessionTimeline {
+            turns: self.session_timeline(limit)?,
+            compaction: self.latest_timeline_compaction()?,
+        })
+    }
+
+    /// 读取最新 checkpoint 作为时间线压缩展示。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 有摘要时的压缩展示数据
+    fn latest_timeline_compaction(&self) -> Result<Option<SessionTimelineCompaction>> {
+        let checkpoint = {
+            let conn = self.conv_db.conn.lock().unwrap();
+            crate::state::checkpoints::load_latest_checkpoint(&conn)?
+        };
+        let Some(checkpoint) = checkpoint else {
+            return Ok(None);
+        };
+        let summary = checkpoint.summary.trim();
+        if summary.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some(SessionTimelineCompaction {
+            applied: true,
+            turn_count: checkpoint.source_turn_count,
+            summary: summary.to_string(),
+            created_at: checkpoint.created_at,
+            reason: match checkpoint.reason {
+                crate::state::checkpoints::CheckpointReason::Auto => "auto",
+                crate::state::checkpoints::CheckpointReason::Manual => "manual",
+                crate::state::checkpoints::CheckpointReason::Legacy => "legacy",
+            }
+            .to_string(),
+        }))
     }
 }
 

@@ -28,7 +28,7 @@ import type {
   ThinkingLevel,
   RunInfo,
   ActiveRunsResponse,
-  SessionTimelineTurn,
+  SessionTimeline,
   SystemUsage,
   Session,
   TerminalInfo,
@@ -114,8 +114,7 @@ export const api = {
         method: "POST",
         body: JSON.stringify({ ids })
       }),
-    messages: (id: string) => apiRequest<HistoryEntry[]>(`/api/sessions/${id}/messages?limit=500`),
-    timeline: (id: string) => apiRequest<SessionTimelineTurn[]>(`/api/sessions/${id}/timeline?limit=500`),
+    timeline: (id: string) => apiRequest<SessionTimeline>(`/api/sessions/${id}/timeline?limit=500`),
     undo: (id: string) => apiRequest<UndoSessionResult>(`/api/sessions/${id}/undo`, { method: "POST" }),
     permissionAudit: (id: string) => apiRequest<PermissionAuditEvent[]>(`/api/sessions/${id}/permission-audit?limit=200`),
     compact: (id: string, keepTailTurns = 3) =>

@@ -1,3 +1,4 @@
+import { useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useReducer, useRef } from "react";
 import type { RunInfo, RunMode, RunModelSelection, ThinkingLevel, WebEvent } from "../../api/contracts";
 import { api } from "../../api/client";
@@ -104,6 +105,7 @@ export function useRunStream(
   onWorkspaceChanged?: () => void,
   onInterruptedWithoutReply?: (input: string) => void
 ) {
+  const queryClient = useQueryClient();
   const [state, dispatch] = useReducer(sessionRunsReducer, initialSessionRunsState);
   const sourcesRef = useRef(new Map<string, EventSource>());
 
@@ -147,6 +149,17 @@ export function useRunStream(
         }
         dispatch({ type: "event", event });
         if (event.type === "workspace.changed") onWorkspaceChanged?.();
+        // 压缩完成后立刻刷新顶栏上下文占用与会话时间线
+        if (event.type === "compaction.finished" && event.payload.applied === true) {
+          void Promise.all([
+            queryClient.invalidateQueries({ queryKey: ["system-usage"] }),
+            queryClient.invalidateQueries({ queryKey: ["timeline", event.session_id || sessionId] })
+          ]);
+        }
+        // 轮次结束时 usage 会更新 prompt_tokens，同步刷新顶栏
+        if (event.type === "session.summary" || event.type === "run.completed") {
+          void queryClient.invalidateQueries({ queryKey: ["system-usage"] });
+        }
         if (["run.completed", "run.interrupted", "run.failed"].includes(event.type)) {
           source.close();
           sourcesRef.current.delete(runId);
@@ -156,7 +169,7 @@ export function useRunStream(
       for (const type of EVENT_TYPES) source.addEventListener(type, handle as EventListener);
       sourcesRef.current.set(runId, source);
     }
-  }, [openRunKey, onInterruptedWithoutReply, onSettled, onWorkspaceChanged]);
+  }, [openRunKey, onInterruptedWithoutReply, onSettled, onWorkspaceChanged, queryClient, sessionId]);
 
   useEffect(() => () => {
     for (const source of sourcesRef.current.values()) source.close();

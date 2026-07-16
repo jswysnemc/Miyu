@@ -47,7 +47,10 @@ impl Agent {
                     projection.estimate.message_chars,
                     projection.estimate.context_limit_chars,
                 )?;
-                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: false,
+                    summary: None,
+                })?;
                 return Ok(false);
             }
         };
@@ -58,16 +61,25 @@ impl Agent {
             Some(turn_id),
         )? {
             CompactionApplyOutcome::Applied => {
-                on_event(AgentEvent::CompactionFinished { applied: true })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: true,
+                    summary: Some(summary),
+                })?;
                 Ok(true)
             }
             CompactionApplyOutcome::RejectedOverBudget if request.is_memory_first() => {
-                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: false,
+                    summary: None,
+                })?;
                 self.compact_with_legacy_fallback(turn_id, &projection, on_event)
                     .await
             }
             CompactionApplyOutcome::RejectedOverBudget => {
-                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: false,
+                    summary: None,
+                })?;
                 Ok(false)
             }
         }
@@ -108,7 +120,10 @@ impl Agent {
                     projection.estimate.message_chars,
                     projection.estimate.context_limit_chars,
                 )?;
-                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: false,
+                    summary: None,
+                })?;
                 return Ok(false);
             }
         };
@@ -119,11 +134,17 @@ impl Agent {
             Some(turn_id),
         )? {
             CompactionApplyOutcome::Applied => {
-                on_event(AgentEvent::CompactionFinished { applied: true })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: true,
+                    summary: Some(summary),
+                })?;
                 Ok(true)
             }
             CompactionApplyOutcome::RejectedOverBudget => {
-                on_event(AgentEvent::CompactionFinished { applied: false })?;
+                on_event(AgentEvent::CompactionFinished {
+                    applied: false,
+                    summary: None,
+                })?;
                 Ok(false)
             }
         }

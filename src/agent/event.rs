@@ -28,6 +28,8 @@ pub enum AgentEvent {
     },
     CompactionFinished {
         applied: bool,
+        /// 成功应用时的压缩摘要正文；未应用时为空。
+        summary: Option<String>,
     },
     FlushContent,
     ExternalOutput,

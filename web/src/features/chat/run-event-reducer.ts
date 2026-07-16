@@ -15,7 +15,7 @@ export type LiveMessagePart =
   | { id: string; type: "text"; source: string }
   | { id: string; type: "tool"; tool: ToolLifecycle }
   | { id: string; type: "permission"; request: PermissionRequest; decision?: PermissionDecision }
-  | { id: string; type: "compaction"; status: "running" | "completed"; turnCount: number; applied?: boolean };
+  | { id: string; type: "compaction"; status: "running" | "completed"; turnCount: number; applied?: boolean; summary?: string };
 
 export type LiveRunState = {
   runId: string | null;
@@ -118,7 +118,11 @@ export function runEventReducer(state: LiveRunState, action: RunAction): LiveRun
         }]
       };
     case "compaction.finished":
-      return finishCompaction(state, Boolean(payload.applied));
+      return finishCompaction(
+        state,
+        Boolean(payload.applied),
+        typeof payload.summary === "string" ? payload.summary : undefined
+      );
     case "run.failed":
       return { ...closeActiveReasoning(state, event.timestamp), error: String(payload.message ?? "运行失败"), status: "idle", completed: true };
     case "run.interrupted":
@@ -174,16 +178,22 @@ function upsertPermissionPart(state: LiveRunState, request: PermissionRequest): 
  *
  * @param state 当前运行状态
  * @param applied 是否应用了压缩结果
+ * @param summary 成功应用时的压缩摘要正文
  * @returns 更新后的运行状态
  */
-function finishCompaction(state: LiveRunState, applied: boolean): LiveRunState {
+function finishCompaction(state: LiveRunState, applied: boolean, summary?: string): LiveRunState {
   for (let index = state.parts.length - 1; index >= 0; index -= 1) {
     const part = state.parts[index];
     if (part.type !== "compaction" || part.status !== "running") continue;
     return {
       ...state,
       parts: state.parts.map((item, itemIndex) => itemIndex === index && item.type === "compaction"
-        ? { ...item, status: "completed", applied }
+        ? {
+            ...item,
+            status: "completed",
+            applied,
+            summary: applied && summary?.trim() ? summary.trim() : undefined
+          }
         : item)
     };
   }

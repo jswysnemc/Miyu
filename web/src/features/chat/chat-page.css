@@ -336,5 +336,13 @@
 .message-copy:hover {
   color: var(--ink);
 }
-.context-compaction-part { display:flex; align-items:center; gap:7px; width:max-content; max-width:100%; margin:7px 0; padding:5px 9px; border:1px solid var(--line); border-radius:8px; color:var(--ink-muted); background:var(--control-surface); font-size:12px; }
-.context-compaction-part.running { color:var(--signal); border-color:color-mix(in srgb, var(--signal) 30%, var(--line)); }
+.context-compaction-block { display:flex; flex-direction:column; gap:8px; width:100%; max-width:100%; margin:7px 0; }
+.context-compaction-part { display:flex; align-items:center; gap:7px; width:max-content; max-width:100%; padding:5px 9px; border:1px solid var(--line); border-radius:8px; color:var(--ink-muted); background:var(--control-surface); font-size:12px; }
+.context-compaction-block.running .context-compaction-part { color:var(--signal); border-color:color-mix(in srgb, var(--signal) 30%, var(--line)); }
+.context-compaction-divider { display:flex; align-items:center; gap:10px; width:100%; margin:2px 0; color:var(--ink-muted); font-size:11px; user-select:none; }
+.context-compaction-divider-line { flex:1 1 auto; height:1px; background:var(--line); }
+.context-compaction-divider-label { flex:0 0 auto; letter-spacing:0.02em; }
+.context-compaction-summary { width:100%; max-width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:10px; background:var(--control-surface); color:var(--ink-soft); font-size:12.5px; }
+.context-compaction-summary .markdown-body { font-size:inherit; color:inherit; }
+
+.conversation-compaction { width:100%; max-width:100%; margin: 4px 0 10px; }
