@@ -1,0 +1,45 @@
+.agent-profile-editor {
+  min-width: 0;
+}
+
+.agent-profile-editor .editor-header {
+  margin-bottom: 0;
+}
+
+.agent-editor-tabs {
+  margin-bottom: 1rem;
+}
+
+.agent-basic-form {
+  display: grid;
+  gap: 1.25rem;
+}
+
+.agent-prompt-field textarea {
+  min-height: clamp(12rem, 32vh, 22rem);
+  font-family: var(--font-code);
+}
+
+@media (max-width: 900px) {
+  .agent-profile-editor .settings-form-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 560px) {
+  .agent-profile-editor .settings-form-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .agent-profile-editor .settings-field.full {
+    grid-column: auto;
+  }
+
+  .agent-editor-tabs {
+    overflow-x: auto;
+  }
+
+  .agent-editor-tabs button {
+    flex: 0 0 auto;
+  }
+}

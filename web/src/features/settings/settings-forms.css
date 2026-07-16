@@ -131,6 +131,17 @@
   background: color-mix(in srgb, var(--danger) 8%, transparent);
 }
 
+.ui-button.settings-danger {
+  border-color: color-mix(in srgb, var(--danger) 55%, var(--line));
+  background: transparent;
+  color: var(--danger);
+}
+
+.ui-button.settings-danger:hover:not(:disabled) {
+  border-color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+}
+
 .settings-save:disabled,
 .settings-secondary:disabled,
 .settings-danger:disabled,
@@ -153,6 +164,7 @@
   padding: 0 12px;
   border: 0;
   border-bottom: 2px solid transparent;
+  border-radius: 0;
   background: transparent;
   color: var(--ink-soft);
   font-size: 13px;
@@ -160,6 +172,7 @@
 
 .settings-tabs button:hover { color: var(--ink); }
 .settings-tabs button.active { border-bottom-color: var(--signal); color: var(--ink); }
+.settings-tabs .ui-button.secondary:hover { background: transparent; }
 
 /* ---------- 表单栅格与字段 ---------- */
 

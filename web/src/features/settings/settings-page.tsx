@@ -28,7 +28,7 @@ export function SettingsPage() {
   const [section, setSection] = useState<SettingsSectionId>("providers");
 
   return (
-    <div className={`settings-page${section === "agents" ? " agent-section" : ""}`}>
+    <div className="settings-page">
       <header className="settings-topbar">
         <div className="settings-topbar-inner">
           <Link to="/" className="settings-back" aria-label="返回主界面"><ArrowLeft size={15} /><span>返回主界面</span></Link>

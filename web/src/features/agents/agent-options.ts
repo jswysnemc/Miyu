@@ -18,8 +18,8 @@ export function buildDefaultAgent(options: AgentOptions): AgentProfile {
     system_prompt: "",
     enabled_tools: options.tools.map((tool) => tool.name),
     skills_full: options.skills.map((skill) => skill.name),
-    skills_named: []
-    ,provider_id: "",
+    skills_named: [],
+    provider_id: "",
     model: "",
     thinking_level: "auto"
   };

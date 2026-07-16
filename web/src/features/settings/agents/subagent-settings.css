@@ -1,0 +1,50 @@
+.subagent-settings {
+  display: grid;
+  gap: 1rem;
+  min-width: 0;
+}
+
+.subagent-default-setting {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 18rem);
+  align-items: center;
+  gap: 1rem;
+  padding: 0.75rem 0;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+
+.subagent-default-setting > div {
+  display: grid;
+  gap: 0.1875rem;
+}
+
+.subagent-default-setting strong {
+  color: var(--ink);
+  font-size: 0.8125rem;
+}
+
+.subagent-default-setting small {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+}
+
+.subagent-editor .editor-header {
+  margin-bottom: 1rem;
+}
+
+.subagent-editor .editor-header-actions {
+  align-items: center;
+}
+
+.subagent-prompt-field textarea {
+  min-height: clamp(10rem, 28vh, 18rem);
+  font-family: var(--font-code);
+}
+
+@media (max-width: 760px) {
+  .subagent-default-setting {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.625rem;
+  }
+}

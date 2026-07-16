@@ -1,30 +1,11 @@
 /* 设置页框架：页面容器、吸顶标题条、分类导航、对象列表和编辑区骨架 */
 
 .settings-page {
+  width: 100%;
+  min-width: 0;
   height: 100%;
   overflow: auto;
   background: var(--paper);
-}
-
-.settings-page.agent-section {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  overflow: hidden;
-}
-
-.settings-page.agent-section .settings-workspace,
-.settings-page.agent-section .settings-main {
-  min-height: 0;
-}
-
-.settings-page.agent-section .settings-workspace {
-  height: auto;
-  min-height: 0;
-}
-
-.settings-page.agent-section .settings-main {
-  overflow: hidden;
-  padding-bottom: 20px;
 }
 
 .settings-back {
@@ -102,6 +83,7 @@
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   width: min(100%, 1600px);
+  min-width: 0;
   margin: 0 auto;
   min-height: calc(100% - 57px);
 }
@@ -455,7 +437,7 @@
   .settings-topbar-inner { flex-wrap: wrap; height: auto; padding-top: 8px; padding-bottom: 8px; }
   .settings-topbar p { display: none; }
   .settings-workspace { display: block; }
-  .settings-navigation { position: static; display: flex; max-height: none; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+  .settings-navigation { position: static; display: flex; width: 100%; min-width: 0; max-height: none; padding: 8px 10px; overflow-x: auto; border-right: 0; border-bottom: 1px solid var(--line); }
   .settings-navigation-label { display: none; }
   .settings-navigation button { flex: 0 0 auto; width: 168px; border-left: 0; }
   .settings-navigation button.active { border-radius: 8px; box-shadow: inset 3px 0 0 var(--signal); }

@@ -1,0 +1,125 @@
+.agent-settings-shell {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+}
+
+.agent-settings-view-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  max-width: 42rem;
+  border-bottom: 1px solid var(--line);
+}
+
+.agent-settings-view-tabs button {
+  display: grid;
+  align-items: initial;
+  justify-content: stretch;
+  justify-items: start;
+  gap: 0.1875rem;
+  min-width: 0;
+  padding: 0.625rem 0.75rem 0.6875rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+  color: var(--ink-soft);
+  text-align: left;
+}
+
+.agent-settings-view-tabs button:hover {
+  color: var(--ink);
+}
+
+.agent-settings-view-tabs .ui-button.secondary:hover {
+  background: transparent;
+}
+
+.agent-settings-view-tabs button.active {
+  border-bottom-color: var(--signal);
+  color: var(--ink);
+}
+
+.agent-settings-view-tabs strong {
+  font-size: 0.8125rem;
+  font-weight: 600;
+}
+
+.agent-settings-view-tabs span {
+  overflow: hidden;
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-settings-loading,
+.agent-settings-load-error {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  min-height: 5rem;
+  padding: 0.875rem 1rem;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--paper-raised);
+}
+
+.agent-settings-loading > span {
+  width: 1rem;
+  height: 1rem;
+  border: 2px solid var(--line-strong);
+  border-top-color: var(--signal);
+  border-radius: 50%;
+  animation: agent-settings-spin 0.8s linear infinite;
+}
+
+.agent-settings-loading > div,
+.agent-settings-load-error > div {
+  display: grid;
+  gap: 0.1875rem;
+  min-width: 0;
+}
+
+.agent-settings-loading strong,
+.agent-settings-load-error strong {
+  color: var(--ink);
+  font-size: 0.8125rem;
+}
+
+.agent-settings-loading small,
+.agent-settings-load-error small {
+  overflow: hidden;
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-settings-load-error {
+  justify-content: space-between;
+}
+
+.agent-settings-load-error strong {
+  color: var(--danger);
+}
+
+.agent-profile-workspace,
+.subagent-settings-workspace {
+  align-items: start;
+}
+
+@keyframes agent-settings-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .agent-settings-loading > span { animation: none; }
+}
+
+@media (max-width: 760px) {
+  .agent-settings-shell { gap: 1rem; }
+  .agent-settings-view-tabs { max-width: none; }
+  .agent-settings-view-tabs button { padding-inline: 0.5rem; }
+  .agent-settings-load-error { align-items: stretch; flex-direction: column; }
+  .agent-settings-load-error .settings-secondary { width: 100%; }
+}
