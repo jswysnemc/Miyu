@@ -24,4 +24,30 @@ describe("WorkspaceTabBar", () => {
     expect(html).toContain('aria-label="关闭 README.md"');
     expect(html.match(/workspace-tab-close/g)).toHaveLength(1);
   });
+
+  it("把添加按钮放在标签滚动区内末标签右侧", () => {
+    const html = renderToStaticMarkup(
+      <WorkspaceTabBar
+        tabs={[
+          { id: "file:README.md", type: "files", title: "README.md", path: "README.md", closable: true },
+          { id: "diff", type: "diff", title: "Git", closable: false }
+        ]}
+        activeTabId="file:README.md"
+        maximized={false}
+        onActivate={vi.fn()}
+        onClose={vi.fn()}
+        onAdd={vi.fn()}
+        onToggleMaximized={vi.fn()}
+        onCollapse={vi.fn()}
+      />
+    );
+
+    const scrollStart = html.indexOf('class="workspace-tab-scroll"');
+    const actionsStart = html.indexOf('class="workspace-tab-actions"');
+    const layoutStart = html.indexOf('class="workspace-tab-layout"');
+    expect(scrollStart).toBeGreaterThan(-1);
+    expect(actionsStart).toBeGreaterThan(scrollStart);
+    expect(layoutStart).toBeGreaterThan(actionsStart);
+    expect(html).toContain('aria-label="添加面板"');
+  });
 });
