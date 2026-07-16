@@ -203,7 +203,7 @@ export function SessionSidebar({ collapsed, onToggleCollapsed, onNavigate }: Ses
   };
 
   const manageableCount = sessions.filter((session) => session.id !== "default").length;
-  const error = navigationError ?? tree.error ?? remove.error ?? removeMany.error ?? rename.error ?? removeWorkspace.error;
+  const error = navigationError ?? tree.error ?? create.error ?? remove.error ?? removeMany.error ?? rename.error ?? removeWorkspace.error;
   const appMenuActive = location.pathname.startsWith("/settings")
     || location.pathname.startsWith("/gateways")
     || location.pathname.startsWith("/cron-jobs");

@@ -84,7 +84,8 @@
 
 .workspace-tree-row {
   position: relative;
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
   align-items: center;
   min-height: 34px;
   border-radius: 7px;
@@ -103,7 +104,6 @@
   grid-template-columns: 14px 16px minmax(0, 1fr) 18px;
   gap: 5px;
   align-items: center;
-  width: 100%;
   min-width: 0;
   min-height: 34px;
   padding: 0 7px;
@@ -132,25 +132,23 @@
 }
 
 .workspace-tree-actions {
-  position: absolute;
-  right: 5px;
+  position: relative;
+  z-index: 1;
   display: flex;
+  flex: none;
   gap: 2px;
-  padding-left: 12px;
-  background: linear-gradient(90deg, transparent, var(--paper-deep) 12px);
+  padding-right: 4px;
   opacity: 0;
-  pointer-events: none;
 }
 
 .workspace-tree-row:hover .workspace-tree-actions,
 .workspace-tree-row:focus-within .workspace-tree-actions,
 .workspace-tree-row.selecting .workspace-tree-actions {
   opacity: 1;
-  pointer-events: auto;
 }
 
 .workspace-tree-row.selecting .workspace-tree-main {
-  padding-right: 148px;
+  padding-right: 4px;
 }
 
 .workspace-tree-actions button {
