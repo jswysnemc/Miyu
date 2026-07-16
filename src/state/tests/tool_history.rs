@@ -3,6 +3,51 @@ use crate::llm::{ChatContent, ChatMessage, ToolCall, ToolCallFunction};
 use crate::state::request_projection::project_provider_turn_from_messages;
 
 #[test]
+fn interrupted_tool_call_is_preserved_in_follow_up_context() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    store
+        .start_turn("turn_1", "inspect the repository")
+        .unwrap();
+    store
+        .record_tool_call_started(
+            "turn_1",
+            1,
+            "call_1",
+            "read_file",
+            r#"{"path":"README.md"}"#,
+        )
+        .unwrap();
+    let guard = PendingTurnGuard::new(store.clone(), "turn_1".to_string());
+
+    drop(guard);
+
+    let history = store.project_history(None).unwrap();
+    assert_eq!(history.stats.tail_turns, 1);
+    assert!(history.messages.iter().any(|message| {
+        message
+            .tool_calls
+            .as_ref()
+            .is_some_and(|calls| calls.iter().any(|call| call.id == "call_1"))
+    }));
+    assert!(history.messages.iter().any(|message| {
+        message.role == "tool"
+            && message.tool_call_id.as_deref() == Some("call_1")
+            && matches!(
+                message.content.as_ref(),
+                Some(ChatContent::Text(text)) if text.contains("interrupted before a result")
+            )
+    }));
+    assert!(history.messages.iter().any(|message| {
+        message.role == "user"
+            && matches!(
+                message.content.as_ref(),
+                Some(ChatContent::Text(text)) if text.contains("<turn_aborted>")
+            )
+    }));
+}
+
+#[test]
 fn large_tool_output_reuses_stable_replacement_after_resume() {
     let temp = tempfile::tempdir().unwrap();
     let paths = test_paths(temp.path().to_path_buf());

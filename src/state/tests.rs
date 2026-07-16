@@ -41,13 +41,16 @@ fn turn_lifecycle() {
 }
 
 #[test]
-/// 验证陈旧运行轮次在没有助手正文时会删除用户轮次。
-fn removes_stale_running_turn_without_assistant_content() {
+/// 验证陈旧运行轮次在没有助手正文时仍会保留中断边界。
+fn preserves_stale_running_turn_without_assistant_content() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
     store.start_turn("turn_1", "old task").unwrap();
     assert!(store.mark_interrupted_turn_if_needed().unwrap());
-    assert!(store.load_turns().unwrap().is_empty());
+    let turns = store.load_turns().unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(turns[0].user_content, "old task");
     assert!(!store.mark_interrupted_turn_if_needed().unwrap());
 }
 
@@ -67,8 +70,41 @@ fn undo_removes_last_turn() {
 }
 
 #[test]
-/// 验证无助手正文的主动中断会删除用户轮次。
-fn interruption_without_assistant_content_removes_user_turn() {
+fn context_rollback_removes_only_the_expected_last_turn() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    store.start_turn("turn_1", "first").unwrap();
+    store.complete_turn("turn_1", "first answer", None).unwrap();
+    store.start_turn("turn_2", "retry this").unwrap();
+    store
+        .record_tool_call_started("turn_2", 1, "call_2", "read_file", "{}")
+        .unwrap();
+    store.interrupt_turn("turn_2", "", None).unwrap();
+
+    let outcome = store.rollback_last_turn_context("turn_2").unwrap();
+
+    assert_eq!(outcome.removed, 1);
+    assert_eq!(outcome.prompt.as_deref(), Some("retry this"));
+    assert_eq!(store.load_turns().unwrap().len(), 1);
+    assert_eq!(store.tool_history_summary().unwrap().call_count, 0);
+}
+
+#[test]
+fn context_rollback_rejects_a_stale_turn_id() {
+    let temp = tempfile::tempdir().unwrap();
+    let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
+    store.start_turn("turn_1", "first").unwrap();
+    store.complete_turn("turn_1", "answer", None).unwrap();
+
+    let error = store.rollback_last_turn_context("turn-stale").unwrap_err();
+
+    assert!(error.to_string().contains("latest turn changed"));
+    assert_eq!(store.load_turns().unwrap().len(), 1);
+}
+
+#[test]
+/// 验证无助手正文的主动中断仍会保留用户轮次。
+fn interruption_without_assistant_content_preserves_user_turn() {
     let temp = tempfile::tempdir().unwrap();
     let store = StateStore::new(&test_paths(temp.path().to_path_buf())).unwrap();
     store.start_turn("turn_1", "edit me").unwrap();
@@ -76,7 +112,10 @@ fn interruption_without_assistant_content_removes_user_turn() {
 
     drop(guard);
 
-    assert!(store.load_turns().unwrap().is_empty());
+    let turns = store.load_turns().unwrap();
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
+    assert_eq!(turns[0].user_content, "edit me");
 }
 
 #[test]
@@ -376,7 +415,8 @@ fn stale_turn_recovery_writes_recovery_record() {
     let turns = store.load_turns().unwrap();
 
     assert_eq!(recovered, 1);
-    assert!(turns.is_empty());
+    assert_eq!(turns.len(), 1);
+    assert_eq!(turns[0].status, TurnStatus::Interrupted);
     assert_eq!(recovery.stale_turns_recovered, 1);
     assert_eq!(
         recovery.latest.as_ref().unwrap().kind,

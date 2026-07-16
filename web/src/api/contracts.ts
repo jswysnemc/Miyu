@@ -74,6 +74,11 @@ export type UndoSessionResult = {
   worktree_restored: boolean;
 };
 
+export type ContextRollbackResult = {
+  removed: number;
+  prompt?: string | null;
+};
+
 export type HistoryEntry = {
   timestamp: string;
   role: string;

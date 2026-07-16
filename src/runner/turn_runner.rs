@@ -38,9 +38,12 @@ impl<'agent> TurnRunner<'agent> {
     {
         let result = self
             .agent
-            .chat_stream_with_images(&input.input, input.image_urls.clone(), |event| {
-                sink.on_runner_event(RunnerEvent::Agent(event))
-            })
+            .chat_stream_with_images(
+                &input.input,
+                input.image_urls.clone(),
+                input.turn_id.clone(),
+                |event| sink.on_runner_event(RunnerEvent::Agent(event)),
+            )
             .await?;
         sink.on_runner_event(RunnerEvent::Completed(result.clone()))?;
         Ok(result)

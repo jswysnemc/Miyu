@@ -56,7 +56,6 @@ pub(crate) struct ActiveRunInfo {
 
 struct ActiveRun {
     info: ActiveRunInfo,
-    workspace: WorkspaceInfo,
     handle: JoinHandle<()>,
 }
 
@@ -118,17 +117,9 @@ impl RunManager {
             ) {
                 let _ = state.recover_stale_turns();
             }
-            let discard_user_turn = interrupted_without_reply(
-                paths,
-                &checkpoint.workspace,
-                &checkpoint.info.session_id,
-                &checkpoint.info.input,
-            );
-            manager.checkpoints.update_interruption(
-                &checkpoint.info.run_id,
-                discard_user_turn,
-                discard_user_turn.then_some(checkpoint.info.input.clone()),
-            )?;
+            manager
+                .checkpoints
+                .update_interruption(&checkpoint.info.run_id, false, None)?;
             let journal =
                 EventJournal::persistent(manager.checkpoints.event_path(&checkpoint.info.run_id));
             journal.publish(WebEvent::new(
@@ -138,8 +129,8 @@ impl RunManager {
                 "run.interrupted",
                 json!({
                     "recovered": true,
-                    "discard_user_turn": discard_user_turn,
-                    "restore_input": discard_user_turn.then_some(checkpoint.info.input.clone()),
+                    "discard_user_turn": false,
+                    "restore_input": null,
                 }),
             ));
         }
@@ -266,7 +257,6 @@ impl RunManager {
                 key,
                 ActiveRun {
                     info: queued.info,
-                    workspace: queued.workspace,
                     handle,
                 },
             );
@@ -332,16 +322,9 @@ impl RunManager {
             let current = active.remove(&key).expect("active run key must exist");
             current.handle.abort();
             let info = current.info.clone();
-            let workspace = current.workspace.clone();
             drop(active);
             let _ = current.handle.await;
-            let discard_user_turn =
-                interrupted_without_reply(&self.paths, &workspace, &info.session_id, &info.input);
-            self.checkpoints.update_interruption(
-                run_id,
-                discard_user_turn,
-                discard_user_turn.then_some(info.input.clone()),
-            )?;
+            self.checkpoints.update_interruption(run_id, false, None)?;
             if let Some(journal) = self.journal(run_id).await {
                 journal.publish(WebEvent::new(
                     &info.run_id,
@@ -349,8 +332,8 @@ impl RunManager {
                     &info.session_id,
                     "run.interrupted",
                     json!({
-                        "discard_user_turn": discard_user_turn,
-                        "restore_input": discard_user_turn.then_some(info.input.clone()),
+                        "discard_user_turn": false,
+                        "restore_input": null,
                     }),
                 ));
             }
@@ -472,34 +455,6 @@ impl RunManager {
     }
 }
 
-/// 判断中断运行是否尚未产生可保留的助手正文。
-///
-/// 参数:
-/// - `paths`: Miyu 路径
-/// - `workspace`: 运行绑定的工作区
-/// - `session_id`: 会话标识
-/// - `input`: 本轮用户输入
-///
-/// 返回:
-/// - 用户轮次已经删除或不存在时返回 true
-fn interrupted_without_reply(
-    paths: &MiyuPaths,
-    workspace: &WorkspaceInfo,
-    session_id: &str,
-    input: &str,
-) -> bool {
-    let Ok(state) = crate::state::StateStore::for_workspace_session(
-        paths,
-        std::path::Path::new(&workspace.path),
-        session_id,
-    ) else {
-        return false;
-    };
-    !state
-        .latest_interrupted_turn_has_content(input)
-        .unwrap_or(false)
-}
-
 /// 执行 Agent 并把 RunnerEvent 写入事件日志。
 async fn run_agent(
     paths: MiyuPaths,
@@ -522,6 +477,7 @@ async fn run_agent(
     };
     let mut input = UserInputSubmission::new(request.input, mode);
     input = input.with_image_urls(request.image_url.into_iter().chain(request.image_urls));
+    input = input.with_turn_id(info.run_id.clone());
     let submission = RunnerSubmission::user_input(SubmissionSource::Web, input)
         .with_session_id(info.session_id.clone())
         .with_final_summary(true);
@@ -649,7 +605,6 @@ mod tests {
                     discard_user_turn: false,
                     restore_input: None,
                 },
-                workspace: workspace.clone(),
                 handle: task,
             },
         );

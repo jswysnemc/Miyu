@@ -28,4 +28,19 @@ describe("HistoryTurn", () => {
     expect(html).toContain("保留文件");
     expect(html.indexOf("已拒绝")).toBeLessThan(html.indexOf("Edit"));
   });
+
+  it("renders an interruption notice for a durable interrupted turn", () => {
+    const turn: SessionTimelineTurn = {
+      turn_id: "run-1",
+      seq: 1,
+      status: "interrupted",
+      user: { timestamp: "now", content: "执行检查" },
+      assistant: { timestamp: "later", content: "" },
+      tools: []
+    };
+
+    const html = renderToStaticMarkup(<HistoryTurn turn={turn} />);
+
+    expect(html).toContain("运行已中断");
+  });
 });

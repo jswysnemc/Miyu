@@ -35,6 +35,13 @@ export function HistoryTurn({ turn, onRetry }: { turn: SessionTimelineTurn; onRe
       <UserMessageBubble content={turn.user.content} timestamp={turn.user.timestamp} onRetry={onRetry} />
       <article className="message assistant-message">
         <MessageParts parts={historyTurnParts(turn)} />
+        {turn.status === "interrupted" && (
+          <div className="run-error">
+            <span className="run-error-text">
+              {turn.assistant.content ? "响应已中断，已保留生成内容" : "运行已中断"}
+            </span>
+          </div>
+        )}
         {turn.assistant.content && <MessageActions text={turn.assistant.content} timestamp={turn.assistant.timestamp} />}
       </article>
     </>

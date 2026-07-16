@@ -1,5 +1,6 @@
 import type {
   ConfigResponse,
+  ContextRollbackResult,
   CreateCronJobRequest,
   CronJob,
   DirectoryEntry,
@@ -116,6 +117,11 @@ export const api = {
       }),
     timeline: (id: string) => apiRequest<SessionTimeline>(`/api/sessions/${id}/timeline?limit=500`),
     undo: (id: string) => apiRequest<UndoSessionResult>(`/api/sessions/${id}/undo`, { method: "POST" }),
+    rollback: (id: string, turnId: string) =>
+      apiRequest<ContextRollbackResult>(`/api/sessions/${id}/rollback`, {
+        method: "POST",
+        body: JSON.stringify({ turn_id: turnId })
+      }),
     permissionAudit: (id: string) => apiRequest<PermissionAuditEvent[]>(`/api/sessions/${id}/permission-audit?limit=200`),
     compact: (id: string, keepTailTurns = 3) =>
       apiRequest<{ message: string }>(`/api/sessions/${id}/compact`, {

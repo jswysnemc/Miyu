@@ -27,8 +27,13 @@ impl Agent {
     where
         F: FnMut(AgentEvent) -> Result<()>,
     {
-        self.chat_stream_with_images(input, image_url.into_iter().collect(), on_event)
-            .await
+        self.chat_stream_with_images(
+            input,
+            image_url.into_iter().collect(),
+            /*turn_id*/ None,
+            on_event,
+        )
+        .await
     }
 
     /// 发送一轮带多张图片的流式对话。
@@ -36,6 +41,7 @@ impl Agent {
     /// 参数:
     /// - `input`: 用户文本输入
     /// - `image_urls`: 当前轮图片 data URL 列表
+    /// - `turn_id`: 调用方提供的可选稳定轮次标识
     /// - `on_event`: 流式事件回调
     ///
     /// 返回:
@@ -44,6 +50,7 @@ impl Agent {
         &mut self,
         input: &str,
         image_urls: Vec<String>,
+        turn_id: Option<String>,
         on_event: F,
     ) -> Result<ChatResult>
     where
@@ -54,7 +61,7 @@ impl Agent {
         let input = clean_user_visible_text(input);
         let mut perf = PerfTrace::new("agent");
         perf.mark("start turn");
-        let turn_id = new_turn_id();
+        let turn_id = turn_id.unwrap_or_else(new_turn_id);
         self.state.start_turn(&turn_id, &input)?;
         perf.mark("state start_turn");
         let mut guard = PendingTurnGuard::new(self.state.clone(), turn_id.clone());

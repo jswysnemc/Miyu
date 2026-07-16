@@ -74,12 +74,11 @@ impl PendingTurnGuard {
 }
 
 impl PendingTurnGuard {
-    /// 按是否存在助手正文决定删除用户轮次或保留部分回复。
+    /// 将当前轮次和已经产生的工具历史保存为中断状态。
+    ///
+    /// 返回:
+    /// - 写入是否成功
     fn persist_interruption(&self) -> Result<()> {
-        if self.partial_content.trim().is_empty() {
-            self.state.cancel_turn(&self.turn_id)?;
-            return Ok(());
-        }
         self.state.interrupt_turn(
             &self.turn_id,
             &self.partial_content,

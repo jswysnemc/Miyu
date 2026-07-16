@@ -24,6 +24,7 @@ pub(crate) enum RunnerSubmissionKind {
 pub(crate) struct UserInputSubmission {
     pub(crate) input: String,
     pub(crate) image_urls: Vec<String>,
+    pub(crate) turn_id: Option<String>,
     pub(crate) extra_system_prompt: Option<String>,
     pub(crate) mode: AgentMode,
 }
@@ -41,6 +42,7 @@ impl UserInputSubmission {
         Self {
             input: input.into(),
             image_urls: Vec::new(),
+            turn_id: None,
             extra_system_prompt: None,
             mode,
         }
@@ -67,6 +69,18 @@ impl UserInputSubmission {
     /// - 更新后的用户输入 submission
     pub(crate) fn with_image_urls(mut self, image_urls: impl IntoIterator<Item = String>) -> Self {
         self.image_urls.extend(image_urls);
+        self
+    }
+
+    /// 设置持久化轮次标识。
+    ///
+    /// 参数:
+    /// - `turn_id`: 调用方生成的稳定轮次标识
+    ///
+    /// 返回:
+    /// - 更新后的用户输入 submission
+    pub(crate) fn with_turn_id(mut self, turn_id: impl Into<String>) -> Self {
+        self.turn_id = Some(turn_id.into());
         self
     }
 

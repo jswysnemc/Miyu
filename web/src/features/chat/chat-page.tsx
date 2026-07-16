@@ -8,6 +8,7 @@ import { Modal } from "../../shared/ui/dialog/modal";
 import { useChatAgentContext } from "../agents/chat-agent-context";
 import { ChatComposer } from "./chat-composer";
 import { HistoryTurn, LiveRunMessage } from "./chat-message";
+import { projectConversationDisplay, retryableTurnId } from "./conversation-display";
 import { MessageOverviewRail } from "./message-overview-rail";
 import { createLiveOverviewItem, createTimelineOverviewItems } from "./message-overview-utils";
 import { clearComposerDraft, readComposerDraft, writeComposerDraft } from "./composer-draft";
@@ -38,11 +39,14 @@ export function ChatPage() {
   });
   const onSettled = useCallback(() => {
     void Promise.all([
+      activeSession?.id
+        ? queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] })
+        : Promise.resolve(),
       queryClient.invalidateQueries({ queryKey: ["sessions"] }),
       queryClient.invalidateQueries({ queryKey: ["todos"] }),
       queryClient.invalidateQueries({ queryKey: ["system-usage"] })
     ]);
-  }, [queryClient]);
+  }, [activeSession?.id, queryClient]);
   const onWorkspaceChanged = useCallback(() => {
     void Promise.all([
       queryClient.invalidateQueries({ queryKey: ["file-tree"] }),
@@ -66,7 +70,14 @@ export function ChatPage() {
   const [mode, setMode] = useState<RunMode>("yolo");
   const composerAttachments = useComposerAttachments();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const scrollContentSignal = useMemo(() => [timeline.data, run.states], [timeline.data, run.states]);
+  const display = useMemo(
+    () => projectConversationDisplay(timeline.data?.turns ?? [], run.states),
+    [timeline.data?.turns, run.states]
+  );
+  const scrollContentSignal = useMemo(
+    () => [display.historyTurns, display.liveRuns],
+    [display.historyTurns, display.liveRuns]
+  );
   const { showJump, jumpToBottom, pauseFollowing } = useFollowOutputScroll(scrollRef, scrollContentSignal, activeSession?.id);
 
   // 切换会话时恢复该会话草稿；路由离开再回来也保留（模块级草稿缓存）。
@@ -137,32 +148,35 @@ export function ChatPage() {
   };
   const overviewItems = useMemo(
     () => [
-      ...createTimelineOverviewItems(timeline.data?.turns ?? []),
-      ...run.states.map(createLiveOverviewItem).filter((item) => item !== null)
+      ...createTimelineOverviewItems(display.historyTurns),
+      ...display.liveRuns.map(createLiveOverviewItem).filter((item) => item !== null)
     ],
-    [timeline.data, run.states]
+    [display.historyTurns, display.liveRuns]
   );
 
-  /** 用最后一轮的用户输入重新发起运行，实时轮存在时携带其图片附件。 */
-  const retry = async () => {
+  /** 回滚被点击的持久化轮次，并使用原输入重新发起运行。 */
+  const retry = async (content: string, liveImages: string[] | undefined, candidateTurnId: string | null) => {
     if (!activeSession || running) return;
-    // 1. 优先取实时运行的输入，否则回退到最后一条历史轮次
-    const latestRun = run.states.at(-1);
-    const liveInput = latestRun?.userInput ?? "";
-    const content = liveInput || timeline.data?.turns.at(-1)?.user.content || "";
-    const liveImages = latestRun?.imageUrls;
     if (!content.trim() && !(liveImages && liveImages.length > 0)) return;
-    // 2. 复用当前模式、模型与思考等级重新提交
-    await queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] });
-    await run.start(activeSession.id, content, mode, chatModel.selection ?? undefined, liveImages, thinking.thinkingLevel, chatAgent.selection?.id);
+    try {
+      // 1. 主动读取最新时间线，避免终态事件和后台刷新之间的竞态
+      const refreshedTimeline = await api.sessions.timeline(activeSession.id);
+      queryClient.setQueryData(["timeline", activeSession.id], refreshedTimeline);
+      const turnId = retryableTurnId(refreshedTimeline.turns, candidateTurnId);
+      // 2. 已持久化的旧轮先从上下文删除，工具产生的工作树副作用保持不变
+      if (turnId) await api.sessions.rollback(activeSession.id, turnId);
+      // 3. 清理旧实时投影，避免旧轮和新轮同时渲染相同用户消息
+      run.reset();
+      await queryClient.invalidateQueries({ queryKey: ["timeline", activeSession.id] });
+      // 4. 复用当前模式、模型与思考等级重新提交
+      await run.start(activeSession.id, content, mode, chatModel.selection ?? undefined, liveImages, thinking.thinkingLevel, chatAgent.selection?.id);
+    } catch (error) {
+      setInput(content);
+      throw error;
+    }
   };
   const lastTurnId = timeline.data?.turns.at(-1)?.turn_id;
-  const liveInputs = useMemo(
-    () => new Set(run.states.map((state) => state.userInput.trim()).filter(Boolean)),
-    [run.states]
-  );
-  const historyRetry = run.states.length === 0 && !running ? () => void retry() : undefined;
-  const emptySession = !timeline.isLoading && (timeline.data?.turns.length ?? 0) === 0 && run.states.length === 0;
+  const emptySession = !timeline.isLoading && display.historyTurns.length === 0 && display.liveRuns.length === 0;
   return (
     <div className={emptySession ? "chat-page empty-session" : "chat-page"}>
       <header className="chat-header">
@@ -188,21 +202,24 @@ export function ChatPage() {
                 />
               </div>
             )}
-            {timeline.data?.turns.map((turn) => {
-              // 1. 重试会先保留历史记录,再追加实时运行;相同用户输入只渲染实时消息一次
-              if (turn.turn_id === lastTurnId && liveInputs.has(turn.user.content.trim())) return null;
-              return (
+            {display.historyTurns.map((turn) => (
               <section className="conversation-turn" data-overview-id={`turn-${turn.turn_id}`} key={turn.turn_id}>
-                <HistoryTurn turn={turn} onRetry={turn.turn_id === lastTurnId ? historyRetry : undefined} />
+                <HistoryTurn
+                  turn={turn}
+                  onRetry={turn.turn_id === lastTurnId && !running
+                    ? () => void retry(turn.user.content, undefined, turn.turn_id)
+                    : undefined}
+                />
               </section>
-              );
-            })}
-            {run.states.map((state) => (
+            ))}
+            {display.liveRuns.map((state) => (
               <section className="conversation-turn" data-overview-id={`live-${state.runId}`} key={state.runId}>
                 <LiveRunMessage
                   state={state}
                   running={!state.completed}
-                  onRetry={!running && state.completed ? () => void retry() : undefined}
+                  onRetry={!running && state.completed
+                    ? () => void retry(state.userInput, state.imageUrls, state.runId)
+                    : undefined}
                 />
               </section>
             ))}

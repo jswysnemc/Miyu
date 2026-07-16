@@ -21,3 +21,22 @@ describe("system usage api", () => {
     );
   });
 });
+
+describe("session retry api", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("requests a context-only rollback for the selected turn", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ removed: 1, prompt: "retry" }), {
+      status: 200,
+      headers: { "Content-Type": "application/json" }
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await api.sessions.rollback("session-1", "run-1");
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/sessions/session-1/rollback",
+      expect.objectContaining({ method: "POST", body: JSON.stringify({ turn_id: "run-1" }) })
+    );
+  });
+});

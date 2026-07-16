@@ -59,6 +59,13 @@ pub struct UndoOutcome {
     pub worktree_restored: bool,
 }
 
+/// 仅回滚会话上下文后的结果，不修改工具已经产生的工作树副作用。
+#[derive(Debug, Clone)]
+pub struct ContextRollbackOutcome {
+    pub removed: usize,
+    pub prompt: Option<String>,
+}
+
 #[derive(Debug, Clone)]
 pub struct StateStore {
     base_state_dir: PathBuf,
@@ -263,21 +270,6 @@ impl StateStore {
         Ok(())
     }
 
-    /// 取消尚未产生助手正文的轮次。
-    ///
-    /// 参数:
-    /// - `turn_id`: 当前轮唯一标识
-    ///
-    /// 返回:
-    /// - 是否删除了轮次
-    pub fn cancel_turn(&self, turn_id: &str) -> Result<bool> {
-        let cancelled = self.conv_db.cancel_turn(turn_id)?;
-        if cancelled {
-            worktree_undo::discard_turn_snapshot(self, turn_id)?;
-        }
-        Ok(cancelled)
-    }
-
     /// 附加工具报告上下文。
     ///
     /// 参数:
@@ -466,6 +458,24 @@ impl StateStore {
             prompt,
             worktree_restored: worktree.restored,
         })
+    }
+
+    /// 回滚与预期标识匹配的最后一轮会话上下文。
+    ///
+    /// 参数:
+    /// - `expected_turn_id`: 准备重试的最后一轮标识
+    ///
+    /// 返回:
+    /// - 删除数量和原用户输入，不恢复工作树
+    pub fn rollback_last_turn_context(
+        &self,
+        expected_turn_id: &str,
+    ) -> Result<ContextRollbackOutcome> {
+        let (removed, prompt) = self.conv_db.rollback_last_turn(expected_turn_id)?;
+        if removed > 0 {
+            worktree_undo::discard_turn_snapshot(self, expected_turn_id)?;
+        }
+        Ok(ContextRollbackOutcome { removed, prompt })
     }
 
     /// 累加用量统计。

@@ -1,7 +1,7 @@
 use super::repository::load_tool_exchanges_for_turn;
 use crate::llm::{ChatMessage, ToolCall, ToolCallFunction};
 use crate::state::tool_history::project_legacy_tool_report_messages;
-use crate::state::turns::Turn;
+use crate::state::turns::{Turn, TurnStatus};
 use crate::state::ConversationDb;
 use anyhow::Result;
 
@@ -83,6 +83,7 @@ fn append_turn_messages(
     let exchanges = load_tool_exchanges_for_turn(db, session_id, &turn.turn_id)?;
     if exchanges.is_empty() {
         append_assistant_context_messages(turn, messages);
+        append_interrupted_turn_marker(turn, messages);
         return Ok(());
     }
     let tool_calls = exchanges
@@ -104,6 +105,7 @@ fn append_turn_messages(
         ));
     }
     append_assistant_context_messages(turn, messages);
+    append_interrupted_turn_marker(turn, messages);
     Ok(())
 }
 
@@ -123,6 +125,24 @@ fn append_assistant_context_messages(turn: &Turn, messages: &mut Vec<ChatMessage
         ));
     }
     messages.extend(project_legacy_tool_report_messages(&turn.tool_reports));
+}
+
+/// 为中断轮次追加模型可见的稳定边界。
+///
+/// 参数:
+/// - `turn`: 待投影轮次
+/// - `messages`: 输出消息列表
+///
+/// 返回:
+/// - 无
+fn append_interrupted_turn_marker(turn: &Turn, messages: &mut Vec<ChatMessage>) {
+    if turn.status != TurnStatus::Interrupted {
+        return;
+    }
+    messages.push(ChatMessage::plain(
+        "user",
+        "<turn_aborted>\nThe user interrupted the previous turn on purpose. Tools or commands may have partially executed. Do not repeat them unless the user explicitly requests a retry.\n</turn_aborted>",
+    ));
 }
 
 /// 构造 provider 可见工具结果内容。
