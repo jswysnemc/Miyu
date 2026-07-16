@@ -21,8 +21,15 @@
   background: color-mix(in srgb, var(--paper-deep) 55%, var(--paper));
 }
 
+.workspace-tab-scroll-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+}
+
 .workspace-tab-scroll {
   display: flex;
+  flex: 0 1 auto;
   align-items: stretch;
   min-width: 0;
   overflow-x: auto;
@@ -133,6 +140,7 @@
   background: var(--paper-deep);
   color: var(--ink);
 }
+
 .workspace-tab-add-menu {
   position: absolute;
   top: calc(100% + 6px);
@@ -147,7 +155,6 @@
   background: var(--paper-raised);
   box-shadow: var(--shadow);
   z-index: 40;
-}
 }
 
 .workspace-tab-add-menu button {

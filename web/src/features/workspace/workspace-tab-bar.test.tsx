@@ -25,7 +25,7 @@ describe("WorkspaceTabBar", () => {
     expect(html.match(/workspace-tab-close/g)).toHaveLength(1);
   });
 
-  it("把添加按钮放在标签滚动区内末标签右侧", () => {
+  it("把添加按钮放在标签滚动区外、末标签右侧", () => {
     const html = renderToStaticMarkup(
       <WorkspaceTabBar
         tabs={[
@@ -42,11 +42,14 @@ describe("WorkspaceTabBar", () => {
       />
     );
 
+    const rowStart = html.indexOf('class="workspace-tab-scroll-row"');
     const scrollStart = html.indexOf('class="workspace-tab-scroll"');
+    const scrollEnd = html.indexOf("</div>", scrollStart);
     const actionsStart = html.indexOf('class="workspace-tab-actions"');
     const layoutStart = html.indexOf('class="workspace-tab-layout"');
-    expect(scrollStart).toBeGreaterThan(-1);
-    expect(actionsStart).toBeGreaterThan(scrollStart);
+    expect(rowStart).toBeGreaterThan(-1);
+    expect(scrollStart).toBeGreaterThan(rowStart);
+    expect(actionsStart).toBeGreaterThan(scrollEnd);
     expect(layoutStart).toBeGreaterThan(actionsStart);
     expect(html).toContain('aria-label="添加面板"');
   });

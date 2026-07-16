@@ -26,8 +26,8 @@ const addable: Array<{ type: PaneTab; label: string; icon: typeof FileCode2 }> =
 /**
  * 渲染 Cursor 风格的工作区顶部标签栏。
  *
- * 标签可横向滚动；`+` 贴在末标签右侧（随标签区一起滚动），
- * 全屏/收起始终固定在栏右侧。
+ * 标签可横向滚动；`+` 贴在末标签右侧（标签少时紧贴末标签，多时贴在滚动区末尾），
+ * 全屏/收起始终固定在栏右侧。下拉菜单挂在滚动区外，避免被 overflow 裁切。
  *
  * @param props 标签列表、当前标签与布局操作
  * @returns 工作区标签导航
@@ -39,38 +39,40 @@ export function WorkspaceTabBar(props: WorkspaceTabBarProps) {
 
   return (
     <div className="workspace-tab-bar" role="tablist" aria-label="工作区标签">
-      <div className="workspace-tab-scroll">
-        {props.tabs.map((tab) => {
-          const active = tab.id === props.activeTabId;
-          return (
-            <div key={tab.id} className={active ? "workspace-tab active" : "workspace-tab"} role="presentation">
-              <button
-                type="button"
-                role="tab"
-                aria-selected={active}
-                className="workspace-tab-main"
-                onClick={() => props.onActivate(tab.id)}
-                title={tab.path ?? tab.title}
-              >
-                <TabIcon type={tab.type} />
-                <span>{tab.title || paneTabLabel(tab.type)}</span>
-              </button>
-              {tab.closable && (
+      <div className="workspace-tab-scroll-row">
+        <div className="workspace-tab-scroll">
+          {props.tabs.map((tab) => {
+            const active = tab.id === props.activeTabId;
+            return (
+              <div key={tab.id} className={active ? "workspace-tab active" : "workspace-tab"} role="presentation">
                 <button
                   type="button"
-                  className="workspace-tab-close"
-                  aria-label={`关闭 ${tab.title}`}
-                  onClick={(event) => {
-                    event.stopPropagation();
-                    props.onClose(tab.id);
-                  }}
+                  role="tab"
+                  aria-selected={active}
+                  className="workspace-tab-main"
+                  onClick={() => props.onActivate(tab.id)}
+                  title={tab.path ?? tab.title}
                 >
-                  <X size={12} />
+                  <TabIcon type={tab.type} />
+                  <span>{tab.title || paneTabLabel(tab.type)}</span>
                 </button>
-              )}
-            </div>
-          );
-        })}
+                {tab.closable && (
+                  <button
+                    type="button"
+                    className="workspace-tab-close"
+                    aria-label={`关闭 ${tab.title}`}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      props.onClose(tab.id);
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            );
+          })}
+        </div>
         <div className="workspace-tab-actions" ref={menuRef}>
           <button
             type="button"
