@@ -41,6 +41,7 @@ mod localization;
 mod memory_commands;
 mod message;
 mod model_select;
+mod permission_prompt;
 mod providers;
 mod render_options;
 mod repl;
@@ -421,6 +422,7 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
         }
         AgentEvent::ToolProgress { name, message } => renderer.write_tool_progress(&name, &message),
         AgentEvent::PermissionRequested(request) => {
+            renderer.prepare_for_external_output()?;
             let _ = prompt_permission_request(&request)?;
             Ok(())
         }
@@ -444,55 +446,9 @@ fn handle_agent_event(renderer: &mut render::StreamRenderer, event: AgentEvent) 
 fn prompt_permission_request(
     request: &crate::permission::PermissionRequest,
 ) -> Result<crate::permission::PermissionDecision> {
-    let decision = read_permission_decision(request)?;
+    let decision = permission_prompt::read_permission_decision()?;
     crate::permission::decide_permission(&request.id, decision.clone())?;
     eprintln!("{}", crate::render::render_permission_decision(&decision));
-    Ok(decision)
-}
-
-/// 从标准输入读取权限决定和可选拒绝回复。
-///
-/// 参数:
-/// - `request`: 待处理权限请求
-///
-/// 返回:
-/// - 用户选择的权限决定
-fn read_permission_decision(
-    _request: &crate::permission::PermissionRequest,
-) -> Result<crate::permission::PermissionDecision> {
-    // 1. 工具内容已经绘制，仅在其下方补充可导航选择项
-    eprintln!(
-        "{}",
-        crate::render::render_permission_controls(crate::render::PermissionChoice::Allow, None)
-    );
-    eprint!("选择 [1-3]，也可直接输入拒绝原因: ");
-    io::stderr().flush()?;
-    let mut answer = String::new();
-    io::stdin().read_line(&mut answer)?;
-    let answer = answer.trim();
-    // 2. 兼容编号、英文快捷键和直接输入拒绝原因
-    let decision = if answer == "1"
-        || answer.eq_ignore_ascii_case("y")
-        || answer.eq_ignore_ascii_case("yes")
-    {
-        crate::permission::PermissionDecision::Allow
-    } else if answer == "3" {
-        eprint!("告诉 Miyu 应如何调整: ");
-        io::stderr().flush()?;
-        let mut reply = String::new();
-        io::stdin().read_line(&mut reply)?;
-        crate::permission::PermissionDecision::Deny {
-            reply: (!reply.trim().is_empty()).then(|| reply.trim().to_string()),
-        }
-    } else {
-        crate::permission::PermissionDecision::Deny {
-            reply: (!answer.is_empty()
-                && answer != "2"
-                && !answer.eq_ignore_ascii_case("n")
-                && !answer.eq_ignore_ascii_case("no"))
-            .then(|| answer.to_string()),
-        }
-    };
     Ok(decision)
 }
 
