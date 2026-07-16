@@ -27,6 +27,35 @@ fn legacy_app_config_defaults_terminal_permission_mode_to_yolo() {
     assert_eq!(config.permission.cli_mode(), DefaultPermissionMode::Yolo);
 }
 
+/// 验证旧版应用配置会补齐网页终端配置。
+///
+/// 参数:
+/// - 无
+///
+/// 返回:
+/// - 无
+#[test]
+fn legacy_app_config_defaults_web_terminal_shell() {
+    let mut value = serde_json::to_value(AppConfig::default()).unwrap();
+    value.as_object_mut().unwrap().remove("terminal");
+
+    let config: AppConfig = serde_json::from_value(value).unwrap();
+
+    assert_eq!(config.terminal.shell, TerminalConfig::default().shell);
+}
+
+/// 验证网页终端 Shell 会保留用户配置值。
+#[test]
+fn web_terminal_shell_preserves_user_configuration() {
+    let mut config = AppConfig::default();
+    config.terminal.shell = "custom-shell".to_string();
+
+    let restored: AppConfig =
+        serde_json::from_value(serde_json::to_value(config).unwrap()).unwrap();
+
+    assert_eq!(restored.terminal.shell, "custom-shell");
+}
+
 #[test]
 fn provider_model_choices_ignore_unconfigured_models() {
     let mut config = AppConfig::default();

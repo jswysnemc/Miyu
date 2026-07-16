@@ -32,16 +32,24 @@ impl TerminalManager {
     ///
     /// 参数:
     /// - `cwd`: 启动目录
+    /// - `configured_shell`: 用户配置的 Shell 可执行文件路径或名称
     /// - `cols`: 初始列数
     /// - `rows`: 初始行数
     ///
     /// 返回:
     /// - 终端摘要
-    pub(crate) fn create(&self, cwd: &Path, cols: u16, rows: u16) -> Result<TerminalInfo> {
+    pub(crate) fn create(
+        &self,
+        cwd: &Path,
+        configured_shell: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<TerminalInfo> {
         let id = format!("term_{}", uuid::Uuid::new_v4().simple());
         let session = Arc::new(TerminalSession::spawn(
             id.clone(),
             cwd,
+            configured_shell,
             cols.max(1),
             rows.max(1),
         )?);

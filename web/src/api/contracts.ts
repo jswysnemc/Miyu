@@ -387,6 +387,11 @@ export type GatewayConfig = {
   [key: string]: unknown;
 };
 
+export type TerminalConfig = {
+  shell: string;
+  [key: string]: unknown;
+};
+
 export type AppConfig = {
   active_provider: string;
   providers: ProviderConfig[];
@@ -404,6 +409,7 @@ export type AppConfig = {
     active_identity?: string;
     [key: string]: unknown;
   };
+  terminal?: TerminalConfig;
   tools?: Record<string, unknown>;
   skills?: Record<string, unknown>;
   display?: Record<string, unknown>;

@@ -1,6 +1,7 @@
 use super::super::app_state::WebAppState;
 use super::super::error::{WebError, WebResult};
 use super::super::terminal;
+use crate::config::AppConfig;
 use axum::extract::ws::WebSocketUpgrade;
 use axum::extract::{Path, State};
 use axum::response::Response;
@@ -61,10 +62,12 @@ async fn create(
     Json(request): Json<CreateTerminalRequest>,
 ) -> WebResult<Json<Value>> {
     let workspace = state.workspaces.active().map_err(WebError::from)?;
+    let config = AppConfig::load_or_default(&state.paths).map_err(WebError::from)?;
     let terminal = state
         .terminals
         .create(
             std::path::Path::new(&workspace.path),
+            &config.terminal.shell,
             request.cols.unwrap_or(100),
             request.rows.unwrap_or(30),
         )

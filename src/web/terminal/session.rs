@@ -1,6 +1,6 @@
 use super::manager::TerminalInfo;
 use anyhow::{Context, Result};
-use portable_pty::{native_pty_system, Child, CommandBuilder, MasterPty, PtySize};
+use portable_pty::{native_pty_system, Child, MasterPty, PtySize};
 use std::collections::VecDeque;
 use std::io::{Read, Write};
 use std::path::Path;
@@ -28,35 +28,44 @@ impl TerminalSession {
     /// 参数:
     /// - `id`: 终端 ID
     /// - `cwd`: 工作目录
+    /// - `configured_shell`: 用户配置的 Shell 可执行文件路径或名称
     /// - `cols`: 初始列数
     /// - `rows`: 初始行数
     ///
     /// 返回:
     /// - PTY 会话
-    pub(super) fn spawn(id: String, cwd: &Path, cols: u16, rows: u16) -> Result<Self> {
+    pub(super) fn spawn(
+        id: String,
+        cwd: &Path,
+        configured_shell: &str,
+        cols: u16,
+        rows: u16,
+    ) -> Result<Self> {
         let pair = native_pty_system().openpty(PtySize {
             rows,
             cols,
             pixel_width: 0,
             pixel_height: 0,
         })?;
-        let shell = crate::platform::shell::interactive_shell_invocation();
-        let mut command = CommandBuilder::new(&shell.program);
-        command.args(&shell.args);
+        let mut command = super::startup::terminal_command(configured_shell);
         let cwd = crate::platform::windows_path::simplified(cwd);
         command.cwd(&cwd);
         command.env("TERM", "xterm-256color");
         command.env("COLORTERM", "truecolor");
         command.env("TERM_PROGRAM", "Miyu Web");
-        let child = pair.slave.spawn_command(command).with_context(|| {
-            format!(
-                "failed to start terminal shell {}",
-                shell.program.to_string_lossy()
-            )
-        })?;
-        drop(pair.slave);
+        let shell_label = command
+            .get_argv()
+            .first()
+            .map(|program| program.to_string_lossy().into_owned())
+            .unwrap_or_else(|| "user login shell".to_string());
         let mut reader = pair.master.try_clone_reader()?;
-        let writer = pair.master.take_writer()?;
+        let mut writer = pair.master.take_writer()?;
+        super::startup::initialize_pty_writer(&mut writer, cfg!(windows))?;
+        let child = pair
+            .slave
+            .spawn_command(command)
+            .with_context(|| format!("failed to start terminal shell {shell_label}"))?;
+        drop(pair.slave);
         let (output, _) = broadcast::channel(TERMINAL_BROADCAST_CAPACITY);
         let output_thread = output.clone();
         let replay = Arc::new(Mutex::new(VecDeque::new()));
@@ -196,5 +205,41 @@ fn read_terminal_output(
                 let _ = output.send(chunk);
             }
         }
+    }
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::time::{Duration, Instant};
+
+    /// 验证 Windows ConPTY 能够启动 PowerShell 并返回命令输出。
+    #[test]
+    fn powershell_session_emits_output() {
+        let cwd = std::env::current_dir().expect("应能读取当前目录");
+        let session = TerminalSession::spawn(
+            "terminal_windows_test".to_string(),
+            &cwd,
+            "powershell.exe",
+            80,
+            24,
+        )
+        .expect("PowerShell 终端应成功启动");
+
+        session
+            .write(b"Write-Output __MIYU_PTY_READY__\r\n")
+            .expect("应能写入 PowerShell 命令");
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let mut ready = false;
+        while Instant::now() < deadline {
+            if String::from_utf8_lossy(&session.replay()).contains("__MIYU_PTY_READY__") {
+                ready = true;
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
+        let _ = session.kill();
+
+        assert!(ready, "PowerShell 未在五秒内返回终端输出");
     }
 }

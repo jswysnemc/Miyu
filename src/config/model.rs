@@ -16,6 +16,8 @@ pub struct AppConfig {
     #[serde(default)]
     pub tools: ToolsConfig,
     #[serde(default)]
+    pub terminal: TerminalConfig,
+    #[serde(default)]
     pub skills: SkillsConfig,
     #[serde(default)]
     pub display: DisplayConfig,
@@ -269,6 +271,14 @@ pub struct ToolsConfig {
     pub background_command_log_max_bytes: u64,
     #[serde(default = "default_background_command_stop_grace_seconds")]
     pub background_command_stop_grace_seconds: u64,
+}
+
+/// 网页终端配置。
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TerminalConfig {
+    /// 终端 Shell 可执行文件路径或名称，留空时使用平台默认值。
+    #[serde(default)]
+    pub shell: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

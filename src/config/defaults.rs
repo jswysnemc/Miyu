@@ -13,6 +13,7 @@ impl Default for AppConfig {
             permission: PermissionConfig::default(),
             context: ContextConfig::default(),
             tools: ToolsConfig::default(),
+            terminal: TerminalConfig::default(),
             skills: SkillsConfig::default(),
             display: DisplayConfig::default(),
             prompt: PromptConfig::default(),
@@ -297,6 +298,42 @@ impl Default for ToolsConfig {
             background_command_log_max_bytes: default_background_command_log_max_bytes(),
             background_command_stop_grace_seconds: default_background_command_stop_grace_seconds(),
         }
+    }
+}
+
+impl Default for TerminalConfig {
+    fn default() -> Self {
+        Self {
+            shell: default_terminal_shell(),
+        }
+    }
+}
+
+/// 返回网页终端的默认 Shell 配置值。
+///
+/// 返回:
+/// - Unix 用户环境中的 Shell；Windows PowerShell
+fn default_terminal_shell() -> String {
+    #[cfg(windows)]
+    {
+        let system_root = std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into());
+        let powershell = std::path::PathBuf::from(system_root)
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe");
+        if powershell.is_file() {
+            return powershell.to_string_lossy().into_owned();
+        }
+        "powershell.exe".to_string()
+    }
+    #[cfg(not(windows))]
+    {
+        std::env::var("SHELL")
+            .ok()
+            .filter(|shell| !shell.trim().is_empty())
+            .filter(|shell| std::path::Path::new(shell).is_file())
+            .unwrap_or_default()
     }
 }
 

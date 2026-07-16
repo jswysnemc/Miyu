@@ -24,28 +24,37 @@ pub(crate) fn command_invocation(script: &str) -> ShellInvocation {
     ShellInvocation { program, args }
 }
 
-/// 返回当前平台适合交互终端的 Shell 调用。
+/// 返回网页终端应使用的 Shell 调用。
+///
+/// 参数:
+/// - `configured_shell`: 用户配置的 Shell 可执行文件路径或名称
 ///
 /// 返回:
-/// - Shell 程序和交互启动参数
-pub(crate) fn interactive_shell_invocation() -> ShellInvocation {
+/// - Shell 程序和交互启动参数；`None` 表示使用用户登录 Shell
+pub(crate) fn terminal_shell_invocation(configured_shell: &str) -> Option<ShellInvocation> {
+    let configured_shell = configured_shell.trim();
     #[cfg(windows)]
     {
+        let configured = (!configured_shell.is_empty()).then(|| OsString::from(configured_shell));
         let program = super::shell_selection::select_windows_interactive_shell(
+            configured.as_deref(),
             std::env::var_os("SHELL").as_deref(),
             executable_in_path("pwsh.exe").is_some(),
             executable_in_path("powershell.exe").is_some(),
             std::env::var_os("COMSPEC").as_deref(),
         );
         let args = super::shell_selection::windows_interactive_shell_args(&program);
-        return ShellInvocation { program, args };
+        return Some(ShellInvocation { program, args });
     }
     #[cfg(not(windows))]
     {
-        ShellInvocation {
-            program: preferred_shell_program(),
-            args: Vec::new(),
+        if configured_shell.is_empty() {
+            return None;
         }
+        Some(ShellInvocation {
+            program: OsString::from(configured_shell),
+            args: Vec::new(),
+        })
     }
 }
 
@@ -283,5 +292,22 @@ mod tests {
     #[test]
     fn default_editor_is_not_empty() {
         assert!(!default_editor().is_empty());
+    }
+
+    /// 验证 Unix 空配置会交由 PTY 解析用户登录 Shell。
+    #[cfg(not(windows))]
+    #[test]
+    fn empty_terminal_shell_uses_user_login_shell() {
+        assert!(terminal_shell_invocation("").is_none());
+    }
+
+    /// 验证 Unix 网页终端使用用户配置的 Shell。
+    #[cfg(not(windows))]
+    #[test]
+    fn configured_terminal_shell_is_used() {
+        let invocation = terminal_shell_invocation("/bin/bash").expect("应返回配置 Shell");
+
+        assert_eq!(invocation.program, OsString::from("/bin/bash"));
+        assert!(invocation.args.is_empty());
     }
 }

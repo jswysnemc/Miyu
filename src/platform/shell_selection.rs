@@ -3,6 +3,7 @@ use std::ffi::{OsStr, OsString};
 /// 根据 Windows 环境和候选程序选择交互式 Shell。
 ///
 /// 参数:
+/// - `configured`: 用户配置的网页终端 Shell
 /// - `shell`: `SHELL` 环境变量
 /// - `pwsh_available`: PATH 中是否存在 PowerShell 7
 /// - `powershell_available`: PATH 中是否存在 Windows PowerShell
@@ -11,23 +12,28 @@ use std::ffi::{OsStr, OsString};
 /// 返回:
 /// - 交互式 Shell 程序
 pub(super) fn select_windows_interactive_shell(
+    configured: Option<&OsStr>,
     shell: Option<&OsStr>,
     pwsh_available: bool,
     powershell_available: bool,
     comspec: Option<&OsStr>,
 ) -> OsString {
-    // 【Windows终端】【选择Shell】1. 优先选择可用的 PowerShell
+    // 【Windows终端】【选择Shell】1. 优先使用用户明确配置的 Shell
+    if let Some(configured) = configured.filter(|value| !value.is_empty()) {
+        return configured.to_owned();
+    }
+    // 【Windows终端】【选择Shell】2. 默认优先选择可用的 PowerShell
     if pwsh_available {
         return OsString::from("pwsh.exe");
     }
     if powershell_available {
         return OsString::from("powershell.exe");
     }
-    // 【Windows终端】【选择Shell】2. PowerShell 不可用时优先使用 Windows 系统命令解释器
+    // 【Windows终端】【选择Shell】3. PowerShell 不可用时优先使用 Windows 系统命令解释器
     if let Some(comspec) = comspec.filter(|value| !value.is_empty()) {
         return comspec.to_owned();
     }
-    // 【Windows终端】【选择Shell】3. 最后才采用可能来自 MSYS 或 WSL 的 SHELL
+    // 【Windows终端】【选择Shell】4. 最后才采用可能来自 MSYS 或 WSL 的 SHELL
     shell
         .filter(|value| !value.is_empty())
         .map(OsStr::to_owned)
@@ -64,6 +70,7 @@ mod tests {
     #[test]
     fn windows_terminal_prefers_powershell_over_posix_shell_environment() {
         let selected = select_windows_interactive_shell(
+            None,
             Some(OsStr::new("/usr/bin/bash")),
             true,
             true,
@@ -75,7 +82,7 @@ mod tests {
 
     #[test]
     fn windows_terminal_falls_back_to_windows_powershell() {
-        let selected = select_windows_interactive_shell(None, false, true, None);
+        let selected = select_windows_interactive_shell(None, None, false, true, None);
 
         assert_eq!(selected, OsString::from("powershell.exe"));
     }
@@ -90,6 +97,7 @@ mod tests {
     #[test]
     fn windows_terminal_prefers_comspec_over_posix_shell() {
         let selected = select_windows_interactive_shell(
+            None,
             Some(OsStr::new("/usr/bin/bash")),
             false,
             false,
@@ -97,5 +105,22 @@ mod tests {
         );
 
         assert_eq!(selected, OsString::from("C:\\Windows\\System32\\cmd.exe"));
+    }
+
+    /// 验证 Windows 网页终端优先使用用户配置的 Shell。
+    #[test]
+    fn windows_terminal_prefers_configured_shell() {
+        let selected = select_windows_interactive_shell(
+            Some(OsStr::new("C:\\Program Files\\PowerShell\\7\\pwsh.exe")),
+            None,
+            true,
+            true,
+            Some(OsStr::new("cmd.exe")),
+        );
+
+        assert_eq!(
+            selected,
+            OsString::from("C:\\Program Files\\PowerShell\\7\\pwsh.exe")
+        );
     }
 }

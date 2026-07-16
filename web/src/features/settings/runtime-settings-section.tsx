@@ -2,6 +2,7 @@ import type { AppConfig } from "../../api/contracts";
 import { SettingsGroup } from "./editor-layout";
 import { StructuredConfigFields } from "./structured-config-fields";
 import { PermissionDefaultSettings } from "./runtime/permission-default-settings";
+import { TerminalSettingsFields } from "./terminal-settings-fields";
 
 type RuntimeSettingsSectionProps = {
   config: AppConfig;
@@ -24,6 +25,9 @@ export function RuntimeSettingsSection({ config, onConfigChange }: RuntimeSettin
   return (
     <div className="runtime-groups">
       <PermissionDefaultSettings config={config} onConfigChange={onConfigChange} />
+      <SettingsGroup title="网页终端" description="配置网页终端启动的 Shell，新建终端时生效。">
+        <TerminalSettingsFields config={config} onConfigChange={onConfigChange} />
+      </SettingsGroup>
       {groups.map(([key, title, description]) => (
         <SettingsGroup title={title} description={description} key={key}>
           <StructuredConfigFields
