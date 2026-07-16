@@ -8,6 +8,7 @@ use super::*;
 /// - `message`: 拦截到的自然语言文本
 /// - `clipb`: 是否读取剪贴板
 /// - `web_search`: 是否启用网络搜索模型
+/// - `mode`: CLI 当前权限模式
 ///
 /// 返回:
 /// - 执行是否成功
@@ -17,6 +18,7 @@ pub(super) async fn run_shell_intercept(
     message: String,
     clipb: bool,
     web_search: bool,
+    mode: AgentMode,
 ) -> Result<()> {
     if !matches!(shell_name, "fish" | "bash" | "zsh" | "powershell") {
         bail!("{}: {shell_name}", t("unsupported shell", "不支持的 shell"));
@@ -29,7 +31,7 @@ pub(super) async fn run_shell_intercept(
     }
     let result = run_chat_with_options(
         paths,
-        shell_intercept_chat_options(message, clipb, web_search),
+        shell_intercept_chat_options(message, clipb, web_search, mode),
     )
     .await;
     drain_stdin();
@@ -42,16 +44,22 @@ pub(super) async fn run_shell_intercept(
 /// - `message`: 自然语言命令文本
 /// - `clipb`: 是否读取剪贴板
 /// - `web_search`: 是否启用网络搜索模型
+/// - `mode`: CLI 当前权限模式
 ///
 /// 返回:
 /// - 单轮聊天执行选项
-fn shell_intercept_chat_options(message: String, clipb: bool, web_search: bool) -> ChatRunOptions {
+fn shell_intercept_chat_options(
+    message: String,
+    clipb: bool,
+    web_search: bool,
+    mode: AgentMode,
+) -> ChatRunOptions {
     ChatRunOptions {
         message,
         source: crate::runner::SubmissionSource::ShellIntercept,
         show_reasoning: None,
         plain: false,
-        mode: AgentMode::Yolo,
+        mode,
         clipb,
         web_search,
         thinking_override: None,
@@ -240,12 +248,30 @@ mod tests {
 
     #[test]
     fn shell_intercept_prints_final_summary() {
-        let options = shell_intercept_chat_options("整理当前目录".to_string(), false, false);
+        let options = shell_intercept_chat_options(
+            "整理当前目录".to_string(),
+            false,
+            false,
+            AgentMode::Audited,
+        );
 
         assert!(options.show_final_summary);
         assert_eq!(
             options.source,
             crate::runner::SubmissionSource::ShellIntercept
         );
+    }
+
+    /// 验证 Shell 拦截入口不会绕过 CLI 权限审计模式。
+    #[test]
+    fn shell_intercept_uses_cli_permission_mode() {
+        let options = shell_intercept_chat_options(
+            "修改当前文件".to_string(),
+            false,
+            false,
+            AgentMode::Audited,
+        );
+
+        assert_eq!(options.mode, AgentMode::Audited);
     }
 }

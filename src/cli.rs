@@ -104,12 +104,14 @@ pub async fn run(cli: Cli) -> Result<()> {
     if cli.shell_intercept {
         let shell_name = cli.shell.as_deref().unwrap_or("fish");
         let input = parse_message_input_flags(cli.message, cli.clipb, cli.web_search);
+        let mode = resolve_agent_mode(&paths, mode_override, PermissionSurface::Cli)?;
         return run_shell_intercept(
             &paths,
             shell_name,
             input.message,
             input.clipb,
             input.web_search,
+            mode,
         )
         .await;
     }
