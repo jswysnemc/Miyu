@@ -8,7 +8,11 @@ pub(super) async fn run_repl(
     thinking_override: Option<String>,
 ) -> Result<()> {
     AppConfig::init_files(paths)?;
-    let mut config = AppConfig::load_or_default(paths)?;
+    let mut config = crate::config::apply_agent_override(
+        AppConfig::load_or_default(paths)?,
+        None,
+        crate::config::AgentSurface::Tui,
+    )?;
     apply_thinking_override(&mut config, thinking_override.as_deref())?;
     let mut state = StateStore::new(paths)?;
     state.init_files()?;
@@ -464,7 +468,11 @@ fn reload_repl_agent(
     mode: AgentMode,
     thinking_override: Option<&str>,
 ) -> Result<()> {
-    *config = AppConfig::load(paths)?;
+    *config = crate::config::apply_agent_override(
+        AppConfig::load(paths)?,
+        None,
+        crate::config::AgentSurface::Tui,
+    )?;
     apply_thinking_override(config, thinking_override)?;
     *client = OpenAiCompatibleClient::from_config(config, paths)?;
     let registry = build_repl_tool_registry(config, paths, mode)?;

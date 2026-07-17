@@ -6,7 +6,11 @@ const config = { active_provider: "provider", providers: [], gateways: {} } as u
 
 describe("agent options", () => {
   it("adds the virtual default agent when no profiles exist", () => {
-    expect(buildAgentChoices(config)).toEqual([{ id: DEFAULT_AGENT_ID, name: "默认 Agent" }]);
+    expect(buildAgentChoices(config)).toEqual([
+      { id: DEFAULT_AGENT_ID, name: "默认 Agent" },
+      { id: "general", name: "通用 Agent" },
+      { id: "explore", name: "探索 Agent" }
+    ]);
   });
 
   it("falls back to the default agent for an invalid preference", () => {

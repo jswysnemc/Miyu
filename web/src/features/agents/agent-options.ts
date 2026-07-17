@@ -15,22 +15,36 @@ export function buildDefaultAgent(options: AgentOptions): AgentProfile {
   return {
     id: DEFAULT_AGENT_ID,
     name: "默认 Agent",
+    description: "继承当前全局配置",
     system_prompt: "",
     enabled_tools: options.tools.map((tool) => tool.name),
     skills_full: options.skills.map((skill) => skill.name),
     skills_named: [],
     provider_id: "",
     model: "",
-    thinking_level: "auto"
+    thinking_level: "auto",
+    register_to_main: false
   };
 }
 
 /** 构造主界面可选择的 Agent，配置缺失时补充虚拟默认项。 */
 export function buildAgentChoices(config: AppConfig): AgentChoice[] {
   const profiles = readAgentProfiles(config);
-  const choices = profiles.map(({ id, name }) => ({ id, name: name || id }));
-  if (!choices.some((choice) => choice.id === DEFAULT_AGENT_ID)) {
-    choices.unshift({ id: DEFAULT_AGENT_ID, name: "默认 Agent" });
+  const choices = [
+    { id: DEFAULT_AGENT_ID, name: "默认 Agent" },
+    { id: "general", name: "通用 Agent" },
+    { id: "explore", name: "探索 Agent" }
+  ];
+  for (const profile of profiles) {
+    const choice = { id: profile.id, name: profile.name || profile.id };
+    const existing = choices.findIndex((item) => item.id === choice.id);
+    if (existing >= 0) choices[existing] = choice;
+    else choices.push(choice);
+  }
+  for (const legacy of config.subagent?.profiles ?? []) {
+    if (!choices.some((choice) => choice.id === legacy.id)) {
+      choices.push({ id: legacy.id, name: legacy.name || legacy.id });
+    }
   }
   return choices;
 }

@@ -1,4 +1,4 @@
-import { Check } from "lucide-react";
+import { Select } from "../../../shared/ui/select/select";
 import type { AgentChoice } from "../agent-types";
 
 type DefaultAgentPickerProps = {
@@ -15,18 +15,13 @@ type DefaultAgentPickerProps = {
  */
 export function DefaultAgentPicker({ choices, value, onChange }: DefaultAgentPickerProps) {
   return (
-    <div className="agent-config-picker">
-      {choices.map((choice) => (
-        <button
-          key={choice.id}
-          type="button"
-          className={`agent-config-option${choice.id === value ? " selected" : ""}`}
-          onClick={() => onChange(choice.id)}
-        >
-          <span className="agent-config-option-name">{choice.name}</span>
-          {choice.id === value && <Check size={15} />}
-        </button>
-      ))}
-    </div>
+    <Select
+      value={value}
+      options={choices.map((choice) => ({ value: choice.id, label: choice.name }))}
+      onChange={onChange}
+      ariaLabel="选择默认 Agent"
+      menuPreferredWidth={280}
+      menuMinimumWidth={220}
+    />
   );
 }

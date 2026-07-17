@@ -4,52 +4,27 @@
   min-width: 0;
 }
 
-.agent-settings-view-tabs {
+.agent-surface-defaults {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  max-width: 42rem;
+  gap: 0.75rem;
+  padding-bottom: 1rem;
   border-bottom: 1px solid var(--line);
 }
 
-.agent-settings-view-tabs button {
-  display: grid;
-  align-items: initial;
-  justify-content: stretch;
-  justify-items: start;
-  gap: 0.1875rem;
-  min-width: 0;
-  padding: 0.625rem 0.75rem 0.6875rem;
-  border: 0;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
+.agent-surface-defaults .settings-section-heading strong,
+.agent-surface-defaults .settings-section-heading small {
+  display: block;
+}
+
+.agent-surface-defaults .settings-section-heading strong {
+  color: var(--ink);
+  font-size: 0.875rem;
+}
+
+.agent-surface-defaults .settings-section-heading small {
+  margin-top: 0.1875rem;
   color: var(--ink-soft);
-  text-align: left;
-}
-
-.agent-settings-view-tabs button:hover {
-  color: var(--ink);
-}
-
-.agent-settings-view-tabs .ui-button.secondary:hover {
-  background: transparent;
-}
-
-.agent-settings-view-tabs button.active {
-  border-bottom-color: var(--signal);
-  color: var(--ink);
-}
-
-.agent-settings-view-tabs strong {
-  font-size: 0.8125rem;
-  font-weight: 600;
-}
-
-.agent-settings-view-tabs span {
-  overflow: hidden;
-  font-size: 0.6875rem;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  font-size: 0.75rem;
 }
 
 .agent-settings-loading,
@@ -103,8 +78,7 @@
   color: var(--danger);
 }
 
-.agent-profile-workspace,
-.subagent-settings-workspace {
+.agent-profile-workspace {
   align-items: start;
 }
 
@@ -118,8 +92,6 @@
 
 @media (max-width: 760px) {
   .agent-settings-shell { gap: 1rem; }
-  .agent-settings-view-tabs { max-width: none; }
-  .agent-settings-view-tabs button { padding-inline: 0.5rem; }
   .agent-settings-load-error { align-items: stretch; flex-direction: column; }
   .agent-settings-load-error .settings-secondary { width: 100%; }
 }

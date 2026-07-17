@@ -1,7 +1,25 @@
-import type { AgentProfileConfig } from "../../../api/contracts";
+import type { AgentProfileConfig, SubagentProfileConfig } from "../../../api/contracts";
 import { buildDefaultAgent, DEFAULT_AGENT_ID } from "../../agents/agent-options";
 import type { AgentProfile } from "../../agents/agent-types";
 import type { AgentOptions } from "./agents-types";
+
+export const BUILTIN_AGENT_PROFILES: AgentProfileConfig[] = [
+  {
+    id: "general",
+    name: "通用 Agent",
+    description: "适合实现、测试、文档和常规工程任务",
+    thinking_level: "auto",
+    register_to_main: true
+  },
+  {
+    id: "explore",
+    name: "探索 Agent",
+    description: "适合只读检索、代码定位和资料探索",
+    enabled_tools: ["check_os_info", "read_file", "glob", "grep", "web_search", "web_fetch"],
+    thinking_level: "auto",
+    register_to_main: true
+  }
+];
 
 /**
  * 将配置文件中的主 Agent 档案转换成编辑器可直接使用的完整档案。
@@ -18,13 +36,15 @@ export function normalizeAgentProfile(
   return {
     id,
     name: profile.name || defaults.name || id,
+    description: profile.description ?? defaults.description ?? "",
     system_prompt: profile.system_prompt ?? defaults.system_prompt ?? "",
     enabled_tools: copyList(profile.enabled_tools ?? defaults.enabled_tools),
     skills_full: copyList(profile.skills_full ?? defaults.skills_full),
     skills_named: copyList(profile.skills_named ?? defaults.skills_named),
     provider_id: profile.provider_id ?? defaults.provider_id ?? "",
     model: profile.model ?? defaults.model ?? "",
-    thinking_level: profile.thinking_level ?? defaults.thinking_level ?? "auto"
+    thinking_level: profile.thinking_level ?? defaults.thinking_level ?? "auto",
+    register_to_main: profile.register_to_main ?? defaults.register_to_main ?? false
   };
 }
 
@@ -33,15 +53,40 @@ export function normalizeAgentProfile(
  *
  * @param profiles 已存储的主 Agent 档案
  * @param options 当前可用的工具与 Skill 选项
+ * @param legacyProfiles 旧版子 Agent 档案
  * @returns 可供界面展示的完整主 Agent 档案列表
  */
 export function buildVisibleAgentProfiles(
   profiles: readonly AgentProfileConfig[] | undefined,
-  options: AgentOptions
+  options: AgentOptions,
+  legacyProfiles: readonly SubagentProfileConfig[] | undefined = undefined
 ): AgentProfile[] {
-  const normalized = (profiles ?? []).map((profile) => normalizeAgentProfile(profile));
-  if (normalized.some((profile) => profile.id === DEFAULT_AGENT_ID)) return normalized;
-  return [buildDefaultAgent(options), ...normalized];
+  const configured = profiles ?? [];
+  const migrated = (legacyProfiles ?? [])
+    .filter((legacy) => !configured.some((profile) => profile.id === legacy.id))
+    .map((legacy): AgentProfileConfig => ({
+      ...legacy,
+      register_to_main: legacy.exposed !== false
+    }));
+  const stored = [...configured, ...migrated];
+  const normalized = stored.map((profile) => normalizeAgentProfile(profile));
+  const builtins = BUILTIN_AGENT_PROFILES.map((builtin) => {
+    const override = stored.find((profile) => profile.id === builtin.id);
+    const defaults = builtin.id === "general"
+      ? {
+          ...builtin,
+          enabled_tools: options.tools.map((tool) => tool.name),
+          skills_full: options.skills.map((skill) => skill.name)
+        }
+      : builtin;
+    return normalizeAgentProfile(override ?? defaults, normalizeAgentProfile(defaults));
+  });
+  const custom = normalized.filter((profile) => !BUILTIN_AGENT_PROFILES.some((builtin) => builtin.id === profile.id));
+  const visible = [...builtins, ...custom];
+  if (!visible.some((profile) => profile.id === DEFAULT_AGENT_ID)) {
+    visible.unshift(buildDefaultAgent(options));
+  }
+  return visible;
 }
 
 /**
@@ -63,6 +108,7 @@ export function createUniqueAgentProfile(
   return normalizeAgentProfile({
     id,
     name: `新 Agent ${number}`,
+    description: "",
     system_prompt: "",
     enabled_tools: options.tools.map((tool) => tool.name),
     skills_full: options.skills.map((skill) => skill.name),
@@ -70,6 +116,7 @@ export function createUniqueAgentProfile(
     provider_id: "",
     model: "",
     thinking_level: "auto",
+    register_to_main: false,
     ...fields
   });
 }

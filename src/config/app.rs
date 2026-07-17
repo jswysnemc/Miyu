@@ -6,6 +6,7 @@ use crate::default_models::OPENCODE_PROVIDER_ID;
 use crate::paths::MiyuPaths;
 use crate::prompts::default_system_prompt;
 use anyhow::{bail, Context, Result};
+use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
@@ -168,6 +169,48 @@ impl AppConfig {
                 }
             }
             validate_provider_model_metadata(provider)?;
+        }
+        let mut agent_ids = HashSet::new();
+        for agent in &self.agents {
+            if agent.id.trim().is_empty() {
+                bail!("agent id cannot be empty");
+            }
+            if !agent_ids.insert(agent.id.as_str()) {
+                bail!("duplicate agent id: {}", agent.id);
+            }
+            match agent.thinking_level.trim() {
+                "" | "auto" | "none" | "low" | "medium" | "high" | "xhigh" | "max" => {}
+                value => bail!("agent {} thinking_level is invalid: {value}", agent.id),
+            }
+            if !agent.provider_id.trim().is_empty()
+                && !self
+                    .providers
+                    .iter()
+                    .any(|provider| provider.id == agent.provider_id)
+            {
+                bail!(
+                    "agent {} provider not found: {}",
+                    agent.id,
+                    agent.provider_id
+                );
+            }
+        }
+        let resolved_agent_ids = self
+            .resolved_agent_profiles()
+            .into_iter()
+            .map(|profile| profile.id)
+            .collect::<HashSet<_>>();
+        for (surface, selected) in [
+            ("web", self.default_agent.as_deref()),
+            ("tui", self.tui_agent.as_deref()),
+            ("cli", self.cli_agent.as_deref()),
+        ] {
+            let Some(selected) = selected.map(str::trim).filter(|value| !value.is_empty()) else {
+                continue;
+            };
+            if selected != super::DEFAULT_AGENT_ID && !resolved_agent_ids.contains(selected) {
+                bail!("{surface} default agent not found: {selected}");
+            }
         }
         if self.context.default_max_chars == 0 {
             bail!("context.default_max_chars must be greater than 0");

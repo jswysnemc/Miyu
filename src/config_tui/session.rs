@@ -9,6 +9,7 @@ use crossterm::execute;
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use std::io;
 
+use super::agents::edit_agents;
 use super::custom_prompts::edit_custom_prompts;
 use super::gateways::edit_gateways;
 use super::input::read_key;
@@ -65,6 +66,7 @@ fn run_main_menu(
             t("Plugin configuration", "插件配置").to_string(),
             t("Gateway channels", "渠道接入").to_string(),
             t("Custom prompts", "自定义提示词").to_string(),
+            t("Agent configuration", "Agent 配置").to_string(),
             t("Global settings", "全局参数设置").to_string(),
             t("Save and exit", "保存并退出").to_string(),
         ];
@@ -90,8 +92,9 @@ fn run_main_menu(
                 2 => edit_plugins(stdout, config)?,
                 3 => edit_gateways(stdout, paths, config)?,
                 4 => edit_custom_prompts(stdout, paths, config)?,
-                5 => edit_settings(stdout, config)?,
-                6 => {
+                5 => edit_agents(stdout, config)?,
+                6 => edit_settings(stdout, config)?,
+                7 => {
                     config.save(paths)?;
                     return Ok(true);
                 }

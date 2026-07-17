@@ -18,13 +18,15 @@ describe("主 Agent 档案状态", () => {
     expect(normalizeAgentProfile({ id: "review", name: "" })).toEqual({
       id: "review",
       name: "review",
+      description: "",
       system_prompt: "",
       enabled_tools: [],
       skills_full: [],
       skills_named: [],
       provider_id: "",
       model: "",
-      thinking_level: "auto"
+      thinking_level: "auto",
+      register_to_main: false
     });
   });
 
@@ -32,8 +34,10 @@ describe("主 Agent 档案状态", () => {
     const stored = [{ id: "review", name: "审查", enabled_tools: ["read_file"] }];
     const visible = buildVisibleAgentProfiles(stored, options);
 
-    expect(visible.map((profile) => profile.id)).toEqual(["default", "review"]);
+    expect(visible.map((profile) => profile.id)).toEqual(["default", "general", "explore", "review"]);
     expect(visible[0].enabled_tools).toEqual(["read_file", "run_command"]);
+    expect(visible[1].enabled_tools).toEqual(["read_file", "run_command"]);
+    expect(visible[1].skills_full).toEqual(["review"]);
     expect(stored).toEqual([{ id: "review", name: "审查", enabled_tools: ["read_file"] }]);
   });
 
@@ -42,8 +46,21 @@ describe("主 Agent 档案状态", () => {
       { id: "default", name: "项目默认", thinking_level: "high" }
     ], options);
 
-    expect(visible).toHaveLength(1);
-    expect(visible[0]).toMatchObject({ id: "default", name: "项目默认", thinking_level: "high" });
+    expect(visible).toHaveLength(3);
+    expect(visible.find((profile) => profile.id === "default"))
+      .toMatchObject({ id: "default", name: "项目默认", thinking_level: "high" });
+  });
+
+  it("迁移旧子 Agent 档案并保留注册状态", () => {
+    const visible = buildVisibleAgentProfiles([], options, [
+      { id: "legacy", name: "旧子 Agent", exposed: false, thinking_level: "high" }
+    ]);
+
+    expect(visible.find((profile) => profile.id === "legacy")).toMatchObject({
+      name: "旧子 Agent",
+      thinking_level: "high",
+      register_to_main: false
+    });
   });
 
   it("创建不冲突的自定义 Agent", () => {

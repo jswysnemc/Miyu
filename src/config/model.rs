@@ -25,13 +25,19 @@ pub struct AppConfig {
     pub prompt: PromptConfig,
     #[serde(default)]
     pub gateways: GatewayConfig,
-    /// Agent 配置档案列表，Web 运行可按档案覆盖提示词、工具和 skills
+    /// Agent 配置档案列表，各入口可按档案覆盖模型、提示词、工具和 Skills
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub agents: Vec<AgentProfile>,
-    /// 全局默认 Agent 档案 id,未指定 agent_id 的运行入口采用它
+    /// Web 默认 Agent 档案 id，未指定 agent_id 的网页运行采用它
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub default_agent: Option<String>,
-    /// 子智能体运行配置(供应商与模型)
+    /// TUI REPL 默认使用的 Agent 档案 id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tui_agent: Option<String>,
+    /// 单次 CLI 命令默认使用的 Agent 档案 id
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cli_agent: Option<String>,
+    /// 旧版子智能体运行配置，保留用于兼容迁移
     #[serde(default, skip_serializing_if = "is_default_subagent")]
     pub subagent: SubagentConfig,
     /// 单轮运行时 Agent 覆盖，不参与配置序列化

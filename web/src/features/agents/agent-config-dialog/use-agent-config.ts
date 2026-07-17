@@ -3,9 +3,9 @@ import { api } from "../../../api/client";
 import type { AppConfig } from "../../../api/contracts";
 
 export type AgentConfigDraft = {
-  defaultAgent: string;
-  subagentProviderId: string;
-  subagentModel: string;
+  webAgent: string;
+  tuiAgent: string;
+  cliAgent: string;
 };
 
 /**
@@ -16,9 +16,9 @@ export type AgentConfigDraft = {
  */
 export function readAgentConfigDraft(config: AppConfig): AgentConfigDraft {
   return {
-    defaultAgent: config.default_agent ?? "default",
-    subagentProviderId: config.subagent?.provider_id ?? "",
-    subagentModel: config.subagent?.model ?? ""
+    webAgent: config.default_agent ?? "default",
+    tuiAgent: config.tui_agent ?? "default",
+    cliAgent: config.cli_agent ?? "default"
   };
 }
 
@@ -38,8 +38,9 @@ export function useAgentConfig() {
       if (!current) throw new Error("配置尚未加载");
       const next: AppConfig = {
         ...current,
-        default_agent: draft.defaultAgent === "default" ? null : draft.defaultAgent,
-        subagent: { provider_id: draft.subagentProviderId, model: draft.subagentModel }
+        default_agent: draft.webAgent === "default" ? null : draft.webAgent,
+        tui_agent: draft.tuiAgent === "default" ? null : draft.tuiAgent,
+        cli_agent: draft.cliAgent === "default" ? null : draft.cliAgent
       };
       return api.config.save(next as unknown as Record<string, unknown>);
     },

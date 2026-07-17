@@ -7,6 +7,7 @@ import type { AgentProfile } from "../../agents/agent-types";
 import { ObjectListPanel } from "../object-list-panel";
 import { AgentProfileEditor } from "./agent-profile-editor";
 import {
+  BUILTIN_AGENT_PROFILES,
   buildVisibleAgentProfiles,
   createUniqueAgentProfile,
   removeAgentProfile,
@@ -29,7 +30,10 @@ type AgentProfileWorkspaceProps = {
 export function AgentProfileWorkspace({ config, options, onConfigChange }: AgentProfileWorkspaceProps) {
   const confirm = useConfirm();
   const stored = config.agents ?? [];
-  const profiles = useMemo(() => buildVisibleAgentProfiles(stored, options), [stored, options]);
+  const profiles = useMemo(
+    () => buildVisibleAgentProfiles(stored, options, config.subagent?.profiles),
+    [config.subagent?.profiles, options, stored]
+  );
   const [selectedId, setSelectedId] = useState(DEFAULT_AGENT_ID);
   const selected = profiles.find((profile) => profile.id === selectedId) ?? profiles[0] ?? null;
 
@@ -82,7 +86,7 @@ export function AgentProfileWorkspace({ config, options, onConfigChange }: Agent
    * @returns 删除流程完成后的 Promise
    */
   const removeSelected = async () => {
-    if (!selected || selected.id === DEFAULT_AGENT_ID) return;
+    if (!selected || selected.id === DEFAULT_AGENT_ID || BUILTIN_AGENT_PROFILES.some((profile) => profile.id === selected.id)) return;
     // 1. 使用统一确认对话框核对删除操作
     const confirmed = await confirm({
       title: "删除 Agent",
@@ -104,7 +108,7 @@ export function AgentProfileWorkspace({ config, options, onConfigChange }: Agent
         items={profiles.map((profile) => ({
           id: profile.id,
           name: profile.name || profile.id,
-          meta: `${profile.enabled_tools.length} 工具，${profile.skills_full.length + profile.skills_named.length} Skills`,
+          meta: profile.register_to_main ? "已向主 Agent 注册" : `${profile.enabled_tools.length} 工具，${profile.skills_full.length + profile.skills_named.length} Skills`,
           icon: <Bot size={14} />,
           marked: profile.id === DEFAULT_AGENT_ID
         }))}

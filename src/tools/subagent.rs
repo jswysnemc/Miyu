@@ -148,10 +148,9 @@ pub(crate) fn register(
 /// - 供模型理解档案用途的描述
 fn format_subagent_profile_options(config: &AppConfig) -> String {
     let profiles = config
-        .subagent
-        .resolved_profiles()
+        .resolved_agent_profiles()
         .into_iter()
-        .filter(|profile| profile.exposed)
+        .filter(|profile| profile.register_to_main)
         .map(|profile| format!("{}: {}", profile.id, profile.description))
         .collect::<Vec<_>>();
     format!("选择子 Agent 档案 id。{}", profiles.join("；"))
@@ -196,8 +195,7 @@ async fn start_subagent(args: Value, context: SubagentContext) -> Result<String>
     let requested_type = optional_string_arg(&args, "subagent_type")?;
     let profile = context
         .config
-        .subagent
-        .resolve_profile(requested_type.as_deref())
+        .resolve_registered_agent(requested_type.as_deref())
         .with_context(|| "requested subagent is not exposed or does not exist")?;
     let description = optional_string_arg(&args, "description")?
         .filter(|value| !value.trim().is_empty())
@@ -451,27 +449,45 @@ async fn run_subagent(
     // 1. 按子智能体模型配置构造客户端,未配置时沿用主对话供应商与模型
     let profile = context
         .config
-        .subagent
-        .resolve_profile(Some(subagent_type))
+        .resolve_registered_agent(Some(subagent_type))
         .with_context(|| format!("subagent profile is not exposed: {subagent_type}"))?;
     let client = build_subagent_client(&context, &profile)?;
-    let (default_prompt, tools, excluded) = match subagent_type {
+    let (default_prompt, default_tools, excluded) = match subagent_type {
         "explore" => (
             EXPLORE_PROMPT,
             context.tools.clone_filtered(EXPLORE_ALLOWED),
             Vec::new(),
         ),
-        "general" => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
-        _ => (GENERAL_PROMPT, context.tools, GENERAL_EXCLUDED.to_vec()),
+        "general" => (
+            GENERAL_PROMPT,
+            context.tools.clone(),
+            GENERAL_EXCLUDED.to_vec(),
+        ),
+        _ => (
+            GENERAL_PROMPT,
+            context.tools.clone(),
+            GENERAL_EXCLUDED.to_vec(),
+        ),
     };
-    let system_prompt = if profile.system_prompt.trim().is_empty() {
-        default_prompt
+    let tools = if inherits_default_tools(&context.config, &profile) {
+        default_tools
     } else {
-        profile.system_prompt.as_str()
+        let allowed = profile
+            .enabled_tools
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>();
+        default_tools.clone_filtered(&allowed)
     };
+    let base_prompt = if profile.system_prompt.trim().is_empty() {
+        default_prompt.to_string()
+    } else {
+        profile.system_prompt.clone()
+    };
+    let system_prompt = subagent_system_prompt(&context, &profile, &base_prompt)?;
     // 2. 以 Full 模式上报,时间线可拿到工具调用参数、结果与流式文本
     let progress = SubagentProgress::new(tool_progress, ProgressMode::Full, true);
-    let runner = SubagentRunner::new(client, system_prompt, tools, progress)
+    let runner = SubagentRunner::new(client, &system_prompt, tools, progress)
         .max_steps(max_steps)
         .timeout_seconds(TOOL_TIMEOUT_SECONDS)
         .excluded_tools(&excluded);
@@ -488,6 +504,20 @@ async fn run_subagent(
     Ok((chat_result.content, stats_json(&stats)))
 }
 
+/// 判断子 Agent 是否应沿用类型内置的工具集合。
+///
+/// 参数:
+/// - `config`: 当前应用配置
+/// - `profile`: 已解析的统一 Agent 档案
+///
+/// 返回:
+/// - 内置 Agent 或旧版迁移档案在工具为空时返回 true
+fn inherits_default_tools(config: &AppConfig, profile: &crate::config::AgentProfile) -> bool {
+    profile.enabled_tools.is_empty()
+        && (matches!(profile.id.as_str(), "general" | "explore")
+            || !config.agents.iter().any(|agent| agent.id == profile.id))
+}
+
 /// 按子智能体模型配置构造 LLM 客户端。
 ///
 /// 子智能体配置了独立供应商/模型时,在一份克隆配置上覆盖 active_provider 与该供应商
@@ -500,7 +530,7 @@ async fn run_subagent(
 /// - LLM 客户端
 fn build_subagent_client(
     context: &SubagentContext,
-    profile: &crate::config::SubagentProfile,
+    profile: &crate::config::AgentProfile,
 ) -> Result<OpenAiCompatibleClient> {
     let subagent = &context.config.subagent;
     // 1. 未配置任何子智能体供应商与模型,沿用主对话配置
@@ -546,6 +576,37 @@ fn build_subagent_client(
         }
     }
     OpenAiCompatibleClient::from_config(&config, &context.paths)
+}
+
+/// 组合 Agent 系统提示词与该档案启用的 Skills。
+///
+/// 参数:
+/// - `context`: 子智能体运行上下文
+/// - `profile`: 统一 Agent 档案
+/// - `base_prompt`: Agent 基础系统提示词
+///
+/// 返回:
+/// - 可直接交给子智能体的完整系统提示词
+fn subagent_system_prompt(
+    context: &SubagentContext,
+    profile: &crate::config::AgentProfile,
+    base_prompt: &str,
+) -> Result<String> {
+    if profile.skills_full.is_empty() && profile.skills_named.is_empty() {
+        return Ok(base_prompt.to_string());
+    }
+    let mut config = context.config.clone();
+    config.agent_runtime = Some(crate::config::AgentRuntimeOverride {
+        enabled_tools: profile.enabled_tools.clone(),
+        skills_full: profile.skills_full.clone(),
+        skills_named: profile.skills_named.clone(),
+    });
+    let skills = crate::tools::skills_prompt(&config, &context.paths)?;
+    if skills.trim().is_empty() {
+        Ok(base_prompt.to_string())
+    } else {
+        Ok(format!("{base_prompt}\n\n{skills}"))
+    }
 }
 
 /// 生成子智能体统计 JSON。
@@ -721,6 +782,37 @@ mod tests {
             summarize_prompt("  inspect   this code\nnow "),
             "inspect this code now"
         );
+    }
+
+    #[test]
+    fn unified_custom_agent_keeps_empty_tool_selection() {
+        let mut config = AppConfig::default();
+        let profile = crate::config::AgentProfile {
+            id: "review".to_string(),
+            name: "Review".to_string(),
+            ..crate::config::AgentProfile::default()
+        };
+        config.agents.push(profile.clone());
+
+        assert!(!inherits_default_tools(&config, &profile));
+    }
+
+    #[test]
+    fn builtin_and_legacy_agents_inherit_empty_tool_selection() {
+        let config = AppConfig::default();
+        let builtin = crate::config::AgentProfile {
+            id: "general".to_string(),
+            name: "General".to_string(),
+            ..crate::config::AgentProfile::default()
+        };
+        let legacy = crate::config::AgentProfile {
+            id: "legacy".to_string(),
+            name: "Legacy".to_string(),
+            ..crate::config::AgentProfile::default()
+        };
+
+        assert!(inherits_default_tools(&config, &builtin));
+        assert!(inherits_default_tools(&config, &legacy));
     }
 
     #[tokio::test]

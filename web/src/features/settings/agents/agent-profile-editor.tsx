@@ -37,14 +37,23 @@ export function AgentProfileEditor({ config, profile, options, onChange, onRemov
   return (
     <section className="settings-editor agent-profile-editor">
       <EditorHeader
-        kicker="主 Agent"
+        kicker="Agent"
         title={profile.name || profile.id}
         description={`${profile.id}，已启用 ${profile.enabled_tools.length} 个工具和 ${profile.skills_full.length + profile.skills_named.length} 个 Skills。`}
-        actions={profile.id !== DEFAULT_AGENT_ID && (
-          <Button className="settings-danger" onClick={onRemove}>
-            <Trash2 size={14} />删除档案
-          </Button>
-        )}
+        actions={<>
+          {profile.id !== DEFAULT_AGENT_ID && (
+            <label className="settings-switch">
+              <input type="checkbox" checked={profile.register_to_main} onChange={(event) => onChange({ register_to_main: event.target.checked })} />
+              <span />
+              <strong>{profile.register_to_main ? "已向主 Agent 注册" : "未注册"}</strong>
+            </label>
+          )}
+          {profile.id !== DEFAULT_AGENT_ID && !["general", "explore"].includes(profile.id) && (
+            <Button className="settings-danger" onClick={onRemove}>
+              <Trash2 size={14} />删除档案
+            </Button>
+          )}
+        </>}
       />
       <nav className="settings-tabs agent-editor-tabs" aria-label="Agent 配置分类">
         <Button className={tab === "basic" ? "active" : ""} onClick={() => setTab("basic")}>基础配置</Button>
@@ -64,12 +73,15 @@ export function AgentProfileEditor({ config, profile, options, onChange, onRemov
               providerId={profile.provider_id}
               model={profile.model}
               thinkingLevel={profile.thinking_level}
-              inheritProviderLabel="沿用当前供应商"
-              providerHelp="留空时沿用当前活动供应商"
-              defaultModelLabel="供应商默认"
+              inheritModelLabel="沿用当前模型"
               thinkingHelp="覆盖供应商的默认推理强度"
               onChange={onChange}
             />
+            <label className="settings-field full">
+              <span>用途描述</span>
+              <input value={profile.description} onChange={(event) => onChange({ description: event.target.value })} />
+              <small>主 Agent 根据这段描述判断是否调用该 Agent</small>
+            </label>
           </div>
           <label className="settings-field agent-prompt-field">
             <span>系统提示词</span>

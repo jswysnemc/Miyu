@@ -170,6 +170,7 @@ pub(super) async fn run_chat_with_options(
     }
     AppConfig::init_files(paths)?;
     let mut config = AppConfig::load_or_default(paths)?;
+    config = crate::config::apply_agent_override(config, None, crate::config::AgentSurface::Cli)?;
     apply_thinking_override(&mut config, thinking_override.as_deref())?;
     if web_search {
         let choice =

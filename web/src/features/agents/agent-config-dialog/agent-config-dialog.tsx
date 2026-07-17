@@ -1,9 +1,7 @@
 import { useEffect, useState } from "react";
 import { Modal } from "../../../shared/ui/dialog/modal";
-import { buildChatModelChoices } from "../../chat/chat-model-options";
 import { buildAgentChoices } from "../agent-options";
 import { DefaultAgentPicker } from "./default-agent-picker";
-import { SubagentModelPicker } from "./subagent-model-picker";
 import { readAgentConfigDraft, useAgentConfig, type AgentConfigDraft } from "./use-agent-config";
 import "./agent-config-dialog.css";
 
@@ -27,7 +25,6 @@ export function AgentConfigDialog({ open, onClose }: AgentConfigDialogProps) {
   }, [open, config]);
 
   const agentChoices = config ? buildAgentChoices(config) : [];
-  const modelChoices = config ? buildChatModelChoices(config) : [];
 
   /** 保存草稿并关闭弹窗。 */
   const handleSave = async () => {
@@ -40,7 +37,7 @@ export function AgentConfigDialog({ open, onClose }: AgentConfigDialogProps) {
     <Modal
       open={open}
       title="Agent 配置"
-      description="设置默认使用的 Agent,以及子智能体统一使用的模型。"
+      description="分别设置 Web、TUI 和 CLI 默认使用的 Agent。"
       size="medium"
       onClose={onClose}
       footer={
@@ -58,22 +55,30 @@ export function AgentConfigDialog({ open, onClose }: AgentConfigDialogProps) {
       ) : (
         <div className="agent-config-body">
           <section className="agent-config-section">
-            <h3>默认 Agent</h3>
-            <p>新会话与未指定 Agent 的运行默认采用它。</p>
+            <h3>Web 默认 Agent</h3>
+            <p>网页工作台未显式选择 Agent 时采用它。</p>
             <DefaultAgentPicker
               choices={agentChoices}
-              value={draft.defaultAgent}
-              onChange={(id) => setDraft({ ...draft, defaultAgent: id })}
+              value={draft.webAgent}
+              onChange={(id) => setDraft({ ...draft, webAgent: id })}
             />
           </section>
           <section className="agent-config-section">
-            <h3>子智能体模型</h3>
-            <p>task 工具启动的子智能体统一使用该模型,留空则沿用主对话。</p>
-            <SubagentModelPicker
-              choices={modelChoices}
-              providerId={draft.subagentProviderId}
-              model={draft.subagentModel}
-              onChange={(providerId, model) => setDraft({ ...draft, subagentProviderId: providerId, subagentModel: model })}
+            <h3>TUI 默认 Agent</h3>
+            <p>交互式终端会话启动时采用它。</p>
+            <DefaultAgentPicker
+              choices={agentChoices}
+              value={draft.tuiAgent}
+              onChange={(id) => setDraft({ ...draft, tuiAgent: id })}
+            />
+          </section>
+          <section className="agent-config-section">
+            <h3>CLI 默认 Agent</h3>
+            <p>单次 ask、消息参数和 Shell 拦截运行采用它。</p>
+            <DefaultAgentPicker
+              choices={agentChoices}
+              value={draft.cliAgent}
+              onChange={(id) => setDraft({ ...draft, cliAgent: id })}
             />
           </section>
         </div>

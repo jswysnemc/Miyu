@@ -101,6 +101,10 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
                 vision_provider_value(config),
             )
             .choices_owned(provider_model_choice_values(config, true)),
+            Field::boolean(
+                t("Preview with chafa", "使用 chafa 预览"),
+                config.plugins.vision.preview_with_chafa,
+            ),
         ],
         3 => vec![
             Field::boolean(
@@ -254,6 +258,14 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
                 t("Max file KB", "最大文件 KB"),
                 config.plugins.knowledge_base.max_file_size_kb.to_string(),
             ),
+            Field::new(
+                t("Allowed extensions", "允许扩展名"),
+                config.plugins.knowledge_base.allowed_extensions.clone(),
+            ),
+            Field::new(
+                t("Allowed filenames", "允许文件名"),
+                config.plugins.knowledge_base.allowed_filenames.clone(),
+            ),
             Field::boolean(
                 t("Allow AI upload", "允许 AI 上传"),
                 config.plugins.knowledge_base.upload_tool_enabled,
@@ -335,6 +347,10 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
                 t("Auto fact memory", "自动知识记忆"),
                 config.plugins.memory.auto_fact_enabled,
             ),
+            Field::boolean(
+                t("Auto skill memory", "自动技能记忆"),
+                config.plugins.memory.auto_skill_enabled,
+            ),
             Field::new(
                 t("Association facts", "联想知识条数"),
                 config.plugins.memory.association_facts.to_string(),
@@ -346,6 +362,14 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
             Field::new(
                 t("Association char limit", "联想字符上限"),
                 config.plugins.memory.association_max_chars.to_string(),
+            ),
+            Field::new(
+                t("Memory snippet chars", "记忆片段字符数"),
+                config.plugins.memory.snippet_chars.to_string(),
+            ),
+            Field::new(
+                t("Forget after days", "记忆保留天数"),
+                config.plugins.memory.forget_after_days.to_string(),
             ),
             Field::boolean(
                 t("Forgetting enabled", "遗忘启用"),
@@ -362,6 +386,14 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
             Field::new(
                 t("Recall review boost", "回忆增强强度"),
                 config.plugins.memory.forgetting_review_boost.to_string(),
+            ),
+            Field::new(
+                t("Learning minimum task chars", "学习任务最少字符数"),
+                config.plugins.memory.learning_min_task_chars.to_string(),
+            ),
+            Field::new(
+                t("Learning minimum method chars", "学习方法最少字符数"),
+                config.plugins.memory.learning_min_method_chars.to_string(),
             ),
         ],
         11 => vec![Field::boolean(
@@ -380,6 +412,73 @@ pub(super) fn plugin_fields(config: &AppConfig, index: usize) -> Vec<Field> {
                     .linux_game_compatibility
                     .max_tool_steps
                     .to_string(),
+            ),
+        ],
+        13 => vec![
+            Field::boolean(t("Enabled", "启用"), config.plugins.deep_diagnose.enabled),
+            Field::new(
+                t("Thinking depth", "思考深度"),
+                config.plugins.deep_diagnose.thinking_depth.clone(),
+            )
+            .choices(&["minimal", "low", "medium", "high", "xhigh"]),
+            Field::new(
+                t("Max review revisions", "最大审视修正次数"),
+                config
+                    .plugins
+                    .deep_diagnose
+                    .max_review_revisions
+                    .to_string(),
+            ),
+            Field::new(
+                t("Tool steps per round", "每轮工具步数"),
+                config
+                    .plugins
+                    .deep_diagnose
+                    .max_tool_steps_per_round
+                    .to_string(),
+            ),
+            Field::new(
+                t("Final answer char limit", "最终字数上限"),
+                config
+                    .plugins
+                    .deep_diagnose
+                    .max_final_answer_chars
+                    .to_string(),
+            ),
+            Field::new(
+                t("Tool timeout seconds", "工具超时秒数"),
+                config
+                    .plugins
+                    .deep_diagnose
+                    .tool_call_timeout_seconds
+                    .to_string(),
+            ),
+            Field::new(
+                t("Maximum tool steps", "最大工具次数"),
+                config.plugins.deep_diagnose.max_tool_steps.to_string(),
+            ),
+            Field::boolean(
+                t("Show progress", "显示过程进度"),
+                config.plugins.deep_diagnose.show_progress,
+            ),
+        ],
+        14 => vec![
+            Field::boolean(t("Enabled", "启用"), config.plugins.diagnostics.enabled),
+            Field::new(
+                t("Command timeout seconds", "命令超时秒数"),
+                config
+                    .plugins
+                    .diagnostics
+                    .command_timeout_seconds
+                    .to_string(),
+            ),
+            Field::new(
+                t("Maximum stdout chars", "标准输出字符上限"),
+                config.plugins.diagnostics.max_stdout_chars.to_string(),
+            ),
+            Field::new(
+                t("Maximum stderr chars", "错误输出字符上限"),
+                config.plugins.diagnostics.max_stderr_chars.to_string(),
             ),
         ],
         _ => vec![Field::boolean(
@@ -432,6 +531,7 @@ pub(super) fn apply_plugin_fields(
             let (provider_id, model) = parse_provider_model_choice(&fields[2].value);
             config.plugins.vision.vision_provider_id = provider_id;
             config.plugins.vision.vision_model = model;
+            config.plugins.vision.preview_with_chafa = parse_bool_field(&fields[3].value)?;
         }
         3 => {
             config.plugins.image_generation.enabled = parse_bool_field(&fields[0].value)?;
@@ -491,20 +591,22 @@ pub(super) fn apply_plugin_fields(
                 fields[4].value.trim().parse()?;
             config.plugins.knowledge_base.max_read_lines = fields[5].value.trim().parse()?;
             config.plugins.knowledge_base.max_file_size_kb = fields[6].value.trim().parse()?;
-            config.plugins.knowledge_base.upload_tool_enabled = parse_bool_field(&fields[7].value)?;
-            config.plugins.knowledge_base.embedding_enabled = parse_bool_field(&fields[8].value)?;
-            let (provider_id, model) = parse_provider_model_choice(&fields[9].value);
+            config.plugins.knowledge_base.allowed_extensions = fields[7].value.trim().to_string();
+            config.plugins.knowledge_base.allowed_filenames = fields[8].value.trim().to_string();
+            config.plugins.knowledge_base.upload_tool_enabled = parse_bool_field(&fields[9].value)?;
+            config.plugins.knowledge_base.embedding_enabled = parse_bool_field(&fields[10].value)?;
+            let (provider_id, model) = parse_provider_model_choice(&fields[11].value);
             config.plugins.knowledge_base.embedding_provider_id = provider_id;
             config.plugins.knowledge_base.embedding_model = model;
-            config.plugins.knowledge_base.semantic_chunk_chars = fields[10].value.trim().parse()?;
+            config.plugins.knowledge_base.semantic_chunk_chars = fields[12].value.trim().parse()?;
             config.plugins.knowledge_base.semantic_chunk_overlap =
-                fields[11].value.trim().parse()?;
-            config.plugins.knowledge_base.semantic_top_k = fields[12].value.trim().parse()?;
-            config.plugins.knowledge_base.semantic_min_score = fields[13].value.trim().parse()?;
+                fields[13].value.trim().parse()?;
+            config.plugins.knowledge_base.semantic_top_k = fields[14].value.trim().parse()?;
+            config.plugins.knowledge_base.semantic_min_score = fields[15].value.trim().parse()?;
             config.plugins.knowledge_base.keyword_strong_score_threshold =
-                fields[14].value.trim().parse()?;
+                fields[16].value.trim().parse()?;
             config.plugins.knowledge_base.embedding_timeout_seconds =
-                fields[15].value.trim().parse()?;
+                fields[17].value.trim().parse()?;
         }
         8 => {
             config.plugins.archlinux.enabled = parse_bool_field(&fields[0].value)?;
@@ -518,18 +620,24 @@ pub(super) fn apply_plugin_fields(
             config.plugins.memory.association_enabled = parse_bool_field(&fields[2].value)?;
             config.plugins.memory.auto_diary_enabled = parse_bool_field(&fields[3].value)?;
             config.plugins.memory.auto_fact_enabled = parse_bool_field(&fields[4].value)?;
-            config.plugins.memory.auto_skill_enabled = false;
-            config.plugins.memory.association_facts = fields[5].value.trim().parse::<usize>()?;
-            config.plugins.memory.association_episodes = fields[6].value.trim().parse::<usize>()?;
+            config.plugins.memory.auto_skill_enabled = parse_bool_field(&fields[5].value)?;
+            config.plugins.memory.association_facts = fields[6].value.trim().parse::<usize>()?;
+            config.plugins.memory.association_episodes = fields[7].value.trim().parse::<usize>()?;
             config.plugins.memory.association_max_chars =
-                fields[7].value.trim().parse::<usize>()?;
-            config.plugins.memory.forgetting_enabled = parse_bool_field(&fields[8].value)?;
+                fields[8].value.trim().parse::<usize>()?;
+            config.plugins.memory.snippet_chars = fields[9].value.trim().parse::<usize>()?;
+            config.plugins.memory.forget_after_days = fields[10].value.trim().parse::<u64>()?;
+            config.plugins.memory.forgetting_enabled = parse_bool_field(&fields[11].value)?;
             config.plugins.memory.forgetting_half_life_days =
-                fields[9].value.trim().parse::<f64>()?;
+                fields[12].value.trim().parse::<f64>()?;
             config.plugins.memory.forgetting_min_strength =
-                fields[10].value.trim().parse::<f64>()?;
+                fields[13].value.trim().parse::<f64>()?;
             config.plugins.memory.forgetting_review_boost =
-                fields[11].value.trim().parse::<f64>()?;
+                fields[14].value.trim().parse::<f64>()?;
+            config.plugins.memory.learning_min_task_chars =
+                fields[15].value.trim().parse::<usize>()?;
+            config.plugins.memory.learning_min_method_chars =
+                fields[16].value.trim().parse::<usize>()?;
         }
         11 => {
             config.plugins.package_advisor.enabled = parse_bool_field(&fields[0].value)?;
@@ -538,6 +646,24 @@ pub(super) fn apply_plugin_fields(
             config.plugins.linux_game_compatibility.enabled = parse_bool_field(&fields[0].value)?;
             config.plugins.linux_game_compatibility.max_tool_steps =
                 fields[1].value.trim().parse::<usize>()?.clamp(1, 500);
+        }
+        13 => {
+            config.plugins.deep_diagnose.enabled = parse_bool_field(&fields[0].value)?;
+            config.plugins.deep_diagnose.thinking_depth = fields[1].value.trim().to_string();
+            config.plugins.deep_diagnose.max_review_revisions = fields[2].value.trim().parse()?;
+            config.plugins.deep_diagnose.max_tool_steps_per_round =
+                fields[3].value.trim().parse()?;
+            config.plugins.deep_diagnose.max_final_answer_chars = fields[4].value.trim().parse()?;
+            config.plugins.deep_diagnose.tool_call_timeout_seconds =
+                fields[5].value.trim().parse()?;
+            config.plugins.deep_diagnose.max_tool_steps = fields[6].value.trim().parse()?;
+            config.plugins.deep_diagnose.show_progress = parse_bool_field(&fields[7].value)?;
+        }
+        14 => {
+            config.plugins.diagnostics.enabled = parse_bool_field(&fields[0].value)?;
+            config.plugins.diagnostics.command_timeout_seconds = fields[1].value.trim().parse()?;
+            config.plugins.diagnostics.max_stdout_chars = fields[2].value.trim().parse()?;
+            config.plugins.diagnostics.max_stderr_chars = fields[3].value.trim().parse()?;
         }
         _ => {
             let value = parse_bool_field(&fields[0].value)?;
@@ -564,3 +690,7 @@ fn parse_key_list(value: &str) -> Vec<String> {
         .map(str::to_string)
         .collect()
 }
+
+#[cfg(test)]
+#[path = "plugin_fields_tests.rs"]
+mod tests;

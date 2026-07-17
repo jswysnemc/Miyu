@@ -20,6 +20,8 @@ impl Default for AppConfig {
             gateways: GatewayConfig::default(),
             agents: Vec::new(),
             default_agent: None,
+            tui_agent: None,
+            cli_agent: None,
             subagent: SubagentConfig::default(),
             agent_runtime: None,
             plugins: PluginsConfig::default(),

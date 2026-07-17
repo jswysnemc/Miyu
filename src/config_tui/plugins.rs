@@ -97,7 +97,7 @@ fn plugin_row(state: &str, name: &str, description: &str, width: usize) -> Strin
     fixed + &truncate(description, remaining)
 }
 
-fn plugin_names() -> [(&'static str, &'static str, &'static str); 13] {
+fn plugin_names() -> [(&'static str, &'static str, &'static str); 15] {
     [
         (
             "web",
@@ -182,6 +182,19 @@ fn plugin_names() -> [(&'static str, &'static str, &'static str); 13] {
                 "Proton/反作弊/兼容性查询",
             ),
         ),
+        (
+            "deep_diagnose",
+            t("Deep diagnose", "深度诊断"),
+            t("Multi-round diagnosis and review", "多轮诊断与审视修正"),
+        ),
+        (
+            "diagnostics",
+            t("System diagnostics", "系统诊断"),
+            t(
+                "Command limits for diagnostic tools",
+                "诊断工具命令与输出限制",
+            ),
+        ),
     ]
 }
 
@@ -200,6 +213,8 @@ pub(super) fn plugin_enabled(config: &AppConfig, index: usize) -> bool {
         10 => config.plugins.memory.enabled,
         11 => config.plugins.package_advisor.enabled,
         12 => config.plugins.linux_game_compatibility.enabled,
+        13 => config.plugins.deep_diagnose.enabled,
+        14 => config.plugins.diagnostics.enabled,
         _ => false,
     }
 }
@@ -220,6 +235,8 @@ pub(super) fn toggle_plugin(config: &mut AppConfig, index: usize) {
         10 => config.plugins.memory.enabled = value,
         11 => config.plugins.package_advisor.enabled = value,
         12 => config.plugins.linux_game_compatibility.enabled = value,
+        13 => config.plugins.deep_diagnose.enabled = value,
+        14 => config.plugins.diagnostics.enabled = value,
         _ => {}
     }
 }

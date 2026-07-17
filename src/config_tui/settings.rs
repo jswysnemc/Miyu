@@ -25,6 +25,22 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
             config.permission.cli_mode().as_str().to_string(),
         )
         .choices(&["yolo", "audited", "plan"]),
+        Field::new(
+            t("Web terminal shell", "网页终端 Shell"),
+            config.terminal.shell.clone(),
+        ),
+        Field::new(
+            t("Default context characters", "默认上下文字符数"),
+            config.context.default_max_chars.to_string(),
+        ),
+        Field::new(
+            t("Context trim trigger ratio", "上下文压缩触发比例"),
+            config.context.trim_at_ratio.to_string(),
+        ),
+        Field::new(
+            t("Context trim batch ratio", "上下文单次压缩比例"),
+            config.context.trim_batch_ratio.to_string(),
+        ),
         Field::boolean(t("Tools enabled", "工具启用"), config.tools.enabled),
         Field::new(
             t("Tool max rounds", "工具最大轮数"),
@@ -106,7 +122,7 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         t(" GLOBAL SETTINGS ", " 全局参数设置 "),
         &mut fields,
     )? {
-        let [tui_mode, cli_mode, tools_enabled, tool_max_rounds, command_shell, progressive_loading, background_commands, background_timeout, background_log_max, background_stop_grace, skills_enabled, skill_commands, reasoning, tool_calls, readable_names, wait_model, wait_thinking, transcript_rows] =
+        let [tui_mode, cli_mode, terminal_shell, context_tokens, trim_ratio, trim_batch_ratio, tools_enabled, tool_max_rounds, command_shell, progressive_loading, background_commands, background_timeout, background_log_max, background_stop_grace, skills_enabled, skill_commands, reasoning, tool_calls, readable_names, wait_model, wait_thinking, transcript_rows] =
             fields.as_slice()
         else {
             unreachable!("global settings field layout must remain complete")
@@ -117,6 +133,10 @@ pub(crate) fn edit_settings(stdout: &mut io::Stdout, config: &mut AppConfig) -> 
         config.permission.cli_mode = Some(cli);
         // 兼容旧字段：与 TUI 保持一致。
         config.permission.default_mode = tui;
+        config.terminal.shell = terminal_shell.value.trim().to_string();
+        config.context.default_max_chars = context_tokens.value.trim().parse::<usize>()?;
+        config.context.trim_at_ratio = trim_ratio.value.trim().parse::<f32>()?;
+        config.context.trim_batch_ratio = trim_batch_ratio.value.trim().parse::<f32>()?;
         config.tools.enabled = parse_bool_field(&tools_enabled.value)?;
         config.tools.max_rounds = tool_max_rounds.value.trim().parse::<usize>()?;
         config.tools.command_shell = command_shell.value.trim().to_string();

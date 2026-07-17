@@ -417,6 +417,8 @@ export type AppConfig = {
   gateways: GatewayConfig;
   agents?: AgentProfileConfig[];
   default_agent?: string | null;
+  tui_agent?: string | null;
+  cli_agent?: string | null;
   subagent?: SubagentConfig;
   plugins?: Record<string, Record<string, unknown>>;
   prompt?: {
@@ -438,6 +440,7 @@ export type AppConfig = {
 export type AgentProfileConfig = {
   id: string;
   name: string;
+  description?: string;
   system_prompt?: string;
   enabled_tools?: string[];
   skills_full?: string[];
@@ -445,6 +448,7 @@ export type AgentProfileConfig = {
   provider_id?: string;
   model?: string;
   thinking_level?: string;
+  register_to_main?: boolean;
 };
 
 export type SubagentProfileConfig = {
