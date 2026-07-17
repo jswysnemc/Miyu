@@ -512,11 +512,19 @@ mod tests {
     use super::*;
     use tokio::sync::mpsc;
 
+    /// 验证子代理用量回退与全局 BPE 估算保持一致。
+    ///
+    /// 参数:
+    /// - 无
+    ///
+    /// 返回:
+    /// - 无
     #[test]
-    fn estimates_tokens_from_chars() {
+    fn estimates_tokens_with_shared_bpe() {
         assert_eq!(estimate_tokens(&["abcd"]), 1);
-        assert_eq!(estimate_tokens(&["abcdefgh"]), 2);
+        assert_eq!(estimate_tokens(&["abcdefgh"]), 1);
         assert_eq!(estimate_tokens(&["你好世界"]), 2);
+        assert_eq!(estimate_tokens(&["hello ", "world"]), 2);
     }
 
     #[test]
